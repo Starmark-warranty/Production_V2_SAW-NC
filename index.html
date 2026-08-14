@@ -29987,6 +29987,18 @@ function resetView(){
     try{ var el = q(id); if(el) el.textContent = el.textContent.replace(/\d+$/, '0'); }catch(e){}
   });
 
+  /* v1.7: ซ่อนป้ายเตือนด้วย (พ่นสี · Material · GX->GY · CutCode Swap · Fitting เพิ่ม)
+     เดิมล้างแค่ตาราง ป้ายพวกนี้จึงค้างอยู่ทั้งที่ไม่มี Order เปิดแล้ว */
+  ['axErrBadge','axGxBadge','axSwapBadge','axSprayBadge','extraFitBadge'].forEach(function(id){
+    try{ var el = q(id); if(el) el.style.display = 'none'; }catch(e){}
+  });
+  ['axErrCount','axGxCount','axSwapCount','axSprayCount','extraFitCount'].forEach(function(id){
+    try{ var el = q(id); if(el) el.textContent = '0'; }catch(e){}
+  });
+  ['saveEditsBtn','applyAllSuggestBtn','applyAllPartBtn'].forEach(function(id){
+    try{ var el = q(id); if(el) el.style.display = 'none'; }catch(e){}
+  });
+
   /* 5. เอาไฮไลท์แถวที่เลือกออก แต่ "รายชื่อ Order ยังอยู่ครบ" */
   try{
     var list = q('orderList');
@@ -30012,6 +30024,9 @@ function resetView(){
         it.classList.remove('active');
       });
     }catch(e){}
+    ['axErrBadge','axGxBadge','axSwapBadge','axSprayBadge','extraFitBadge','saveEditsBtn','applyAllSuggestBtn','applyAllPartBtn'].forEach(function(id){
+      try{ var el = q(id); if(el) el.style.display = 'none'; }catch(e){}
+    });
   }, 350);
 }
 
@@ -30340,6 +30355,220 @@ window.MBOM_run  = function(oids){
   run();
 };
 window.MBOM_state = function(){ return {on:MBOM.on, blank:MBOM.blank, sel:MBOM.seq.slice(), ax:MBOM.ax.length, fit:MBOM.fit.length}; };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     คำนวณพื้นที่ที่ใช้ใน Supabase  ·  โมดูลแยก (v1.0)
+     ─────────────────────────────────────────────────────────────────────────
+     เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักบรรทัด
+
+     ปัญหาเดิม: โปรแกรมเรียก db.rpc('get_db_size_mb') ซึ่งยังไม่มีในฐานข้อมูล
+                ได้ค่า null → แสดง 0.0MB / 500MB (0%) ตลอด
+
+     วิธีใหม่: สุ่มอ่านแถวจริงจากแต่ละตาราง แล้วคำนวณตามวิธีเก็บของ Postgres
+       • นับจำนวนแถวจริง (count exact — ไม่ต้องโหลดข้อมูล)
+       • สุ่มแถวแบบกระจาย (ต้น/กลาง/ท้าย) เพื่อลดความคลาดเคลื่อน
+       • ค่าที่ยาวเกิน 2 KB → Postgres บีบอัด (TOAST) จึงประมาณด้วยการบีบอัดจริง
+       • บวกส่วนหัวแถว 28 ไบต์ + ดัชนี ~32 ไบต์/แถว
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+#tbCapWrap{cursor:help}
+.dbu-note{font-size:9px;color:var(--text3);margin-left:3px}
+</style>
+<script>
+(function(){
+'use strict';
+
+var TOTAL_MB = 500;                 /* Supabase free tier */
+var TTL      = 5 * 60 * 1000;       /* คำนวณซ้ำทุก 5 นาที */
+var TOAST_TH = 2048;                /* Postgres บีบอัดค่าที่ยาวเกินนี้ */
+var ROW_OH   = 28;                  /* ส่วนหัวแถว + item pointer */
+var IDX_OH   = 32;                  /* ดัชนี primary key โดยประมาณ */
+
+/* ตารางที่ใช้ · จำนวนแถวที่สุ่ม (แถวใหญ่สุ่มน้อย แถวเล็กสุ่มมาก) */
+var TABLES = [
+  { name:'imos_orders',    n:12 },
+  { name:'fitting_global', n:60 },
+  { name:'imos_mapping',   n:40 },
+  { name:'app_settings',   n:10 }
+];
+
+var CACHE = null, CACHE_AT = 0, RUNNING = false;
+
+function _db(){ try{ return (typeof db !== 'undefined') ? db : null; }catch(e){ return null; } }
+function u8(s){
+  try{ return new TextEncoder().encode(s).length; }
+  catch(e){ return unescape(encodeURIComponent(String(s))).length; }
+}
+
+/* ประมาณขนาดหลังบีบอัดแบบ pglz (Postgres) โดยใช้ deflate ของเบราว์เซอร์
+   pglz บีบได้น้อยกว่า deflate จึงคูณ 1.2 ชดเชย */
+function compressed(str){
+  if(typeof CompressionStream === 'undefined')
+    return Promise.resolve(Math.round(u8(str) * 0.45));
+  try{
+    var cs = new CompressionStream('deflate-raw');
+    var st = new Blob([str]).stream().pipeThrough(cs);
+    return new Response(st).arrayBuffer().then(function(ab){
+      return Math.round(ab.byteLength * 1.2);
+    }).catch(function(){ return Math.round(u8(str) * 0.45); });
+  }catch(e){ return Promise.resolve(Math.round(u8(str) * 0.45)); }
+}
+
+/* ขนาดที่แถวหนึ่งกินจริงใน Postgres */
+function rowBytes(row){
+  var jobs = [], plain = ROW_OH;
+  Object.keys(row || {}).forEach(function(k){
+    var v = row[k];
+    if(v === null || v === undefined) return;
+    var s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+    var n = u8(s);
+    if(n > TOAST_TH) jobs.push(compressed(s));   /* ค่าใหญ่ → ถูกบีบอัด */
+    else plain += n + 1;
+  });
+  if(!jobs.length) return Promise.resolve(plain);
+  return Promise.all(jobs).then(function(sizes){
+    sizes.forEach(function(x){ plain += x; });
+    return plain;
+  });
+}
+
+/* สุ่มอ่านตารางหนึ่ง แล้วประมาณขนาดรวม */
+function scanTable(t){
+  var d = _db();
+  if(!d) return Promise.resolve(null);
+  return Promise.resolve(d.from(t.name).select('*', { count:'exact', head:true }))
+  .then(function(res){
+    if(res && res.error) throw res.error;
+    var total = (res && res.count) || 0;
+    if(!total) return { name:t.name, total:0, bytes:0, avg:0, sampled:0 };
+
+    /* สุ่มแบบกระจาย 3 ช่วง (ต้น/กลาง/ท้าย) เพื่อไม่ให้เอนไปทางใดทางหนึ่ง */
+    var per = Math.max(1, Math.ceil(t.n / 3)), picks = [];
+    for(var c = 0; c < 3; c++){
+      var off = Math.floor(total * c / 3);
+      off = Math.max(0, Math.min(off, total - per));
+      picks.push([off, off + per - 1]);
+    }
+    var rows = [];
+    return picks.reduce(function(p, rg){
+      return p.then(function(){
+        return Promise.resolve(d.from(t.name).select('*').range(rg[0], rg[1]))
+          .then(function(r){ if(r && r.data) rows = rows.concat(r.data); })
+          .catch(function(){});
+      });
+    }, Promise.resolve()).then(function(){
+      if(!rows.length) return { name:t.name, total:total, bytes:0, avg:0, sampled:0 };
+      return Promise.all(rows.map(rowBytes)).then(function(sz){
+        var sum = sz.reduce(function(a,b){ return a+b; }, 0);
+        var avg = sum / sz.length;
+        return { name:t.name, total:total, avg:avg,
+                 bytes:(avg + IDX_OH) * total, sampled:sz.length };
+      });
+    });
+  }).catch(function(){ return null; });
+}
+
+function calc(){
+  return TABLES.reduce(function(p, t){
+    return p.then(function(acc){
+      return scanTable(t).then(function(r){ if(r) acc.push(r); return acc; });
+    });
+  }, Promise.resolve([])).then(function(list){
+    var bytes = list.reduce(function(a,r){ return a + r.bytes; }, 0);
+    return { list:list, mb: bytes / 1048576, at: Date.now() };
+  });
+}
+
+/* ── แสดงผล ─────────────────────────────────────────────────────── */
+function paint(res){
+  var wrap = document.getElementById('tbCapWrap');
+  var bar  = document.getElementById('tbCapBar');
+  var txt  = document.getElementById('tbCapText');
+  if(!wrap) return;
+  wrap.style.display = 'flex';
+
+  if(!res){
+    if(txt) txt.textContent = 'คำนวณพื้นที่ไม่ได้';
+    if(bar) bar.style.width = '0%';
+    return;
+  }
+  var mb  = res.mb;
+  var pct = Math.min(100, Math.round(mb / TOTAL_MB * 100));
+  var shown = mb < 10 ? mb.toFixed(1) : Math.round(mb);
+  if(bar){
+    bar.style.width = Math.max(pct, mb > 0 ? 1 : 0) + '%';
+    bar.style.background = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--orange)' : 'var(--accent)';
+  }
+  if(txt) txt.textContent = '~' + shown + 'MB / ' + TOTAL_MB + 'MB (' + pct + '%)';
+
+  /* รายละเอียดตอนชี้เมาส์ — บอกว่าตารางไหนกินเท่าไหร่ */
+  var lines = res.list.slice().sort(function(a,b){ return b.bytes - a.bytes; })
+    .map(function(r){
+      return '  ' + r.name + ': ' + (r.bytes/1048576).toFixed(1) + ' MB'
+        + '  (' + r.total.toLocaleString() + ' แถว'
+        + (r.sampled ? ' · สุ่ม ' + r.sampled : '') + ')';
+    });
+  wrap.title = 'พื้นที่ที่ใช้ (ประมาณจากข้อมูลจริง)\n' + lines.join('\n')
+    + '\n\nคำนวณโดยสุ่มอ่านแถวจริงแล้วคิดตามวิธีเก็บของ Postgres'
+    + '\n(รวมส่วนหัวแถว ดัชนี และการบีบอัดค่าที่ยาว)'
+    + '\nคลาดเคลื่อนได้บ้างจากพื้นที่ว่างที่ยังไม่ถูกคืน'
+    + '\n\nอยากได้ค่าเป๊ะ ให้สร้างฟังก์ชันนี้ใน Supabase:'
+    + '\n  create or replace function get_db_size_mb()'
+    + '\n  returns numeric language sql security definer as $$'
+    + '\n    select round(pg_database_size(current_database())/1048576.0, 2); $$;';
+}
+
+function run(force){
+  if(RUNNING) return Promise.resolve(CACHE);
+  if(!force && CACHE && (Date.now() - CACHE_AT) < TTL){ paint(CACHE); return Promise.resolve(CACHE); }
+  if(!_db()) return Promise.resolve(null);
+  RUNNING = true;
+  var txt = document.getElementById('tbCapText');
+  var wrap = document.getElementById('tbCapWrap');
+  if(wrap) wrap.style.display = 'flex';
+  if(txt && !CACHE) txt.textContent = 'กำลังคำนวณ…';
+  return calc().then(function(res){
+    CACHE = res; CACHE_AT = Date.now(); RUNNING = false;
+    paint(res);
+    return res;
+  }).catch(function(e){
+    RUNNING = false;
+    console.warn('[DB Usage] คำนวณไม่สำเร็จ:', (e && e.message) || e);
+    paint(null);
+    return null;
+  });
+}
+
+/* ── ต่อเข้ากับของเดิม (ห่อทับ ไม่แก้ตัวจริง) ─────────────────── */
+function hook(){
+  if(typeof window.refreshStatus !== 'function') return false;
+  if(window.__dbuHooked) return true;
+  window.__dbuHooked = true;
+  var orig = window.refreshStatus;
+  window.refreshStatus = function(){
+    var r = orig.apply(this, arguments);
+    Promise.resolve(r).catch(function(){}).then(function(){
+      /* ของเดิมเพิ่งเซ็ตเป็น 0 — คำนวณใหม่ทับ */
+      setTimeout(function(){ run(true); }, 150);
+    });
+    return r;
+  };
+  return true;
+}
+
+function init(){
+  if(!hook())  return setTimeout(init, 500);
+  if(!_db())   return setTimeout(init, 600);
+  setTimeout(function(){ run(true); }, 1200);
+  console.log('[DB Usage] พร้อมใช้งาน — คำนวณพื้นที่จากข้อมูลจริง');
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(init, 900); });
+else setTimeout(init, 900);
+
+window.DBU_refresh = function(){ return run(true); };
+window.DBU_last    = function(){ return CACHE; };
 })();
 </script>
 
