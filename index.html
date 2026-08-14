@@ -30572,5 +30572,127 @@ window.DBU_last    = function(){ return CACHE; };
 })();
 </script>
 
+<!-- ══════════════════════════════════════════════════════════════════════════
+     เติม Item Id Set ให้อัตโนมัติ  ·  โมดูลแยก (v1.0)
+     ─────────────────────────────────────────────────────────────────────────
+     เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักบรรทัด
+
+     ปัญหาเดิม: ตัวเดาของโปรแกรม (_suggestIids) รองรับแค่ชื่อรูปแบบ BO69_0403
+                Order อย่าง 2603087002_AITEST จึงไม่ถูกเติม ต้องพิมพ์เอง
+
+     ลำดับการเติม (หยุดที่ตัวแรกที่เจอ):
+       1. ค่าที่เคยบันทึกไว้ของ Order นั้น       ← ของเดิมทำอยู่แล้ว เคารพเสมอ
+       2. ค่าที่มีอยู่ในข้อมูล BOM จริง          ← แม่นที่สุด
+       3. เดาจากชื่อ Order รูปแบบ BOxx_xxxx      ← ของเดิม
+       4. เดาจากชื่อ Order รูปแบบอื่น            ← เพิ่มใหม่
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+
+function q(id){ return document.getElementById(id); }
+function cur(){ try{ return currentOrder || ''; }catch(e){ return ''; } }
+
+/* ── หา Item Id Set จากข้อมูล BOM จริง ─────────────────────────── */
+function fromRows(){
+  var rows = [];
+  try{ rows = (typeof buildAXRows === 'function') ? (buildAXRows() || []) : []; }catch(e){ return ''; }
+  if(!rows.length) return '';
+  /* นับว่าค่าไหนพบบ่อยสุด (เผื่อมีหลายค่าปนกัน) */
+  var tally = {}, best = '', bestN = 0;
+  rows.forEach(function(r){
+    var v = String((r && r['Item Id Set']) || '').trim();
+    if(!v || v === '—' || v === '-') return;
+    tally[v] = (tally[v] || 0) + 1;
+    if(tally[v] > bestN){ bestN = tally[v]; best = v; }
+  });
+  return best;
+}
+
+/* ── เดาจากชื่อ Order (ครอบคลุมรูปแบบที่ของเดิมไม่รองรับ) ──────── */
+function fromName(oid){
+  if(!oid) return '';
+  var s = String(oid).trim();
+
+  /* BO69_0403 → RE-0069-0403  (กติกาเดิมของโปรแกรม) */
+  var m = s.match(/BO(\d+)[_\-\s]+(\d+)/i);
+  if(m) return 'RE-' + m[1].padStart(4,'0') + '-' + m[2];
+
+  /* มีรูปแบบ RE-xxxx-xxxx อยู่ในชื่ออยู่แล้ว */
+  m = s.match(/RE[-_]?(\d{3,4})[-_](\d{3,4})/i);
+  if(m) return 'RE-' + m[1].padStart(4,'0') + '-' + m[2];
+
+  /* ชื่อขึ้นต้นด้วยเลขยาว เช่น 2603087002_AITEST → RE-2603-087002
+     แบ่ง 4 ตัวแรกเป็นชุดหน้า ที่เหลือเป็นชุดหลัง */
+  m = s.match(/^(\d{8,})/);
+  if(m){
+    var d = m[1];
+    return 'RE-' + d.slice(0,4) + '-' + d.slice(4);
+  }
+  return '';
+}
+
+/* ── เติมค่าลงช่อง ───────────────────────────────────────────────── */
+function apply(val, oid, save){
+  if(!val) return false;
+  var inp = q('itemIdSetInput');
+  try{ axItemIdSet = val; }catch(e){}
+  if(inp){
+    inp.value = val;
+    try{ if(typeof _resizeIidsInput === 'function') _resizeIidsInput(inp); }catch(e){}
+  }
+  try{ if(typeof renderAX === 'function') renderAX(); }catch(e){}
+  if(save && oid){
+    try{ if(typeof _saveItemIdSet === 'function') _saveItemIdSet(oid, val); }catch(e){}
+  }
+  return true;
+}
+
+/* ── เติมเมื่อยังว่าง ────────────────────────────────────────────── */
+function fill(){
+  var oid = cur();
+  if(!oid) return;
+  var inp = q('itemIdSetInput');
+  var now = '';
+  try{ now = String(axItemIdSet || '').trim(); }catch(e){}
+  if(!now && inp) now = String(inp.value || '').trim();
+  if(now) return;                       /* มีค่าอยู่แล้ว (หรือผู้ใช้พิมพ์เอง) → ไม่แตะ */
+
+  var v = fromRows();                   /* 1) จากข้อมูลจริง — แม่นสุด */
+  if(!v) v = fromName(oid);             /* 2) เดาจากชื่อ Order */
+  if(v) apply(v, oid, true);
+}
+
+/* ── ต่อเข้ากับของเดิม (ห่อทับ ไม่แก้ตัวจริง) ─────────────────── */
+function hook(){
+  if(typeof window.selectOrder !== 'function') return false;
+  if(window.__iidsHooked) return true;
+  window.__iidsHooked = true;
+
+  var orig = window.selectOrder;
+  window.selectOrder = function(oid){
+    var r = orig.apply(this, arguments);
+    Promise.resolve(r).catch(function(){}).then(function(){
+      /* รอให้ของเดิมโหลดค่าที่บันทึกไว้ก่อน แล้วค่อยเติมถ้ายังว่าง */
+      setTimeout(fill, 250);
+      setTimeout(fill, 900);
+    });
+    return r;
+  };
+  return true;
+}
+
+function init(){
+  if(!hook()) return setTimeout(init, 500);
+  console.log('[Item Id Set] เติมอัตโนมัติพร้อมใช้งาน');
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(init, 1000); });
+else setTimeout(init, 1000);
+
+window.IIDS_fill    = function(){ fill(); };
+window.IIDS_suggest = function(oid){ return fromRows() || fromName(oid || cur()); };
+})();
+</script>
+
 </body>
 </html>
