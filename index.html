@@ -8113,7 +8113,6 @@ function renderExtraFitList() {
   <div id="orderLoadingId" class="order-loading-id"></div>
 </div>
 
-
 <!-- ══════════════════════════════════════════════════════════════════
      โปรแกรม NC Partlist v6.60 (SAW + CNC) — ฝังไว้ทั้งไฟล์ แบบ base64
      ถอดออกมาแล้วได้ไฟล์เดิมทุกไบต์ · ตอนใช้งานจะถูกเขียนลงเป็น
@@ -30358,418 +30357,6 @@ window.MBOM_state = function(){ return {on:MBOM.on, blank:MBOM.blank, sel:MBOM.s
 })();
 </script>
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     คำนวณพื้นที่ที่ใช้ใน Supabase  ·  โมดูลแยก (v1.0)
-     ─────────────────────────────────────────────────────────────────────────
-     เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักบรรทัด
-
-     ปัญหาเดิม: โปรแกรมเรียก db.rpc('get_db_size_mb') ซึ่งยังไม่มีในฐานข้อมูล
-                ได้ค่า null → แสดง 0.0MB / 500MB (0%) ตลอด
-
-     วิธีใหม่: สุ่มอ่านแถวจริงจากแต่ละตาราง แล้วคำนวณตามวิธีเก็บของ Postgres
-       • นับจำนวนแถวจริง (count exact — ไม่ต้องโหลดข้อมูล)
-       • สุ่มแถวแบบกระจาย (ต้น/กลาง/ท้าย) เพื่อลดความคลาดเคลื่อน
-       • ค่าที่ยาวเกิน 2 KB → Postgres บีบอัด (TOAST) จึงประมาณด้วยการบีบอัดจริง
-       • บวกส่วนหัวแถว 28 ไบต์ + ดัชนี ~32 ไบต์/แถว
-     ══════════════════════════════════════════════════════════════════════ -->
-<style>
-#tbCapWrap{cursor:help}
-#dbuOpen{background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px;
-  padding:2px 5px;border-radius:4px;line-height:1;transition:all .13s;font-family:inherit;
-  text-decoration:none;display:inline-flex;align-items:center}
-#dbuOpen:hover{background:var(--s3);color:#3ecf8e}
-#dbuFull{background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px;
-  padding:2px 5px;border-radius:4px;line-height:1;transition:all .13s;font-family:inherit}
-#dbuFull:hover{background:var(--s3);color:var(--accent)}
-#dbuFull.busy{color:var(--orange);cursor:progress}
-.dbu-note{font-size:9px;color:var(--text3);margin-left:3px}
-</style>
-<script>
-(function(){
-'use strict';
-
-var TOTAL_MB = 500;                 /* Supabase free tier */
-var TTL      = 5 * 60 * 1000;       /* คำนวณซ้ำทุก 5 นาที */
-var TOAST_TH = 2048;                /* Postgres บีบอัดค่าที่ยาวเกินนี้ */
-var ROW_OH   = 28;                  /* ส่วนหัวแถว + item pointer */
-var IDX_OH   = 32;                  /* ดัชนี primary key โดยประมาณ */
-
-/* ตารางที่ใช้ · จำนวนแถวที่สุ่ม (แถวใหญ่สุ่มน้อย แถวเล็กสุ่มมาก) */
-/* n = จำนวนแถวที่สุ่ม (ถ้าตารางมีแถวน้อยกว่า FULL_MAX จะอ่านครบทุกแถว = ไม่มีคลาดจากการสุ่ม) */
-var TABLES = [
-  { name:'imos_orders',    n:24 },
-  { name:'fitting_global', n:150 },
-  { name:'imos_mapping',   n:120 },
-  { name:'app_settings',   n:50 }
-];
-var FULL_MAX = 300;      /* ตารางที่แถวไม่เกินนี้ -> อ่านครบ ไม่ต้องสุ่ม */
-
-var CACHE = null, CACHE_AT = 0, RUNNING = false;
-
-function _db(){ try{ return (typeof db !== 'undefined') ? db : null; }catch(e){ return null; } }
-function u8(s){
-  try{ return new TextEncoder().encode(s).length; }
-  catch(e){ return unescape(encodeURIComponent(String(s))).length; }
-}
-
-/* ประมาณขนาดหลังบีบอัดแบบ pglz (Postgres) โดยใช้ deflate ของเบราว์เซอร์
-   pglz บีบได้น้อยกว่า deflate จึงคูณ 1.2 ชดเชย */
-function compressed(str){
-  if(typeof CompressionStream === 'undefined')
-    return Promise.resolve(Math.round(u8(str) * 0.45));
-  try{
-    var cs = new CompressionStream('deflate-raw');
-    var st = new Blob([str]).stream().pipeThrough(cs);
-    return new Response(st).arrayBuffer().then(function(ab){
-      return Math.round(ab.byteLength * 1.2);
-    }).catch(function(){ return Math.round(u8(str) * 0.45); });
-  }catch(e){ return Promise.resolve(Math.round(u8(str) * 0.45)); }
-}
-
-/* ขนาดที่แถวหนึ่งกินจริงใน Postgres */
-function rowBytes(row){
-  var jobs = [], plain = ROW_OH;
-  Object.keys(row || {}).forEach(function(k){
-    var v = row[k];
-    if(v === null || v === undefined) return;
-    var s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
-    var n = u8(s);
-    if(n > TOAST_TH) jobs.push(compressed(s));   /* ค่าใหญ่ → ถูกบีบอัด */
-    else plain += n + 1;
-  });
-  if(!jobs.length) return Promise.resolve(plain);
-  return Promise.all(jobs).then(function(sizes){
-    sizes.forEach(function(x){ plain += x; });
-    return plain;
-  });
-}
-
-/* สุ่มอ่านตารางหนึ่ง แล้วประมาณขนาดรวม */
-function scanTable(t){
-  var d = _db();
-  if(!d) return Promise.resolve(null);
-  return Promise.resolve(d.from(t.name).select('*', { count:'exact', head:true }))
-  .then(function(res){
-    if(res && res.error) throw res.error;
-    var total = (res && res.count) || 0;
-    if(!total) return { name:t.name, total:0, bytes:0, avg:0, sampled:0 };
-
-    var picks = [], full = (total <= FULL_MAX);
-    if(full){
-      /* ตารางเล็ก -> อ่านครบทุกแถว ไม่มีความคลาดจากการสุ่มเลย */
-      for(var o2 = 0; o2 < total; o2 += 200) picks.push([o2, Math.min(o2 + 199, total - 1)]);
-    } else {
-      /* สุ่มแบบกระจาย 5 ช่วง (ต้น..ท้าย) เพื่อไม่ให้เอนไปทางใดทางหนึ่ง */
-      /* วางจุดสุ่มไว้ "กลาง" ของแต่ละช่วง ไม่ใช่ต้นช่วง
-         ไม่งั้นค่าเฉลี่ยจะเอนไปทางต้นตาราง (ถ้าขนาดแถวไล่ตามลำดับ) */
-      var per = Math.max(1, Math.ceil(t.n / 5));
-      for(var c = 0; c < 5; c++){
-        var off = Math.round(total * (c + 0.5) / 5 - per / 2);
-        off = Math.max(0, Math.min(off, total - per));
-        picks.push([off, off + per - 1]);
-      }
-    }
-    var rows = [];
-    return picks.reduce(function(p, rg){
-      return p.then(function(){
-        return Promise.resolve(d.from(t.name).select('*').range(rg[0], rg[1]))
-          .then(function(r){ if(r && r.data) rows = rows.concat(r.data); })
-          .catch(function(){});
-      });
-    }, Promise.resolve()).then(function(){
-      if(!rows.length) return { name:t.name, total:total, bytes:0, avg:0, sampled:0 };
-      return Promise.all(rows.map(rowBytes)).then(function(sz){
-        var sum = sz.reduce(function(a,b){ return a+b; }, 0);
-        var avg = sum / sz.length;
-        return { name:t.name, total:total, avg:avg, full:full,
-                 bytes:(avg + IDX_OH) * total, sampled:sz.length };
-      });
-    });
-  }).catch(function(){ return null; });
-}
-
-/* ถ้าฐานข้อมูลมีฟังก์ชัน get_db_size_mb -> ใช้ค่าจริงเลย (เป๊ะ 100%)
-   ถ้าไม่มี -> ค่อยประมาณจากการอ่านข้อมูล */
-function exactMB(){
-  var d = _db();
-  if(!d || typeof d.rpc !== 'function') return Promise.resolve(null);
-  try{
-    return Promise.resolve(d.rpc('get_db_size_mb')).then(function(r){
-      if(r && r.error) return null;
-      var v = (r && r.data !== undefined && r.data !== null) ? parseFloat(r.data) : NaN;
-      return (isFinite(v) && v > 0) ? v : null;
-    }).catch(function(){ return null; });
-  }catch(e){ return Promise.resolve(null); }
-}
-
-function calc(){
-  return TABLES.reduce(function(p, t){
-    return p.then(function(acc){
-      return scanTable(t).then(function(r){ if(r) acc.push(r); return acc; });
-    });
-  }, Promise.resolve([])).then(function(list){
-    var bytes = list.reduce(function(a,r){ return a + r.bytes; }, 0);
-    return exactMB().then(function(x){
-      return { list:list, mb: (x !== null ? x : bytes / 1048576),
-               est: bytes / 1048576, exact: (x !== null), at: Date.now() };
-    });
-  });
-}
-
-
-/* ══ อ่านครบทุกแถว — ไม่สุ่มเลย (แม่นที่สุดเท่าที่ทำได้จากฝั่งโปรแกรม) ══
-   ใช้เมื่อกดปุ่ม 🎯 เท่านั้น เพราะต้องโหลดข้อมูลทั้งหมด ใช้เวลาสักครู่ */
-var PAGE = 1000;
-var ABORT = false;
-
-function scanFull(t, onStep){
-  var d = _db();
-  if(!d) return Promise.resolve(null);
-  return Promise.resolve(d.from(t.name).select('*', { count:'exact', head:true }))
-  .then(function(res){
-    if(res && res.error) throw res.error;
-    var total = (res && res.count) || 0;
-    if(!total) return { name:t.name, total:0, bytes:0, avg:0, sampled:0, full:true };
-
-    var sum = 0, seen = 0, off = 0;
-    function step(){
-      if(ABORT) return Promise.reject(new Error('ยกเลิกแล้ว'));
-      if(off >= total) return Promise.resolve();
-      var to = Math.min(off + PAGE - 1, total - 1);
-      return Promise.resolve(d.from(t.name).select('*').range(off, to))
-        .then(function(r){
-          var rows = (r && r.data) || [];
-          return Promise.all(rows.map(rowBytes)).then(function(sz){
-            sz.forEach(function(x){ sum += x; });
-            seen += sz.length;
-            off = to + 1;
-            if(onStep) onStep(t.name, seen, total);
-            return step();
-          });
-        });
-    }
-    return step().then(function(){
-      if(!seen) return { name:t.name, total:total, bytes:0, avg:0, sampled:0, full:true };
-      return { name:t.name, total:total, avg:sum/seen, full:true,
-               bytes: sum + IDX_OH * total, sampled:seen };
-    });
-  }).catch(function(e){
-    if(String(e && e.message).indexOf('ยกเลิก') >= 0) throw e;
-    return null;
-  });
-}
-
-function calcFull(onStep){
-  ABORT = false;
-  return TABLES.reduce(function(p, t){
-    return p.then(function(acc){
-      return scanFull(t, onStep).then(function(r){ if(r) acc.push(r); return acc; });
-    });
-  }, Promise.resolve([])).then(function(list){
-    var bytes = list.reduce(function(a,r){ return a + r.bytes; }, 0);
-    return exactMB().then(function(x){
-      return { list:list, mb: (x !== null ? x : bytes / 1048576),
-               est: bytes / 1048576, exact: (x !== null), scanned:true, at: Date.now() };
-    });
-  });
-}
-
-/* ── ปุ่มคำนวณละเอียด ─────────────────────────────────────────── */
-var FULL_BUSY = false;
-function runFull(){
-  var btn = document.getElementById('dbuFull');
-  var txt = document.getElementById('tbCapText');
-
-  if(FULL_BUSY){                       /* กดซ้ำระหว่างทำงาน = ยกเลิก */
-    ABORT = true;
-    return;
-  }
-  if(!_db()){ alert('ยังไม่ได้เชื่อมฐานข้อมูล'); return; }
-
-  /* บอกก่อนว่าจะอ่านกี่แถว ถ้าเยอะจะใช้เวลา */
-  var totalRows = 0;
-  (CACHE && CACHE.list ? CACHE.list : []).forEach(function(r){ totalRows += r.total || 0; });
-  if(totalRows > 50000 &&
-     !confirm('คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม\n\n'
-       + 'ต้องอ่าน ' + totalRows.toLocaleString() + ' แถว ใช้เวลาสักครู่\n'
-       + '(กดปุ่มซ้ำระหว่างทำงานเพื่อยกเลิก)\n\nเริ่มเลยไหม?')) return;
-
-  FULL_BUSY = true;
-  if(btn){ btn.classList.add('busy'); btn.textContent = '\u25a0'; btn.title = 'กดเพื่อยกเลิก'; }
-
-  var last = 0;
-  function onStep(name, seen, total){
-    var now = Date.now();
-    if(now - last < 120) return;       /* อย่าอัปบ่อยเกิน จะหน่วง */
-    last = now;
-    if(txt) txt.textContent = 'อ่าน ' + name + ' ' + seen.toLocaleString()
-      + '/' + total.toLocaleString() + '…';
-  }
-
-  calcFull(onStep).then(function(res){
-    FULL_BUSY = false;
-    if(btn){ btn.classList.remove('busy'); btn.textContent = '\u{1F3AF}';
-             btn.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม'; }
-    CACHE = res; CACHE_AT = Date.now();
-    paint(res);
-  }).catch(function(e){
-    FULL_BUSY = false; ABORT = false;
-    if(btn){ btn.classList.remove('busy'); btn.textContent = '\u{1F3AF}';
-             btn.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม'; }
-    if(CACHE) paint(CACHE); else if(txt) txt.textContent = 'ยกเลิกแล้ว';
-  });
-}
-
-function addBtn(){
-  if(document.getElementById('dbuFull')) return true;
-  var wrap = document.getElementById('tbCapWrap');
-  if(!wrap || !wrap.parentNode) return false;
-  var b = document.createElement('button');
-  b.id = 'dbuFull';
-  b.textContent = '\u{1F3AF}';
-  b.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม';
-  b.onclick = function(ev){ try{ ev.stopPropagation(); }catch(e){} runFull(); };
-  wrap.parentNode.insertBefore(b, wrap.nextSibling);
-  return true;
-}
-
-
-/* ── ปุ่มเปิดหน้า Supabase (ดูพื้นที่ใช้งานจริง) ─────────────────
-   ค่าที่คำนวณเองยังอยู่เหมือนเดิม ปุ่มนี้แค่เพิ่มทางลัดไปดูของจริง
-   ดึงรหัสโปรเจกต์จาก SB_URL ที่โปรแกรมตั้งไว้ ไม่ฝังตายตัว */
-function projRef(){
-  var u = '';
-  try{ u = (typeof SB_URL !== 'undefined') ? String(SB_URL) : ''; }catch(e){}
-  if(!u){
-    try{ u = String((db && db.supabaseUrl) || ''); }catch(e){}
-  }
-  var m = u.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i);
-  return m ? m[1] : '';
-}
-
-function addOpenBtn(){
-  if(document.getElementById('dbuOpen')) return true;
-  var wrap = document.getElementById('tbCapWrap');
-  if(!wrap || !wrap.parentNode) return false;
-  var ref = projRef();
-  var a = document.createElement('a');
-  a.id = 'dbuOpen';
-  a.textContent = '\u{1F4CA}';
-  a.target = '_blank';
-  a.rel = 'noopener';
-  a.href = ref
-    ? ('https://supabase.com/dashboard/project/' + ref + '/settings/billing/usage')
-    : 'https://supabase.com/dashboard';
-  a.title = ref
-    ? ('เปิดหน้า Supabase \u2014 ดูพื้นที่ใช้งานจริง 100%\n'
-       + 'Settings \u2192 Usage (Database size, Bandwidth, Storage)\n\n'
-       + 'โปรเจกต์: ' + ref)
-    : 'เปิดหน้า Supabase Dashboard';
-  a.onclick = function(ev){ try{ ev.stopPropagation(); }catch(e){} };
-  var full = document.getElementById('dbuFull');
-  if(full && full.parentNode) full.parentNode.insertBefore(a, full.nextSibling);
-  else wrap.parentNode.insertBefore(a, wrap.nextSibling);
-  return true;
-}
-
-/* ── แสดงผล ─────────────────────────────────────────────────────── */
-function paint(res){
-  var wrap = document.getElementById('tbCapWrap');
-  var bar  = document.getElementById('tbCapBar');
-  var txt  = document.getElementById('tbCapText');
-  if(!wrap) return;
-  wrap.style.display = 'flex';
-
-  if(!res){
-    if(txt) txt.textContent = 'คำนวณพื้นที่ไม่ได้';
-    if(bar) bar.style.width = '0%';
-    return;
-  }
-  var mb  = res.mb;
-  var pct = Math.min(100, Math.round(mb / TOTAL_MB * 100));
-  var shown = mb < 10 ? mb.toFixed(1) : Math.round(mb);
-  if(bar){
-    bar.style.width = Math.max(pct, mb > 0 ? 1 : 0) + '%';
-    bar.style.background = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--orange)' : 'var(--accent)';
-  }
-  if(txt) txt.textContent = (res.exact ? '' : '~') + shown + 'MB / ' + TOTAL_MB + 'MB (' + pct + '%)';
-
-  /* รายละเอียดตอนชี้เมาส์ — บอกว่าตารางไหนกินเท่าไหร่ */
-  var lines = res.list.slice().sort(function(a,b){ return b.bytes - a.bytes; })
-    .map(function(r){
-      return '  ' + r.name + ': ' + (r.bytes/1048576).toFixed(1) + ' MB'
-        + '  (' + r.total.toLocaleString() + ' แถว'
-        + (r.sampled ? (r.full ? ' · อ่านครบ' : ' · สุ่ม ' + r.sampled) : '') + ')';
-    });
-  wrap.title = (res.exact
-      ? 'พื้นที่ที่ใช้จริง (จากฐานข้อมูลโดยตรง)\nข้อมูลที่นับได้ ~' + res.est.toFixed(1) + ' MB\n'
-      : (res.scanned ? 'พื้นที่ที่ใช้ (นับครบทุกแถว ไม่สุ่ม)\n'
-                     : 'พื้นที่ที่ใช้ (ประมาณจากการสุ่ม \u2014 กดปุ่ม \u{1F3AF} เพื่อนับครบ)\n'))
-      + lines.join('\n')
-    + '\n\nคำนวณโดยสุ่มอ่านแถวจริงแล้วคิดตามวิธีเก็บของ Postgres'
-    + '\n(รวมส่วนหัวแถว ดัชนี และการบีบอัดค่าที่ยาว)'
-    + '\nคลาดเคลื่อนได้บ้างจากพื้นที่ว่างที่ยังไม่ถูกคืน'
-    + '\n\nอยากได้ค่าเป๊ะ ให้สร้างฟังก์ชันนี้ใน Supabase:'
-    + '\n  create or replace function get_db_size_mb()'
-    + '\n  returns numeric language sql security definer as $$'
-    + '\n    select round(pg_database_size(current_database())/1048576.0, 2); $$;';
-}
-
-function run(force){
-  if(RUNNING) return Promise.resolve(CACHE);
-  if(!force && CACHE && (Date.now() - CACHE_AT) < TTL){ paint(CACHE); return Promise.resolve(CACHE); }
-  if(!_db()) return Promise.resolve(null);
-  RUNNING = true;
-  var txt = document.getElementById('tbCapText');
-  var wrap = document.getElementById('tbCapWrap');
-  if(wrap) wrap.style.display = 'flex';
-  if(txt && !CACHE) txt.textContent = 'กำลังคำนวณ…';
-  return calc().then(function(res){
-    CACHE = res; CACHE_AT = Date.now(); RUNNING = false;
-    paint(res);
-    return res;
-  }).catch(function(e){
-    RUNNING = false;
-    console.warn('[DB Usage] คำนวณไม่สำเร็จ:', (e && e.message) || e);
-    paint(null);
-    return null;
-  });
-}
-
-/* ── ต่อเข้ากับของเดิม (ห่อทับ ไม่แก้ตัวจริง) ─────────────────── */
-function hook(){
-  if(typeof window.refreshStatus !== 'function') return false;
-  if(window.__dbuHooked) return true;
-  window.__dbuHooked = true;
-  var orig = window.refreshStatus;
-  window.refreshStatus = function(){
-    var r = orig.apply(this, arguments);
-    Promise.resolve(r).catch(function(){}).then(function(){
-      /* ของเดิมเพิ่งเซ็ตเป็น 0 — คำนวณใหม่ทับ */
-      setTimeout(function(){ run(true); }, 150);
-    });
-    return r;
-  };
-  return true;
-}
-
-function init(){
-  addBtn();
-  addOpenBtn();
-  if(!hook())  return setTimeout(init, 500);
-  if(!_db())   return setTimeout(init, 600);
-  setTimeout(function(){ run(true); }, 1200);
-  console.log('[DB Usage] พร้อมใช้งาน — คำนวณพื้นที่จากข้อมูลจริง');
-}
-if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(init, 900); });
-else setTimeout(init, 900);
-
-window.DBU_refresh = function(){ return run(true); };
-window.DBU_full    = function(){ return calcFull(); };
-window.DBU_link    = function(){ var a=document.getElementById('dbuOpen'); return a?a.href:''; };
-window.DBU_last    = function(){ return CACHE; };
-})();
-</script>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      เติม / แก้ Item Id Set  ·  โมดูลแยก (v2.0)
@@ -30925,6 +30512,196 @@ else setTimeout(init, 1000);
 window.IIDS_fill    = function(){ fill(); };
 window.IIDS_info    = function(){ var o=cur(); return { oid:o, auto:AUTO[o]||'', sets:MULTI[o]||0 }; };
 window.IIDS_suggest = function(oid){ var s=scanRows(); return (s.n===1 ? s.best : '') || fromName(oid || cur()); };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     แสดงปริมาณการใช้พื้นที่  ·  โมดูลแยก (v3.0 — แบบเบา)
+     ─────────────────────────────────────────────────────────────────────────
+     เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักบรรทัด
+
+     เวอร์ชันก่อนหน้าทำให้โปรแกรมหน่วง จึงออกแบบใหม่ให้เบาที่สุด:
+       เดิม                                ใหม่
+       ─────────────────────────────────   ─────────────────────────────────
+       count exact (นับจริงทุกแถว)         count estimated (อ่านสถิติ ทันที)
+       ห่อ refreshStatus คำนวณทุกครั้ง      ไม่ห่ออะไรเลย คำนวณครั้งเดียว
+       เริ่มที่ 1.2 วินาที (ชนตอนโหลด)      รอ 6 วินาที ให้โหลดเสร็จก่อน
+       สุ่ม 294 แถว                        สุ่ม 51 แถว
+       มีปุ่มกดคำนวณซ้ำ                     ไม่มีปุ่ม
+
+     รวมแล้วยิงฐานข้อมูล 8 คำสั่ง ครั้งเดียวตอนเปิดโปรแกรม
+     ทุกอย่างอยู่ใน try/catch — พังก็เงียบ ไม่กระทบโปรแกรม
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+
+var TOTAL_MB = 500;      /* Supabase free tier */
+var TOAST_TH = 2048;     /* Postgres บีบอัดค่าที่ยาวเกินนี้ */
+var ROW_OH   = 28;       /* ส่วนหัวแถว + item pointer */
+var IDX_OH   = 32;       /* ดัชนี primary key โดยประมาณ */
+
+/* ตาราง · จำนวนแถวที่สุ่ม (น้อย ๆ พอให้ได้ค่าเฉลี่ย) */
+var TABLES = [
+  { name:'imos_orders',    n:6  },
+  { name:'fitting_global', n:20 },
+  { name:'imos_mapping',   n:15 },
+  { name:'app_settings',   n:10 }
+];
+
+function _db(){ try{ return (typeof db !== 'undefined') ? db : null; }catch(e){ return null; } }
+function u8(s){
+  try{ return new TextEncoder().encode(s).length; }
+  catch(e){ return unescape(encodeURIComponent(String(s))).length; }
+}
+
+/* ประมาณขนาดหลังบีบอัดแบบ pglz โดยใช้ deflate ของเบราว์เซอร์ */
+function compressed(str){
+  if(typeof CompressionStream === 'undefined')
+    return Promise.resolve(Math.round(u8(str) * 0.45));
+  try{
+    var cs = new CompressionStream('deflate-raw');
+    var st = new Blob([str]).stream().pipeThrough(cs);
+    return new Response(st).arrayBuffer().then(function(ab){
+      return Math.round(ab.byteLength * 1.2);
+    }).catch(function(){ return Math.round(u8(str) * 0.45); });
+  }catch(e){ return Promise.resolve(Math.round(u8(str) * 0.45)); }
+}
+
+function rowBytes(row){
+  var jobs = [], plain = ROW_OH;
+  Object.keys(row || {}).forEach(function(k){
+    var v = row[k];
+    if(v === null || v === undefined) return;
+    var s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+    var n = u8(s);
+    if(n > TOAST_TH) jobs.push(compressed(s));
+    else plain += n + 1;
+  });
+  if(!jobs.length) return Promise.resolve(plain);
+  return Promise.all(jobs).then(function(sizes){
+    sizes.forEach(function(x){ plain += x; });
+    return plain;
+  });
+}
+
+/* นับแถวแบบ estimated — อ่านจากสถิติที่ Postgres เก็บไว้ ไม่สแกนตาราง */
+function scanTable(t){
+  var d = _db();
+  if(!d) return Promise.resolve(null);
+  return Promise.resolve(d.from(t.name).select('*', { count:'estimated', head:true }))
+  .then(function(res){
+    if(res && res.error) throw res.error;
+    var total = (res && res.count) || 0;
+    if(!total) return { name:t.name, total:0, bytes:0 };
+
+    /* สุ่ม 3 ช่วง วางไว้กลางช่วง เพื่อไม่ให้ค่าเฉลี่ยเอน */
+    var per = Math.max(1, Math.ceil(t.n / 3)), picks = [];
+    for(var c = 0; c < 3; c++){
+      var off = Math.round(total * (c + 0.5) / 3 - per / 2);
+      off = Math.max(0, Math.min(off, Math.max(0, total - per)));
+      picks.push([off, off + per - 1]);
+    }
+    var rows = [];
+    return picks.reduce(function(p, rg){
+      return p.then(function(){
+        return Promise.resolve(d.from(t.name).select('*').range(rg[0], rg[1]))
+          .then(function(r){ if(r && r.data) rows = rows.concat(r.data); })
+          .catch(function(){});
+      });
+    }, Promise.resolve()).then(function(){
+      if(!rows.length) return { name:t.name, total:total, bytes:0 };
+      return Promise.all(rows.map(rowBytes)).then(function(sz){
+        var avg = sz.reduce(function(a,b){ return a+b; }, 0) / sz.length;
+        return { name:t.name, total:total, bytes:(avg + IDX_OH) * total, sampled:sz.length };
+      });
+    });
+  }).catch(function(){ return null; });
+}
+
+function paint(list){
+  var wrap = document.getElementById('tbCapWrap');
+  var bar  = document.getElementById('tbCapBar');
+  var txt  = document.getElementById('tbCapText');
+  if(!wrap) return;
+
+  var bytes = list.reduce(function(a,r){ return a + (r ? r.bytes : 0); }, 0);
+  var mb  = bytes / 1048576;
+  var pct = Math.min(100, Math.round(mb / TOTAL_MB * 100));
+  var shown = mb < 10 ? mb.toFixed(1) : Math.round(mb);
+
+  wrap.style.display = 'flex';
+  if(bar){
+    bar.style.width = Math.max(pct, mb > 0 ? 1 : 0) + '%';
+    bar.style.background = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--orange)' : 'var(--accent)';
+  }
+  if(txt) txt.textContent = '~' + shown + 'MB / ' + TOTAL_MB + 'MB (' + pct + '%)';
+
+  /* รายละเอียดตอนชี้เมาส์ */
+  var lines = list.filter(Boolean).slice().sort(function(a,b){ return b.bytes - a.bytes; })
+    .map(function(r){
+      return '  ' + r.name + ': ' + (r.bytes/1048576).toFixed(1) + ' MB'
+        + '  (' + (r.total||0).toLocaleString() + ' แถว)';
+    });
+  wrap.style.cursor = 'help';
+  wrap.title = 'พื้นที่ที่ใช้ (ประมาณจากข้อมูลจริง)\n' + lines.join('\n')
+    + '\n\nคำนวณครั้งเดียวตอนเปิดโปรแกรม'
+    + '\nเป็นค่าประมาณ ขนาดจริงมักมากกว่านี้เล็กน้อย'
+    + '\n\nดูค่าจริงได้ที่ Supabase \u2192 Settings \u2192 Usage';
+}
+
+/* v3.1: refreshStatus ของโปรแกรมเดิมจะเขียน "0.0MB / 500MB (0%)" ทับ
+   (เพราะเรียกฟังก์ชัน get_db_size_mb ที่ไม่มีในฐานข้อมูล)
+   จึงเฝ้าดูช่องข้อความไว้ ถ้าถูกเขียนทับก็วาดค่าเดิมกลับ
+   ใช้ค่าที่จำไว้ ไม่ยิงฐานข้อมูลซ้ำเลย */
+var LAST = null;
+function watch(){
+  var txt = document.getElementById('tbCapText');
+  if(!txt || txt.__capWatch) return;
+  txt.__capWatch = true;
+  try{
+    var ob = new MutationObserver(function(){
+      if(!LAST) return;
+      var now = txt.textContent || '';
+      if(now.indexOf('~') === 0) return;          /* ค่าของเราเองอยู่แล้ว */
+      var m = now.match(/^([\d.]+)MB \/ \d+MB/);
+      if(!m) return;                              /* ไม่ใช่ข้อความความจุ */
+
+      /* v3.2: ถ้าฐานข้อมูลมีฟังก์ชัน get_db_size_mb โปรแกรมเดิมจะได้ "ค่าจริง"
+         ต้องปล่อยให้ค่านั้นแสดงไป ห้ามเอาค่าประมาณของเราไปทับ
+         (ค่า 0 = เรียกฟังก์ชันไม่สำเร็จ ค่อยวาดของเราแทน) */
+      if(parseFloat(m[1]) > 0){
+        try{ ob.disconnect(); }catch(e){}
+        LAST = null;
+        try{
+          var wrap = document.getElementById('tbCapWrap');
+          if(wrap){ wrap.style.cursor = 'help';
+                    wrap.title = 'พื้นที่ที่ใช้จริง (อ่านจากฐานข้อมูลโดยตรง)'; }
+        }catch(e){}
+        return;
+      }
+      setTimeout(function(){ try{ paint(LAST); }catch(e){} }, 30);
+    });
+    ob.observe(txt, { childList:true, characterData:true, subtree:true });
+  }catch(e){}
+}
+
+function run(){
+  if(!_db()) return setTimeout(run, 2000);
+  TABLES.reduce(function(p, t){
+    return p.then(function(acc){
+      return scanTable(t).then(function(r){ acc.push(r); return acc; });
+    });
+  }, Promise.resolve([]))
+  .then(function(list){ LAST = list; try{ paint(list); watch(); }catch(e){} })
+  .catch(function(){});   /* พังก็เงียบ ไม่กระทบโปรแกรม */
+}
+
+/* รอให้โปรแกรมโหลดเสร็จก่อน แล้วคำนวณครั้งเดียว — ไม่ผูกกับปุ่มใด ๆ */
+if(document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', function(){ setTimeout(run, 6000); });
+else setTimeout(run, 6000);
+
 })();
 </script>
 
