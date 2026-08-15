@@ -30573,68 +30573,63 @@ window.DBU_last    = function(){ return CACHE; };
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
-     เติม Item Id Set ให้อัตโนมัติ  ·  โมดูลแยก (v1.0)
+     เติม / แก้ Item Id Set  ·  โมดูลแยก (v2.0)
      ─────────────────────────────────────────────────────────────────────────
      เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักบรรทัด
 
-     ปัญหาเดิม: ตัวเดาของโปรแกรม (_suggestIids) รองรับแค่ชื่อรูปแบบ BO69_0403
-                Order อย่าง 2603087002_AITEST จึงไม่ถูกเติม ต้องพิมพ์เอง
+     ปัญหา 1: ตัวเดาของโปรแกรม (_suggestIids) รองรับแค่ชื่อรูปแบบ BO69_0403
+              Order อย่าง 2603087002_AITEST จึงไม่ถูกเติม
 
-     ลำดับการเติม (หยุดที่ตัวแรกที่เจอ):
-       1. ค่าที่เคยบันทึกไว้ของ Order นั้น       ← ของเดิมทำอยู่แล้ว เคารพเสมอ
-       2. ค่าที่มีอยู่ในข้อมูล BOM จริง          ← แม่นที่สุด
-       3. เดาจากชื่อ Order รูปแบบ BOxx_xxxx      ← ของเดิม
-       4. เดาจากชื่อ Order รูปแบบอื่น            ← เพิ่มใหม่
+     ปัญหา 2: Order นำเข้า — แต่ละแถวมีค่าของตัวเองจากไฟล์
+              พิมพ์ในช่อง Item Id Set แล้วตารางไม่เปลี่ยนตาม
+
+     วิธีแก้:
+       - เติมอัตโนมัติจากข้อมูลจริง / ชื่อ Order (หลายรูปแบบ)
+       - ถ้าข้อมูลมีหลายค่า -> ไม่เติมค่าเดียวลงช่อง (ปล่อยว่าง)
+         เพื่อให้ตารางแสดงค่าจริงของแต่ละแถว และไม่ทับข้อมูลโดยไม่ตั้งใจ
+       - ถ้าผู้ใช้พิมพ์เอง -> บังคับใช้ค่านั้นกับทุกแถว (ทั้ง Order ปกติและนำเข้า)
      ══════════════════════════════════════════════════════════════════════ -->
 <script>
 (function(){
 'use strict';
 
+var AUTO  = {};   /* oid -> ค่าที่โมดูลเติมให้เอง (ใช้แยกว่าผู้ใช้แก้เองหรือยัง) */
+var MULTI = {};   /* oid -> จำนวนค่าที่พบในข้อมูล (>1 = มีหลายชุด) */
+
 function q(id){ return document.getElementById(id); }
 function cur(){ try{ return currentOrder || ''; }catch(e){ return ''; } }
+function copy(r){ var o={}; for(var k in r) if(Object.prototype.hasOwnProperty.call(r,k)) o[k]=r[k]; return o; }
 
-/* ── หา Item Id Set จากข้อมูล BOM จริง ─────────────────────────── */
-function fromRows(){
+/* อ่านค่าที่มีอยู่ในข้อมูล BOM จริง */
+function scanRows(){
   var rows = [];
-  try{ rows = (typeof buildAXRows === 'function') ? (buildAXRows() || []) : []; }catch(e){ return ''; }
-  if(!rows.length) return '';
-  /* นับว่าค่าไหนพบบ่อยสุด (เผื่อมีหลายค่าปนกัน) */
-  var tally = {}, best = '', bestN = 0;
+  try{ rows = (typeof __iidsRawRows === 'function') ? (__iidsRawRows() || []) : []; }catch(e){}
+  if(!rows.length) return { best:'', n:0 };
+  var tally = {}, best = '', bestN = 0, n = 0;
   rows.forEach(function(r){
     var v = String((r && r['Item Id Set']) || '').trim();
-    if(!v || v === '—' || v === '-') return;
-    tally[v] = (tally[v] || 0) + 1;
+    if(!v || v === '\u2014' || v === '-') return;
+    if(!tally[v]){ tally[v] = 0; n++; }
+    tally[v]++;
     if(tally[v] > bestN){ bestN = tally[v]; best = v; }
   });
-  return best;
+  return { best:best, n:n };
 }
 
-/* ── เดาจากชื่อ Order (ครอบคลุมรูปแบบที่ของเดิมไม่รองรับ) ──────── */
+/* เดาจากชื่อ Order (ครอบคลุมรูปแบบที่ของเดิมไม่รองรับ) */
 function fromName(oid){
   if(!oid) return '';
-  var s = String(oid).trim();
-
-  /* BO69_0403 → RE-0069-0403  (กติกาเดิมของโปรแกรม) */
-  var m = s.match(/BO(\d+)[_\-\s]+(\d+)/i);
+  var s = String(oid).trim(), m;
+  m = s.match(/BO(\d+)[_\-\s]+(\d+)/i);
   if(m) return 'RE-' + m[1].padStart(4,'0') + '-' + m[2];
-
-  /* มีรูปแบบ RE-xxxx-xxxx อยู่ในชื่ออยู่แล้ว */
   m = s.match(/RE[-_]?(\d{3,4})[-_](\d{3,4})/i);
   if(m) return 'RE-' + m[1].padStart(4,'0') + '-' + m[2];
-
-  /* ชื่อขึ้นต้นด้วยเลขยาว เช่น 2603087002_AITEST → RE-2603-087002
-     แบ่ง 4 ตัวแรกเป็นชุดหน้า ที่เหลือเป็นชุดหลัง */
   m = s.match(/^(\d{8,})/);
-  if(m){
-    var d = m[1];
-    return 'RE-' + d.slice(0,4) + '-' + d.slice(4);
-  }
+  if(m) return 'RE-' + m[1].slice(0,4) + '-' + m[1].slice(4);
   return '';
 }
 
-/* ── เติมค่าลงช่อง ───────────────────────────────────────────────── */
 function apply(val, oid, save){
-  if(!val) return false;
   var inp = q('itemIdSetInput');
   try{ axItemIdSet = val; }catch(e){}
   if(inp){
@@ -30642,13 +30637,11 @@ function apply(val, oid, save){
     try{ if(typeof _resizeIidsInput === 'function') _resizeIidsInput(inp); }catch(e){}
   }
   try{ if(typeof renderAX === 'function') renderAX(); }catch(e){}
-  if(save && oid){
+  if(save && oid && val){
     try{ if(typeof _saveItemIdSet === 'function') _saveItemIdSet(oid, val); }catch(e){}
   }
-  return true;
 }
 
-/* ── เติมเมื่อยังว่าง ────────────────────────────────────────────── */
 function fill(){
   var oid = cur();
   if(!oid) return;
@@ -30656,24 +30649,65 @@ function fill(){
   var now = '';
   try{ now = String(axItemIdSet || '').trim(); }catch(e){}
   if(!now && inp) now = String(inp.value || '').trim();
-  if(now) return;                       /* มีค่าอยู่แล้ว (หรือผู้ใช้พิมพ์เอง) → ไม่แตะ */
 
-  var v = fromRows();                   /* 1) จากข้อมูลจริง — แม่นสุด */
-  if(!v) v = fromName(oid);             /* 2) เดาจากชื่อ Order */
-  if(v) apply(v, oid, true);
+  var sc = scanRows();
+  MULTI[oid] = sc.n;
+
+  if(inp){
+    inp.title = (sc.n > 1)
+      ? ('ข้อมูลมี Item Id Set ' + sc.n + ' ค่า \u2014 ตารางใช้ค่าของแต่ละแถว\n'
+         + 'พิมพ์ตรงนี้ถ้าต้องการบังคับใช้ค่าเดียวกับทุกแถว')
+      : 'Item Id Set ที่ใช้กับทุกแถว';
+  }
+
+  if(now) return;                            /* มีค่าอยู่แล้ว -> ไม่แตะ */
+  if(sc.n > 1){ AUTO[oid] = ''; return; }    /* หลายค่า -> ปล่อยว่าง ให้ตารางโชว์ค่าจริง */
+
+  var v = sc.best || fromName(oid);
+  if(!v) return;
+  AUTO[oid] = v;
+  apply(v, oid, true);
 }
 
-/* ── ต่อเข้ากับของเดิม (ห่อทับ ไม่แก้ตัวจริง) ─────────────────── */
 function hook(){
   if(typeof window.selectOrder !== 'function') return false;
+  if(typeof window.buildAXRows !== 'function') return false;
   if(window.__iidsHooked) return true;
   window.__iidsHooked = true;
 
-  var orig = window.selectOrder;
+  var origBuild = window.buildAXRows;
+  /* ตัวอ่านแถวดิบ (ก่อนถูกทับค่า) ใช้ตรวจว่าข้อมูลมีกี่ชุด */
+  window.__iidsRawRows = function(){
+    try{ return origBuild.apply(window, arguments) || []; }catch(e){ return []; }
+  };
+
+  /* ผู้ใช้พิมพ์เอง -> บังคับใช้กับทุกแถว (ใช้ได้ทั้ง Order ปกติและนำเข้า) */
+  window.buildAXRows = function(){
+    var rows = origBuild.apply(this, arguments);
+    if(!rows || !rows.length) return rows;
+    var oid = cur(), v = '';
+    try{ v = String(axItemIdSet || '').trim(); }catch(e){}
+    if(!v) return rows;
+    if(AUTO[oid] && AUTO[oid] === v){
+      /* ค่าที่เราเติมเอง: ถ้าแถวมีค่าของตัวเองอยู่แล้ว -> ไม่ทับ
+         แต่ถ้าแถวว่าง (ข้อมูลไม่มีคอลัมน์นี้) -> ต้องเติมให้ ไม่งั้นตารางโล่ง */
+      var hasOwn = rows.some(function(r){
+        var x = String((r && r['Item Id Set']) || '').trim();
+        return x && x !== '\u2014' && x !== '-';
+      });
+      if(hasOwn) return rows;
+    }
+    return rows.map(function(r){
+      var o = copy(r);
+      o['Item Id Set'] = v;
+      return o;
+    });
+  };
+
+  var origSel = window.selectOrder;
   window.selectOrder = function(oid){
-    var r = orig.apply(this, arguments);
+    var r = origSel.apply(this, arguments);
     Promise.resolve(r).catch(function(){}).then(function(){
-      /* รอให้ของเดิมโหลดค่าที่บันทึกไว้ก่อน แล้วค่อยเติมถ้ายังว่าง */
       setTimeout(fill, 250);
       setTimeout(fill, 900);
     });
@@ -30684,13 +30718,14 @@ function hook(){
 
 function init(){
   if(!hook()) return setTimeout(init, 500);
-  console.log('[Item Id Set] เติมอัตโนมัติพร้อมใช้งาน');
+  console.log('[Item Id Set] เติม/แก้อัตโนมัติพร้อมใช้งาน');
 }
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(init, 1000); });
 else setTimeout(init, 1000);
 
 window.IIDS_fill    = function(){ fill(); };
-window.IIDS_suggest = function(oid){ return fromRows() || fromName(oid || cur()); };
+window.IIDS_info    = function(){ var o=cur(); return { oid:o, auto:AUTO[o]||'', sets:MULTI[o]||0 }; };
+window.IIDS_suggest = function(oid){ var s=scanRows(); return (s.n===1 ? s.best : '') || fromName(oid || cur()); };
 })();
 </script>
 
