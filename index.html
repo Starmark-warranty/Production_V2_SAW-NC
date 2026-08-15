@@ -30374,6 +30374,14 @@ window.MBOM_state = function(){ return {on:MBOM.on, blank:MBOM.blank, sel:MBOM.s
      ══════════════════════════════════════════════════════════════════════ -->
 <style>
 #tbCapWrap{cursor:help}
+#dbuOpen{background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px;
+  padding:2px 5px;border-radius:4px;line-height:1;transition:all .13s;font-family:inherit;
+  text-decoration:none;display:inline-flex;align-items:center}
+#dbuOpen:hover{background:var(--s3);color:#3ecf8e}
+#dbuFull{background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px;
+  padding:2px 5px;border-radius:4px;line-height:1;transition:all .13s;font-family:inherit}
+#dbuFull:hover{background:var(--s3);color:var(--accent)}
+#dbuFull.busy{color:var(--orange);cursor:progress}
 .dbu-note{font-size:9px;color:var(--text3);margin-left:3px}
 </style>
 <script>
@@ -30387,12 +30395,14 @@ var ROW_OH   = 28;                  /* ส่วนหัวแถว + item poi
 var IDX_OH   = 32;                  /* ดัชนี primary key โดยประมาณ */
 
 /* ตารางที่ใช้ · จำนวนแถวที่สุ่ม (แถวใหญ่สุ่มน้อย แถวเล็กสุ่มมาก) */
+/* n = จำนวนแถวที่สุ่ม (ถ้าตารางมีแถวน้อยกว่า FULL_MAX จะอ่านครบทุกแถว = ไม่มีคลาดจากการสุ่ม) */
 var TABLES = [
-  { name:'imos_orders',    n:12 },
-  { name:'fitting_global', n:60 },
-  { name:'imos_mapping',   n:40 },
-  { name:'app_settings',   n:10 }
+  { name:'imos_orders',    n:24 },
+  { name:'fitting_global', n:150 },
+  { name:'imos_mapping',   n:120 },
+  { name:'app_settings',   n:50 }
 ];
+var FULL_MAX = 300;      /* ตารางที่แถวไม่เกินนี้ -> อ่านครบ ไม่ต้องสุ่ม */
 
 var CACHE = null, CACHE_AT = 0, RUNNING = false;
 
@@ -30444,12 +30454,20 @@ function scanTable(t){
     var total = (res && res.count) || 0;
     if(!total) return { name:t.name, total:0, bytes:0, avg:0, sampled:0 };
 
-    /* สุ่มแบบกระจาย 3 ช่วง (ต้น/กลาง/ท้าย) เพื่อไม่ให้เอนไปทางใดทางหนึ่ง */
-    var per = Math.max(1, Math.ceil(t.n / 3)), picks = [];
-    for(var c = 0; c < 3; c++){
-      var off = Math.floor(total * c / 3);
-      off = Math.max(0, Math.min(off, total - per));
-      picks.push([off, off + per - 1]);
+    var picks = [], full = (total <= FULL_MAX);
+    if(full){
+      /* ตารางเล็ก -> อ่านครบทุกแถว ไม่มีความคลาดจากการสุ่มเลย */
+      for(var o2 = 0; o2 < total; o2 += 200) picks.push([o2, Math.min(o2 + 199, total - 1)]);
+    } else {
+      /* สุ่มแบบกระจาย 5 ช่วง (ต้น..ท้าย) เพื่อไม่ให้เอนไปทางใดทางหนึ่ง */
+      /* วางจุดสุ่มไว้ "กลาง" ของแต่ละช่วง ไม่ใช่ต้นช่วง
+         ไม่งั้นค่าเฉลี่ยจะเอนไปทางต้นตาราง (ถ้าขนาดแถวไล่ตามลำดับ) */
+      var per = Math.max(1, Math.ceil(t.n / 5));
+      for(var c = 0; c < 5; c++){
+        var off = Math.round(total * (c + 0.5) / 5 - per / 2);
+        off = Math.max(0, Math.min(off, total - per));
+        picks.push([off, off + per - 1]);
+      }
     }
     var rows = [];
     return picks.reduce(function(p, rg){
@@ -30463,11 +30481,25 @@ function scanTable(t){
       return Promise.all(rows.map(rowBytes)).then(function(sz){
         var sum = sz.reduce(function(a,b){ return a+b; }, 0);
         var avg = sum / sz.length;
-        return { name:t.name, total:total, avg:avg,
+        return { name:t.name, total:total, avg:avg, full:full,
                  bytes:(avg + IDX_OH) * total, sampled:sz.length };
       });
     });
   }).catch(function(){ return null; });
+}
+
+/* ถ้าฐานข้อมูลมีฟังก์ชัน get_db_size_mb -> ใช้ค่าจริงเลย (เป๊ะ 100%)
+   ถ้าไม่มี -> ค่อยประมาณจากการอ่านข้อมูล */
+function exactMB(){
+  var d = _db();
+  if(!d || typeof d.rpc !== 'function') return Promise.resolve(null);
+  try{
+    return Promise.resolve(d.rpc('get_db_size_mb')).then(function(r){
+      if(r && r.error) return null;
+      var v = (r && r.data !== undefined && r.data !== null) ? parseFloat(r.data) : NaN;
+      return (isFinite(v) && v > 0) ? v : null;
+    }).catch(function(){ return null; });
+  }catch(e){ return Promise.resolve(null); }
 }
 
 function calc(){
@@ -30477,8 +30509,167 @@ function calc(){
     });
   }, Promise.resolve([])).then(function(list){
     var bytes = list.reduce(function(a,r){ return a + r.bytes; }, 0);
-    return { list:list, mb: bytes / 1048576, at: Date.now() };
+    return exactMB().then(function(x){
+      return { list:list, mb: (x !== null ? x : bytes / 1048576),
+               est: bytes / 1048576, exact: (x !== null), at: Date.now() };
+    });
   });
+}
+
+
+/* ══ อ่านครบทุกแถว — ไม่สุ่มเลย (แม่นที่สุดเท่าที่ทำได้จากฝั่งโปรแกรม) ══
+   ใช้เมื่อกดปุ่ม 🎯 เท่านั้น เพราะต้องโหลดข้อมูลทั้งหมด ใช้เวลาสักครู่ */
+var PAGE = 1000;
+var ABORT = false;
+
+function scanFull(t, onStep){
+  var d = _db();
+  if(!d) return Promise.resolve(null);
+  return Promise.resolve(d.from(t.name).select('*', { count:'exact', head:true }))
+  .then(function(res){
+    if(res && res.error) throw res.error;
+    var total = (res && res.count) || 0;
+    if(!total) return { name:t.name, total:0, bytes:0, avg:0, sampled:0, full:true };
+
+    var sum = 0, seen = 0, off = 0;
+    function step(){
+      if(ABORT) return Promise.reject(new Error('ยกเลิกแล้ว'));
+      if(off >= total) return Promise.resolve();
+      var to = Math.min(off + PAGE - 1, total - 1);
+      return Promise.resolve(d.from(t.name).select('*').range(off, to))
+        .then(function(r){
+          var rows = (r && r.data) || [];
+          return Promise.all(rows.map(rowBytes)).then(function(sz){
+            sz.forEach(function(x){ sum += x; });
+            seen += sz.length;
+            off = to + 1;
+            if(onStep) onStep(t.name, seen, total);
+            return step();
+          });
+        });
+    }
+    return step().then(function(){
+      if(!seen) return { name:t.name, total:total, bytes:0, avg:0, sampled:0, full:true };
+      return { name:t.name, total:total, avg:sum/seen, full:true,
+               bytes: sum + IDX_OH * total, sampled:seen };
+    });
+  }).catch(function(e){
+    if(String(e && e.message).indexOf('ยกเลิก') >= 0) throw e;
+    return null;
+  });
+}
+
+function calcFull(onStep){
+  ABORT = false;
+  return TABLES.reduce(function(p, t){
+    return p.then(function(acc){
+      return scanFull(t, onStep).then(function(r){ if(r) acc.push(r); return acc; });
+    });
+  }, Promise.resolve([])).then(function(list){
+    var bytes = list.reduce(function(a,r){ return a + r.bytes; }, 0);
+    return exactMB().then(function(x){
+      return { list:list, mb: (x !== null ? x : bytes / 1048576),
+               est: bytes / 1048576, exact: (x !== null), scanned:true, at: Date.now() };
+    });
+  });
+}
+
+/* ── ปุ่มคำนวณละเอียด ─────────────────────────────────────────── */
+var FULL_BUSY = false;
+function runFull(){
+  var btn = document.getElementById('dbuFull');
+  var txt = document.getElementById('tbCapText');
+
+  if(FULL_BUSY){                       /* กดซ้ำระหว่างทำงาน = ยกเลิก */
+    ABORT = true;
+    return;
+  }
+  if(!_db()){ alert('ยังไม่ได้เชื่อมฐานข้อมูล'); return; }
+
+  /* บอกก่อนว่าจะอ่านกี่แถว ถ้าเยอะจะใช้เวลา */
+  var totalRows = 0;
+  (CACHE && CACHE.list ? CACHE.list : []).forEach(function(r){ totalRows += r.total || 0; });
+  if(totalRows > 50000 &&
+     !confirm('คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม\n\n'
+       + 'ต้องอ่าน ' + totalRows.toLocaleString() + ' แถว ใช้เวลาสักครู่\n'
+       + '(กดปุ่มซ้ำระหว่างทำงานเพื่อยกเลิก)\n\nเริ่มเลยไหม?')) return;
+
+  FULL_BUSY = true;
+  if(btn){ btn.classList.add('busy'); btn.textContent = '\u25a0'; btn.title = 'กดเพื่อยกเลิก'; }
+
+  var last = 0;
+  function onStep(name, seen, total){
+    var now = Date.now();
+    if(now - last < 120) return;       /* อย่าอัปบ่อยเกิน จะหน่วง */
+    last = now;
+    if(txt) txt.textContent = 'อ่าน ' + name + ' ' + seen.toLocaleString()
+      + '/' + total.toLocaleString() + '…';
+  }
+
+  calcFull(onStep).then(function(res){
+    FULL_BUSY = false;
+    if(btn){ btn.classList.remove('busy'); btn.textContent = '\u{1F3AF}';
+             btn.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม'; }
+    CACHE = res; CACHE_AT = Date.now();
+    paint(res);
+  }).catch(function(e){
+    FULL_BUSY = false; ABORT = false;
+    if(btn){ btn.classList.remove('busy'); btn.textContent = '\u{1F3AF}';
+             btn.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม'; }
+    if(CACHE) paint(CACHE); else if(txt) txt.textContent = 'ยกเลิกแล้ว';
+  });
+}
+
+function addBtn(){
+  if(document.getElementById('dbuFull')) return true;
+  var wrap = document.getElementById('tbCapWrap');
+  if(!wrap || !wrap.parentNode) return false;
+  var b = document.createElement('button');
+  b.id = 'dbuFull';
+  b.textContent = '\u{1F3AF}';
+  b.title = 'คำนวณละเอียด — อ่านครบทุกแถว ไม่สุ่ม';
+  b.onclick = function(ev){ try{ ev.stopPropagation(); }catch(e){} runFull(); };
+  wrap.parentNode.insertBefore(b, wrap.nextSibling);
+  return true;
+}
+
+
+/* ── ปุ่มเปิดหน้า Supabase (ดูพื้นที่ใช้งานจริง) ─────────────────
+   ค่าที่คำนวณเองยังอยู่เหมือนเดิม ปุ่มนี้แค่เพิ่มทางลัดไปดูของจริง
+   ดึงรหัสโปรเจกต์จาก SB_URL ที่โปรแกรมตั้งไว้ ไม่ฝังตายตัว */
+function projRef(){
+  var u = '';
+  try{ u = (typeof SB_URL !== 'undefined') ? String(SB_URL) : ''; }catch(e){}
+  if(!u){
+    try{ u = String((db && db.supabaseUrl) || ''); }catch(e){}
+  }
+  var m = u.match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i);
+  return m ? m[1] : '';
+}
+
+function addOpenBtn(){
+  if(document.getElementById('dbuOpen')) return true;
+  var wrap = document.getElementById('tbCapWrap');
+  if(!wrap || !wrap.parentNode) return false;
+  var ref = projRef();
+  var a = document.createElement('a');
+  a.id = 'dbuOpen';
+  a.textContent = '\u{1F4CA}';
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.href = ref
+    ? ('https://supabase.com/dashboard/project/' + ref + '/settings/billing/usage')
+    : 'https://supabase.com/dashboard';
+  a.title = ref
+    ? ('เปิดหน้า Supabase \u2014 ดูพื้นที่ใช้งานจริง 100%\n'
+       + 'Settings \u2192 Usage (Database size, Bandwidth, Storage)\n\n'
+       + 'โปรเจกต์: ' + ref)
+    : 'เปิดหน้า Supabase Dashboard';
+  a.onclick = function(ev){ try{ ev.stopPropagation(); }catch(e){} };
+  var full = document.getElementById('dbuFull');
+  if(full && full.parentNode) full.parentNode.insertBefore(a, full.nextSibling);
+  else wrap.parentNode.insertBefore(a, wrap.nextSibling);
+  return true;
 }
 
 /* ── แสดงผล ─────────────────────────────────────────────────────── */
@@ -30501,16 +30692,20 @@ function paint(res){
     bar.style.width = Math.max(pct, mb > 0 ? 1 : 0) + '%';
     bar.style.background = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--orange)' : 'var(--accent)';
   }
-  if(txt) txt.textContent = '~' + shown + 'MB / ' + TOTAL_MB + 'MB (' + pct + '%)';
+  if(txt) txt.textContent = (res.exact ? '' : '~') + shown + 'MB / ' + TOTAL_MB + 'MB (' + pct + '%)';
 
   /* รายละเอียดตอนชี้เมาส์ — บอกว่าตารางไหนกินเท่าไหร่ */
   var lines = res.list.slice().sort(function(a,b){ return b.bytes - a.bytes; })
     .map(function(r){
       return '  ' + r.name + ': ' + (r.bytes/1048576).toFixed(1) + ' MB'
         + '  (' + r.total.toLocaleString() + ' แถว'
-        + (r.sampled ? ' · สุ่ม ' + r.sampled : '') + ')';
+        + (r.sampled ? (r.full ? ' · อ่านครบ' : ' · สุ่ม ' + r.sampled) : '') + ')';
     });
-  wrap.title = 'พื้นที่ที่ใช้ (ประมาณจากข้อมูลจริง)\n' + lines.join('\n')
+  wrap.title = (res.exact
+      ? 'พื้นที่ที่ใช้จริง (จากฐานข้อมูลโดยตรง)\nข้อมูลที่นับได้ ~' + res.est.toFixed(1) + ' MB\n'
+      : (res.scanned ? 'พื้นที่ที่ใช้ (นับครบทุกแถว ไม่สุ่ม)\n'
+                     : 'พื้นที่ที่ใช้ (ประมาณจากการสุ่ม \u2014 กดปุ่ม \u{1F3AF} เพื่อนับครบ)\n'))
+      + lines.join('\n')
     + '\n\nคำนวณโดยสุ่มอ่านแถวจริงแล้วคิดตามวิธีเก็บของ Postgres'
     + '\n(รวมส่วนหัวแถว ดัชนี และการบีบอัดค่าที่ยาว)'
     + '\nคลาดเคลื่อนได้บ้างจากพื้นที่ว่างที่ยังไม่ถูกคืน'
@@ -30559,6 +30754,8 @@ function hook(){
 }
 
 function init(){
+  addBtn();
+  addOpenBtn();
   if(!hook())  return setTimeout(init, 500);
   if(!_db())   return setTimeout(init, 600);
   setTimeout(function(){ run(true); }, 1200);
@@ -30568,6 +30765,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
 else setTimeout(init, 900);
 
 window.DBU_refresh = function(){ return run(true); };
+window.DBU_full    = function(){ return calcFull(); };
+window.DBU_link    = function(){ var a=document.getElementById('dbuOpen'); return a?a.href:''; };
 window.DBU_last    = function(){ return CACHE; };
 })();
 </script>
