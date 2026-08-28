@@ -9044,6 +9044,277 @@ function init(){
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){ setTimeout(init,600); });
 else setTimeout(init,600);
 
+/* ══ v16.9: Fitting Global — เรียงรายการล่าสุดขึ้นบน ═══════════════════
+   หน้างาน 28/08/2026: อยากให้เรียงเหมือนโปรแกรม AX (ล่าสุดอยู่บนสุด)
+   ตรวจโปรแกรม AX แล้วพบว่าใช้คอลัมน์ 'recid' (เลขรันจาก AX ยิ่งมากยิ่งใหม่)
+   โปรแกรมเราไม่เคยรู้จักคอลัมน์นี้ จึงเรียงตามรหัส item_number แทน
+   แก้โดยเขียนทับ fgBuildQuery (เป็นฟังก์ชันระดับบนสุด ไม่ต้องแตะไบต์เดิม)
+   ── กันพลาด (ลอกวิธีจาก AX) ──
+   • ถ้าไม่มีคอลัมน์ recid → ถอยไปเรียง item_number อัตโนมัติ โปรแกรมไม่พัง
+   • ผู้ใช้กดหัวตารางเพื่อเรียงเอง → เคารพค่าที่เลือก ไม่บังคับทับ
+   • ตัวกรอง/ค้นหา เดิมทุกอย่าง ใช้ของเดิมทั้งหมด ไม่แตะ                */
+(function(){
+  var tried = false, ready = false;
+  function hook(){
+    if(ready) return true;
+    if(typeof window.fgBuildQuery !== 'function' || typeof window.db === 'undefined') return false;
+    var orig = window.fgBuildQuery;
+    window.fgBuildQuery = function(from, to){
+      /* ถ้าผู้ใช้เลือกเรียงเองแล้ว หรือเคยถอยเพราะไม่มีคอลัมน์ → ใช้ของเดิม */
+      if(tried || window.fgSC !== 'item_number' || window.fgSA !== true) return orig(from, to);
+      try{
+        var SEL = 'item_number,product_name,search_name,unit';
+        var q = window.db.from('fitting_global').select(SEL, { count:'exact' });
+        if(window.fgQ){
+          String(window.fgQ).split(/\s+/).filter(Boolean).forEach(function(tok){
+            var pat = '%' + tok.replace(/[(),]/g,'').replace(/\*/g,'%') + '%';
+            pat = pat.replace(/%+/g,'%');
+            q = q.or('item_number.ilike.'+pat+',product_name.ilike.'+pat+',search_name.ilike.'+pat);
+          });
+        }
+        return q.order('recid', { ascending:false, nullsFirst:false }).range(from, to);
+      }catch(e){ return orig(from, to); }
+    };
+    /* ดักผลลัพธ์: ถ้า recid ไม่มีจริง ให้ถอยกลับไปแบบเดิมครั้งเดียว */
+    var origLoad = window.fgLoad;
+    if(typeof origLoad === 'function'){
+      window.fgLoad = function(){
+        var self = this, args = arguments;
+        var wrapped = window.fgBuildQuery;
+        window.fgBuildQuery = function(f, t2){
+          var r = wrapped(f, t2);
+          try{
+            return Promise.resolve(r).then(function(res){
+              if(res && res.error && !tried &&
+                 (res.error.code === '42703' || /recid/i.test(res.error.message || '') ||
+                  /does not exist/i.test(res.error.message || ''))){
+                tried = true;
+                console.log('[FittingGlobal] ไม่มีคอลัมน์ recid — ถอยไปเรียงตามรหัสแทน');
+                return window.fgBuildQuery(f, t2);
+              }
+              return res;
+            });
+          }catch(e){ return r; }
+        };
+        return origLoad.apply(self, args);
+      };
+    }
+    ready = true;
+    return true;
+  }
+  var n = 0;
+  var iv = setInterval(function(){
+    n++;
+    var ok = false;
+    try{ ok = hook(); }catch(e){}
+    if(ok || n > 60) clearInterval(iv);
+  }, 500);
+})();
+
+/* ══ v16.5: ธีมมืด ═══════════════════════════════════════════════════
+   โปรแกรมประกาศสีทั้งหมดเป็นตัวแปร CSS ไว้ที่ :root (25 ตัว)
+   จึงเปลี่ยนธีมได้โดย "ทับค่าตัวแปร" อย่างเดียว
+   ไม่แตะ HTML ไม่แตะ JS ไม่แตะการทำงานใด ๆ — แค่ค่าสี
+   ปิดธีมมืดเมื่อไหร่ ทุกอย่างกลับเป็นเดิมทันที (ลบ attribute ทิ้ง)
+   หน้าพิมพ์บังคับพื้นขาวเสมอ กันหมึกดำเต็มแผ่น                       */
+(function(){
+  var KEY = 'starnexus_theme';
+  var CSS = ''
+    + 'html[data-theme="dark"]{'
+    +   '--bg:#0f1115;'
+    +   '--s1:rgba(30,33,41,.92);'
+    +   '--s2:rgba(24,27,34,.94);'
+    +   '--s3:rgba(38,42,52,.95);'
+    +   '--sidebar-bg:rgba(20,23,29,.96);'
+    +   '--border:rgba(255,255,255,.10);'
+    +   '--border2:rgba(255,255,255,.18);'
+    +   '--shadow-sm:0 1px 3px rgba(0,0,0,.55);'
+    +   '--shadow-md:0 4px 20px rgba(0,0,0,.60);'
+    +   '--shadow-lg:0 12px 40px rgba(0,0,0,.70);'
+    +   '--accent:#4da3ff;--accent2:#2b8cff;--accent-glow:rgba(77,163,255,.20);'
+    +   '--green:#3ddc6b;--green-dim:rgba(61,220,107,.18);'
+    +   '--orange:#ffab33;--orange-dim:rgba(255,171,51,.18);'
+    +   '--red:#ff6b61;--red-dim:rgba(255,107,97,.18);'
+    +   '--text:#e8eaed;--text2:#a8adb7;--text3:#71767f;'
+    + '}'
+    /* ══ v16.6: เก็บพื้นขาวที่ฝังตรง ๆ ไม่ผ่านตัวแปร ═══════════════════
+       ตรวจ CSS ของโปรแกรมพบ 25 คลาสที่เขียนสีขาวไว้ตายตัว
+       (white / #fff / rgba(255,255,255,...)) จึงไม่เปลี่ยนตามตัวแปร
+       ทับให้ตามธีมทีละคลาส — ทับเฉพาะ "สี" ไม่แตะขนาด ตำแหน่ง หรือโครง */
+    + 'html[data-theme="dark"] body{background:var(--bg);color:var(--text)}'
+    + 'html[data-theme="dark"] table{color:var(--text)}'
+    + 'html[data-theme="dark"] input,html[data-theme="dark"] select,'
+    + 'html[data-theme="dark"] textarea{background:var(--s3);color:var(--text);'
+    + 'border-color:var(--border2)}'
+    /* กล่อง/แถบ/เมนู ที่ฝังพื้นขาว */
+    + 'html[data-theme="dark"] .sb,html[data-theme="dark"] .sh,'
+    + 'html[data-theme="dark"] .ft,html[data-theme="dark"] .on,'
+    + 'html[data-theme="dark"] .fgbx,html[data-theme="dark"] .fgsb,'
+    + 'html[data-theme="dark"] .fg-fb,html[data-theme="dark"] .fg-pb,'
+    + 'html[data-theme="dark"] .fg-modal,html[data-theme="dark"] .mbom-modal,'
+    + 'html[data-theme="dark"] .gear-menu,html[data-theme="dark"] .gear-btn,'
+    + 'html[data-theme="dark"] .ubtn,html[data-theme="dark"] .ofchip,'
+    + 'html[data-theme="dark"] .order-item,html[data-theme="dark"] .bom-fg-mode,'
+    + 'html[data-theme="dark"] .pgb,html[data-theme="dark"] .pgsz{'
+    +   'background:var(--s1)!important;color:var(--text)!important;'
+    +   'border-color:var(--border)!important}'
+    /* ช่องกรอกที่ฝังพื้นขาว */
+    + 'html[data-theme="dark"] .fld,html[data-theme="dark"] .fr-input,'
+    + 'html[data-theme="dark"] .ofilter-search,html[data-theme="dark"] .watch-interval,'
+    + 'html[data-theme="dark"] .ax-edit-input,html[data-theme="dark"] .bom-edit-input{'
+    +   'background:var(--s3)!important;color:var(--text)!important;'
+    +   'border-color:var(--border2)!important}'
+    /* พื้นหลังพื้นที่ทำงานที่ยังขาว */
+    + 'html[data-theme="dark"] .main,html[data-theme="dark"] .content,'
+    + 'html[data-theme="dark"] .pane,html[data-theme="dark"] .panel{'
+    +   'background:var(--bg)!important;color:var(--text)!important}'
+    /* ══ v16.7: รอบสอง — สีอ่อนที่ไม่ใช่ขาวล้วน ═══════════════════════
+       รอบแรกหาแต่ "white/#fff" จึงพลาดสีพาสเทล (#f2f2f7 #fafafa ฯลฯ)
+       สแกนใหม่ด้วยค่าความสว่าง เจอเพิ่ม 6 คลาส + สีฝังใน HTML อีก 5 สี */
+    + 'html[data-theme="dark"] .ax-table,html[data-theme="dark"] .fgt,'
+    + 'html[data-theme="dark"] .fg-body,html[data-theme="dark"] .fg-sbar,'
+    + 'html[data-theme="dark"] .bom-fg-hdr,html[data-theme="dark"] .mbom-preview{'
+    +   'background:var(--s2)!important;color:var(--text)!important;'
+    +   'border-color:var(--border)!important}'
+    /* หัวตาราง/แถวสลับสี ที่ฝังสีอ่อนไว้ */
+    + 'html[data-theme="dark"] thead th{background:var(--s3)!important;color:var(--text)!important}'
+    + 'html[data-theme="dark"] tbody tr:nth-child(even) td{background:rgba(255,255,255,.03)!important}'
+    + 'html[data-theme="dark"] td,html[data-theme="dark"] th{border-color:var(--border)!important}'
+    /* สีอ่อนที่ฝังใน style= ของ HTML (จับด้วยค่าสีตรง ๆ) */
+    + 'html[data-theme="dark"] [style*="background:#fff"],'
+    + 'html[data-theme="dark"] [style*="background:#FFF"],'
+    + 'html[data-theme="dark"] [style*="background:#fafafa"],'
+    + 'html[data-theme="dark"] [style*="background:#f9f9fb"],'
+    + 'html[data-theme="dark"] [style*="background:#f5f5fa"],'
+    + 'html[data-theme="dark"] [style*="background:#f2f2f7"],'
+    + 'html[data-theme="dark"] [style*="background-color:#fff"]{'
+    +   'background:var(--s1)!important;color:var(--text)!important}'
+    /* กลับพื้นขาวตอนพิมพ์เสมอ */
+    + '@media print{html[data-theme="dark"]{--bg:#fff;--s1:#fff;--s2:#fff;--s3:#fff;'
+    + '--sidebar-bg:#fff;--text:#000;--text2:#333;--text3:#666;'
+    + '--border:rgba(0,0,0,.12);--border2:rgba(0,0,0,.2)}'
+    + 'html[data-theme="dark"] body{background:#fff;color:#000}}';
+
+  function ensureStyle(){
+    if(document.getElementById('__snTheme')) return;
+    var st = document.createElement('style');
+    st.id = '__snTheme';
+    st.textContent = CSS;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function cur(){
+    try{ return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light'; }
+    catch(e){ return 'light'; }
+  }
+  function apply(mode){
+    ensureStyle();
+    try{
+      if(mode === 'dark') document.documentElement.setAttribute('data-theme','dark');
+      else document.documentElement.removeAttribute('data-theme');
+    }catch(e){}
+    var b = document.getElementById('__snThemeBtn');
+    if(b) b.textContent = (mode === 'dark') ? '\u2600\ufe0f สว่าง' : '\ud83c\udf19 มืด';
+    try{
+      if(mode === 'dark'){ if(window.__snSweep) setTimeout(window.__snSweep, 60); }
+      else if(window.__snUnsweep) window.__snUnsweep();
+    }catch(e){}
+  }
+  window.snSetTheme = function(mode){
+    mode = (mode === 'dark') ? 'dark' : 'light';
+    try{ localStorage.setItem(KEY, mode); }catch(e){}
+    apply(mode);
+  };
+  window.snToggleTheme = function(){ window.snSetTheme(cur() === 'dark' ? 'light' : 'dark'); };
+
+  /* ปุ่มสลับบนแถบบน */
+  function placeBtn(){
+    if(document.getElementById('__snThemeBtn')) return true;
+    var tt = document.querySelector('.tb .tt');
+    if(!tt || !tt.parentNode) return false;
+    var b = document.createElement('button');
+    b.id = '__snThemeBtn';
+    b.title = 'สลับธีมสว่าง / มืด';
+    b.onclick = window.snToggleTheme;
+    b.style.cssText = 'margin-left:10px;padding:3px 10px;border-radius:6px;cursor:pointer;'
+      + 'border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.12);'
+      + 'color:inherit;font-size:11px;font-weight:700;font-family:inherit;vertical-align:middle';
+    b.textContent = (cur() === 'dark') ? '\u2600\ufe0f สว่าง' : '\ud83c\udf19 มืด';
+    tt.appendChild(b);
+    return true;
+  }
+  /* ══ v16.8: กวาดหาสีอ่อนจาก "สีจริงที่แสดงผล" ════════════════════════
+     ไล่แก้ทีละคลาสไม่มีวันครบ — โปรแกรมเขียนสีไว้หลายแบบ
+     (คลาส · style ในแท็ก · rgba โปร่งแสง · โค้ด JS ตั้งตอนทำงาน)
+     วิธีนี้ไม่สนว่าสีมาจากไหน: อ่านสีที่ "แสดงผลจริง" ของทุก element
+     ถ้าสว่างเกินเกณฑ์ → ทับให้เข้ม พร้อมติดป้ายไว้เพื่อถอนคืนได้ครบ
+     ปิดธีมมืด → ถอนป้ายทั้งหมด กลับเป็นเดิมเป๊ะ ไม่เหลือร่องรอย
+     *** แตะเฉพาะ "สี" ไม่แตะขนาด ตำแหน่ง หรือการทำงานใด ๆ ***        */
+  function _rgb(c){
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c || '');
+    if(!m) return null;
+    return { r:+m[1], g:+m[2], b:+m[3], a:(m[4] === undefined ? 1 : parseFloat(m[4])) };
+  }
+  function _lum(o){ return (o.r*299 + o.g*587 + o.b*114) / 1000; }
+  function sweep(){
+    if(cur() !== 'dark') return;
+    var els, i, el, cs, bg, fg;
+    try{ els = document.querySelectorAll('body *'); }catch(e){ return; }
+    var n = Math.min(els.length, 8000);          /* กันหน่วงบนตารางแถวเยอะ */
+    for(i = 0; i < n; i++){
+      el = els[i];
+      if(!el || !el.style) continue;
+      var tag = el.tagName;
+      if(tag === 'SVG' || tag === 'PATH' || tag === 'CANVAS' || tag === 'IMG') continue;
+      if(el.id === '__snThemeBtn') continue;
+      try{ cs = getComputedStyle(el); }catch(e){ continue; }
+      bg = _rgb(cs.backgroundColor);
+      if(bg && bg.a >= 0.25 && _lum(bg) > 178){
+        if(!el.hasAttribute('data-sn-bg')){
+          el.setAttribute('data-sn-bg', '1');
+          el.style.setProperty('background-color', 'var(--s1)', 'important');
+        }
+        fg = _rgb(cs.color);
+        if(fg && _lum(fg) < 110 && !el.hasAttribute('data-sn-fg')){
+          el.setAttribute('data-sn-fg', '1');
+          el.style.setProperty('color', 'var(--text)', 'important');
+        }
+      }
+    }
+  }
+  function unsweep(){
+    var i, list;
+    try{
+      list = document.querySelectorAll('[data-sn-bg]');
+      for(i = 0; i < list.length; i++){
+        list[i].style.removeProperty('background-color');
+        list[i].removeAttribute('data-sn-bg');
+      }
+      list = document.querySelectorAll('[data-sn-fg]');
+      for(i = 0; i < list.length; i++){
+        list[i].style.removeProperty('color');
+        list[i].removeAttribute('data-sn-fg');
+      }
+    }catch(e){}
+  }
+  window.__snSweep = sweep; window.__snUnsweep = unsweep;
+  /* หน้าจอวาดใหม่ (เปลี่ยน Order / โหลดตาราง) → กวาดซ้ำแบบหน่วงเวลา */
+  var _t = null;
+  function later(){ clearTimeout(_t); _t = setTimeout(sweep, 350); }
+  try{
+    new MutationObserver(later).observe(document.documentElement,
+      { childList:true, subtree:true });
+  }catch(e){}
+
+  apply(cur());                       /* ใช้ธีมที่จำไว้ทันที ไม่รอ */
+  var n = 0;
+  var iv = setInterval(function(){
+    n++;
+    var ok = false;
+    try{ ensureStyle(); apply(cur()); ok = placeBtn(); }catch(e){}
+    if(ok || n > 60) clearInterval(iv);
+  }, 500);
+})();
+
 /* ══ v15.9: เปลี่ยนข้อความหน้าโหลด ═══════════════════════════════════
    ข้อความอยู่ในเขตห้ามแตะ (ไบต์ 40,379) จึงแก้ไฟล์ตรง ๆ ไม่ได้
    ทำที่ตัวเชื่อมแทน — เปลี่ยนตอนโปรแกรมเริ่มทำงาน ไม่แตะไบต์เดิม
@@ -11167,7 +11438,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '16.4', D = '28/08/2026';
+  var V = '16.9', D = '28/08/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
