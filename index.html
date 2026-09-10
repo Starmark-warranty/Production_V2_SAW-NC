@@ -4981,7 +4981,7 @@ function _axAsmNeed(){
   var byText = 0, byBox = 0;
   if (s){
     var w = _axTextW(s, _axAsmFontStr());
-    if (w) byText = Math.ceil(w) + 32;
+    if (w) byText = Math.ceil(w) + AX_ASM_PAD;   /* v64: padding 20 + ขอบ 2 + เผื่อ 28 */
   }
   /* ══ v63: ให้เบราว์เซอร์บอกความกว้างเนื้อหาเอง ═════════════
      เซลล์นี้ overflow:hidden — scrollWidth จึงเป็นความกว้างเนื้อหาจริงที่ล้นออกมา
@@ -4990,13 +4990,16 @@ function _axAsmNeed(){
      ═══════════════════════════════════════════════ */
   try{
     var td = _axAsmCell();
-    if (td && td.scrollWidth > td.clientWidth) byBox = td.scrollWidth + 14;
+    if (td && td.scrollWidth > td.clientWidth) byBox = td.scrollWidth + AX_ASM_AIR;
   }catch(e){}
   var need = byText > byBox ? byText : byBox;
   if (!need) return window._axAsmNeed || 0;
-  /* v63: กระตุกขึ้นได้อย่างเดียว — วัดพลาดรอบเดียวแล้วต้องไม่ทำให้ช่องแคบลง */
-  var prev = window._axAsmNeed || 0;
-  if (need < prev) need = prev;
+  /* ══ v64: เลิก "กระตุกขึ้นอย่างเดียว" ของ v63 ════════════════════
+     v63 จำค่าที่กว้างที่สุดไว้เพื่อกันวัดพลาดรอบเดียวแล้วช่องแคบ
+     แต่ผลคือเปลี่ยน Order แล้วช่องไม่ย่อตาม และค่าที่จำไว้จาก Order ก่อน
+     ไม่ได้สะท้อนข้อมูลชุดใหม่ — ตอนนี้วงปิดเช็คจาก "ข้อความล้นจริงไหม" แทนแล้ว
+     จึงไม่จำเป็นต้องจำค่าเก่าอีกต่อไป วัดใหม่ทุกครั้งที่วาด = ย่อขยายตามข้อมูลจริง
+     ════════════════════════════════════════════════════ */
   if (need < 120)           need = 120;
   if (need > AX_ASM_W_MAX)  need = AX_ASM_W_MAX;
   window._axAsmNeed = need;
@@ -5017,22 +5020,31 @@ function _axAsmEnsure(){
   if (!col) { window._axAsmLoop = { stop:'\u0e44\u0e21\u0e48\u0e1e\u0e1a <col>', runs:window._axAsmRuns }; return false; }
   var need = _axAsmNeed();
   if (!need) { window._axAsmLoop = { stop:'\u0e27\u0e31\u0e14\u0e04\u0e27\u0e32\u0e21\u0e01\u0e27\u0e49\u0e32\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49', runs:window._axAsmRuns }; return false; }
-  var changed = false, pass = 0, have = 0, prev = -1;
-  for (; pass < 4; pass++){
+  var changed = false, pass = 0, have = 0, prev = -1, over = 0;
+  for (; pass < 5; pass++){
     var td = _axAsmCell();
     have = td ? td.getBoundingClientRect().width : 0;
     if (!have) break;                        /* วัดไม่ได้ (แท็บซ่อนอยู่) — ไว้ _axAsmLater วัดใหม่ */
-    if (have >= need - 0.5) break;           /* พอแล้ว */
+    /* ══ v64: เกณฑ์ตัดสินคือ "ข้อความล้นออกมาจริงไหม" ══════════
+       v62/v63 หยุดเมื่อ have >= need — แต่ need มาจากการคำนวณ
+       ถ้าคำนวณต่ำไปก็หยุดทั้งที่ข้อความยังขาดอยู่
+       scrollWidth - clientWidth เป็นส่วนที่เบราว์เซอร์ตัดทิ้งจริง คำนวณผิดไม่ได้
+       ══════════════════════════════════════════════ */
+    over = (td.scrollWidth || 0) - (td.clientWidth || 0);
+    var deficit = 0;
+    if (over > 0)            deficit = over + AX_ASM_AIR;   /* ของจริงชนะทุกการคำนวณ */
+    else if (have < need - 0.5) deficit = need - have;
+    if (deficit <= 0.5) break;                              /* พอแล้ว */
     if (pass > 0 && have <= prev + 0.5) break;  /* เขียนไปแล้วเซลล์ไม่โต — ดันต่อก็ไม่มีผล */
     prev = have;
     var cur  = parseFloat(col.style.width) || have;
-    var next = Math.ceil(cur + (need - have) + 2);
+    var next = Math.ceil(cur + deficit + 2);
     if (next > AX_ASM_W_MAX) next = AX_ASM_W_MAX;
     if (next <= cur + 0.5) break;
     col.style.width = next + 'px';
     changed = true;
   }
-  window._axAsmLoop = { need:need, got:Math.round(have), col:col.style.width, pass:pass, runs:window._axAsmRuns };
+  window._axAsmLoop = { need:need, got:Math.round(have), ล้น:Math.round(over), col:col.style.width, pass:pass, runs:window._axAsmRuns };
   /* ยังไม่พอจริง ๆ (จอแคบมาก) — ย่อฟอนต์เป็นทางสุดท้าย ให้ URL ขึ้นครบไว้ก่อน
      ถ้าพอแล้ว ตัวนี้จะตั้งฟอนต์กลับเป็น 10px เอง = หน้าตาเท่ากับ SAW/NC */
   try{ _axFitAsmFont(); }catch(e){}
@@ -5164,7 +5176,9 @@ window.PD_asmWidth = function(){
    ตัววัดอัตโนมัติขยับได้ในกรอบ 400–560 เท่านั้น — เครื่องที่ฟอนต์กว้างกว่าจะได้ช่องใหญ่ขึ้น
    แต่จะไม่มีทางแคบกว่า 400 — เปิดมาครั้งแรกก็อ่านครบ ไม่ต้องลากทุกรอบ
    ══════════════════════════════════════════════════════════ */
-var AX_ASM_W     = 400;      /* กว้างมาตรฐาน */
+var AX_ASM_W     = 460;      /* v64: 400 -> 460 — หน้างานขอให้กว้างกว่าเดิม นี่คือพื้นขั้นต่ำสุด */
+var AX_ASM_PAD   = 50;       /* v64: padding 20 + เส้นขอบ 2 + ที่ว่างท้ายบรรทัด 28 */
+var AX_ASM_AIR   = 28;       /* v64: เติมจากความกว้างที่ล้นจริง */
 var AX_ASM_W_MAX = 1200;     /* v62: เพดานกันค่าพิลึกเท่านั้น — เดิม 560 ซึ่งตัด URL บนเครื่องที่ฟอนต์กว้าง */
 var AX_COLW_KEY = 'ax_colw_v58';   /* v58: เปลี่ยนคีย์ ทิ้งค่าที่ลากพลาดไว้ใน v56/v57 */
 try{ localStorage.removeItem('ax_colw_v56'); }catch(e){}
@@ -10363,8 +10377,110 @@ function saveOrder(oid, rows, meta){
       ต่างกันที่เลขหลัง แต่เป็นตู้เดียวกัน — ถ้าเทียบเต็มจะเตือนผิด)
    อ่าน part_index อย่างเดียว ไม่เขียนกลับ — StarNexus ลบแล้วเขียนใหม่ทุกครั้ง
    ═════════════════════════════════════════════════════════════════ */
-var IMPASM = { map:{}, cand:null, candFor:null, busy:false, prov:{}, pick:'' };
+var IMPASM = { map:{}, cand:null, candFor:null, busy:false, prov:{}, pick:'', asked:{} };
 var ASM_MIN_PCT = 80;        /* ต่ำกว่านี้ = น่าจะหยิบออร์เดอร์ผิด ต้องถามก่อน */
+
+/* ══ v65 — ดึงลิงก์ Assembly แบบ Auto / Manual ══════════════════
+   Manual (ค่าตั้งต้น) = เหมือนเดิมทุกอย่าง ต้องกดปุ่ม "ดึงลิงก์" เอง
+   Auto = พอโหลด Order นำเข้าเสร็จแล้วช่อง Assembly ยังว่าง
+          จะเด้ง popup บอกว่าเจอลิงก์จาก Order ไหน กด OK = ดึงเลย · Cancel = ไม่ดึง
+
+   ทำไมจึงใช้ popup ตัวเดิมของ _asmRun แทนที่จะทำกล่องใหม่
+   เพราะ popup นั้นมีตัวอย่างลิงก์จริงหัว-กลาง-ท้ายให้ดู ซึ่งเป็นด่านสุดท้ายจาก v46
+   ที่กัน "งานเดียวกันคนละรอบ" — ตู้กับ PartID เหมือนกันหมด ต่างแค่ลิงก์
+   ถ้าเด้งแค่ "เจอ Order นี้ ดึงไหม" แล้วเขียนเลย จะเสียด่านนั้นไป
+   ══════════════════════════════════════════════════════ */
+var ASM_MODE_KEY = 'asm_mode_v65';
+var _asmModeMem  = null;     /* v66: ที่จำสำรอง — เปิดด้วย file:// บางเครื่อง localStorage ใช้ไม่ได้ */
+function _asmMode(){
+  if(_asmModeMem) return _asmModeMem;
+  try{
+    var v = localStorage.getItem(ASM_MODE_KEY);
+    if(v){ _asmModeMem = (v === 'auto') ? 'auto' : 'manual'; return _asmModeMem; }
+  }catch(e){}
+  return 'manual';                    /* อ่านค่าไม่ได้ = ใช้ของเดิม ไม่เด้งเอง */
+}
+function _asmSetMode(v){
+  var m = (v === 'auto') ? 'auto' : 'manual';
+  _asmModeMem = m;                    /* อย่างน้อยก็ทำงานได้ในรอบนี้ */
+  try{ localStorage.setItem(ASM_MODE_KEY, m); }catch(e){}
+  return m;
+}
+/* ══ v66: บอกได้ว่าทำไมยังไม่เด้งถาม ════════════════════════
+   v65 เงียบออกทุกเงื่อนไข หน้างานจึงเห็นแค่ "ตั้ง Auto แล้วไม่มีอะไรเกิดขึ้น"
+   โดยไม่รู้ว่าเพราะลิงก์ครบแล้ว หรือเพราะเป็น Order ที่ไม่ได้ Import มา (บทเรียนข้อ 10 กับ 49)
+   ══════════════════════════════════════════════════ */
+function _asmWhy(force){
+  if(_asmMode() !== 'auto')  return 'ตอนนี้เป็นโหมด Manual — สลับเป็น Auto ก่อน';
+  if(IMPASM.busy)            return 'กำลังทำงานอยู่ รอสักครู่';
+  var oid = IMPB.active;
+  if(!oid)                   return 'ยังไม่ได้เลือก Order';
+  var it = IMPB.store[oid];
+  if(!it)                    return 'Order นี้ไม่ใช่ Order นำเข้า\nดึงลิงก์ Assembly ได้เฉพาะ Order ที่ Import เข้ามา (มีป้าย IMPORT)';
+  var rows = it.rows || [];
+  if(!rows.length)           return 'Order นี้ยังไม่มีแถวข้อมูล';
+  if(!_asmNeed(rows))        return 'ช่อง Assembly ครบทุกแถวแล้ว — ไม่มีอะไรต้องดึง\n(อยากดึงทับใหม่ ใช้ปุ่ม "ดึงใหม่ทับของเดิม")';
+  if(!force && IMPASM.asked[oid]) return 'ถามไปแล้วรอบนี้ — กดปุ่ม "ดึงลิงก์" เองได้';
+  var sel = q('impAsmSel');
+  if(!((sel && sel.value) || IMPASM.pick))
+    return 'ยังหา Order ต้นทางใน StarNexus ไม่เจอ\n(งานนี้ต้อง export จาก StarNexus ก่อน)';
+  return '';                                   /* ว่าง = พร้อมถาม */
+}
+/* เด้งถามให้อัตโนมัติ — ถามครั้งเดียวต่อ Order ต่อการเปิดหน้าหนึ่งครั้ง
+   force = เพิ่งกดสลับมาเป็น Auto — ถามทันทีได้
+   tell  = ผู้ใช้เป็นคนกดเอง — ถ้าทำไม่ได้ต้องบอกเหตุผล ห้ามเงียบ */
+function _asmAutoAsk(force, tell){
+  var why = _asmWhy(force);
+  if(why){
+    if(tell) alert('\u26a1 ดึงลิงก์ Assembly อัตโนมัติ — ยังไม่ทำงานตอนนี้\n\n' + why);
+    return false;
+  }
+  IMPASM.asked[IMPB.active] = 1;               /* ตั้งก่อนเรียก กันถามซ้ำเป็นวง */
+  setTimeout(function(){ try{ _asmRun(false, true); }catch(e){} }, 0);
+  return true;
+}
+
+/* ══ v66: ปุ่มโหมดย้ามาอยู่แถบ sub-tab ══════════════════
+   ของเดิมอยู่ในแถบดึงลิงก์ ซึ่งขึ้นต่อเมื่อเลือก Order นำเข้าแล้วเท่านั้น
+   แต่นี่คือ "การตั้งค่า" ไม่ใช่ปุ่มของ Order — ต้องตั้งไว้ก่อนได้
+   จึงย้ายตัวจริงมาไว้ข้าง Material Suffix Config ที่ขึ้นตลอด
+   ตัวในแถบดึงลิงก์ยังอยู่ เป็นทางลัดตอนทำงานจริง — สองที่สลับถึงกันเสมอ
+   ══════════════════════════════════════════════════ */
+function _asmPaintMode(){
+  var auto = _asmMode() === 'auto';
+  var b = document.getElementById('asmModeBtn');
+  if(b){
+    b.textContent = auto ? '\u26a1 ดึงลิงก์ Assembly: Auto' : '\u270b ดึงลิงก์ Assembly: Manual';
+    b.style.background = auto ? 'rgba(16,185,129,.12)' : 'rgba(120,120,128,.10)';
+    b.style.borderColor = auto ? 'rgba(16,185,129,.40)' : 'rgba(120,120,128,.28)';
+    b.style.color = auto ? '#047857' : '#6b7280';
+  }
+  var s = q('impAsmMode');
+  if(s && s.value !== _asmMode()) s.value = _asmMode();
+}
+function _asmInjectMode(){
+  if(document.getElementById('asmModeBtn')) return true;
+  var bar = document.querySelector('#areaAX .sub-tabs');
+  if(!bar) return false;
+  var b = document.createElement('button');
+  b.id = 'asmModeBtn';
+  b.style.cssText = 'margin:4px 0 4px 8px;border:1px solid;border-radius:6px;padding:3px 12px;'
+    + 'font-size:11px;cursor:pointer;font-weight:600;'
+    + "font-family:-apple-system,'Sarabun',sans-serif";
+  b.title = 'Assembly = ลิงก์ตู้ที่ไปลงสติกเกอร์ · ใช้กับ Order ที่ Import เข้ามาเท่านั้น\n\n'
+    + 'Auto = พอโหลด Order เสร็จแล้วช่อง Assembly ยังว่าง จะเด้งถามให้ทันที\n'
+    + 'Manual = ต้องกดปุ่ม "ดึงลิงก์" ที่แถบข้างบนเอง';
+  b.onclick = function(){
+    var m = _asmSetMode(_asmMode() === 'auto' ? 'manual' : 'auto');
+    _asmPaintMode();
+    if(m === 'auto') _asmAutoAsk(true, true);   /* กดเอง = บอกผลเสมอ */
+    else alert('\u270b ดึงลิงก์ Assembly: Manual\n\nจะไม่เด้งถามเองอีก — กดปุ่ม "ดึงลิงก์" ที่แถบข้างบนเอา');
+  };
+  var anchor = bar.querySelector('button[onclick*="openMatConfig"]');
+  if(anchor) bar.insertBefore(b, anchor); else bar.appendChild(b);
+  _asmPaintMode();
+  return true;
+}
 
 function _asmCabOf(pid){ return String(pid==null?'':pid).replace(/-\d+$/, ''); }
 function _asmNeed(rows){
@@ -10533,11 +10649,29 @@ function _asmBar(){
     +   '<option value="">กำลังหา…</option></select>'
     + '<button id="impAsmGo" style="padding:3px 11px;border:1.5px solid ' + ink + ';background:#fff;'
     +   'color:' + ink + ';border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;'
-    +   'font-family:inherit">' + (warn ? 'ดึงลิงก์' : 'ดึงใหม่ทับของเดิม') + '</button>';
+    +   'font-family:inherit">' + (warn ? 'ดึงลิงก์' : 'ดึงใหม่ทับของเดิม') + '</button>'
+    /* v65: ตัวสลับ Auto / Manual — อยู่ติดกับปุ่มดึงลิงก์ตามที่ขอ */
+    + '<span style="opacity:.6;font-weight:600">|</span>'
+    + '<select id="impAsmMode" title="Manual = กดปุ่มดึงเอง\nAuto = พอโหลด Order เสร็จแล้วช่องยังว่าง จะเด้งถามให้เอง" '
+    +   'style="padding:3px 6px;border:1px solid ' + line + ';border-radius:6px;'
+    +   'font-size:11px;font-weight:700;font-family:inherit;cursor:pointer">'
+    +   '<option value="manual">✋ Manual</option>'
+    +   '<option value="auto">⚡ Auto</option></select>';
   var go = q('impAsmGo');
   if(go) go.onclick = function(){ _asmRun(!warn); };
   var sl = q('impAsmSel');
   if(sl) sl.onchange = function(){ IMPASM.pick = sl.value || ''; };
+  /* v65: สลับโหมด — เลือก Auto แล้วถามให้เลย ไม่ต้องรอโหลดอันถัดไป */
+  var md = q('impAsmMode');
+  if(md){
+    md.value = _asmMode();
+    md.onchange = function(){
+      var m = _asmSetMode(md.value);
+      md.value = m;
+      _asmPaintMode();                          /* v66: ให้ปุ่มบนแถบ sub-tab เปลี่ยนตาม */
+      if(m === 'auto') _asmAutoAsk(true, true);
+    };
+  }
   /* บอกด้วยว่าชุดนี้ดึงมาจากไหนเมื่อไร */
   if(!warn) _asmProv(oid).then(function(p){
     if(!p || IMPB.active !== oid) return;
@@ -10547,12 +10681,13 @@ function _asmBar(){
                    + (w ? (' · ' + w) : '');
   });
   var setKey = String((rows[0] && rows[0]['Item Id Set']) || oid || '');
-  if(IMPASM.candFor === setKey && IMPASM.cand){ _asmFillSel(IMPASM.cand); return; }
+  if(IMPASM.candFor === setKey && IMPASM.cand){ _asmFillSel(IMPASM.cand); _asmAutoAsk(false, false); return; }
   _asmSetBusy(true);
   _asmFindOrders(setKey).then(function(list){
     IMPASM.cand = list; IMPASM.candFor = setKey;
     _asmSetBusy(false);
     _asmFillSel(list);
+    _asmAutoAsk(false, false);  /* v65: หาต้นทางเจอแล้วค่อยถาม */
   });
 }
 function _asmFillSel(list){
@@ -10579,7 +10714,7 @@ function _asmFillSel(list){
   IMPASM.pick = sel.value || '';
 }
 /* กดดึงลิงก์ */
-function _asmRun(force){
+function _asmRun(force, auto){
   if(IMPASM.busy) return;
   var oid = IMPB.active;
   var it  = oid ? IMPB.store[oid] : null;
@@ -10594,6 +10729,8 @@ function _asmRun(force){
     _asmSetBusy(false);
     if(!st.hit){
       _asmBar();
+      /* v65: โหมด Auto ไม่เด้ง alert ใส่ — ผู้ใช้ไม่ได้กดขอเอง ไปขึ้นที่แถบแทน */
+      if(auto){ _asmMsg('\u26a0\ufe0f ดึงอัตโนมัติไม่สำเร็จ — ' + pick + ' ไม่มี PartID ที่ตรงกัน'); return; }
       alert('\u274c จับคู่ไม่ได้เลยสักแถว\n\n'
         + 'ออร์เดอร์ "' + pick + '" ไม่มี PartID ที่ตรงกับไฟล์นี้\n'
         + 'น่าจะเลือกผิดตัว');
@@ -10608,7 +10745,8 @@ function _asmRun(force){
     /* ══ v46: ให้ดูของจริงก่อนเขียนเสมอ — ยาม cab_name กันได้แค่ "คนละงาน"
        แต่กัน "งานเดียวกันคนละรอบ" ไม่ได้ — ต้องให้ตาคนดูลิงก์จริง */
     var sam = _asmSamples(st).map(function(x){ return '   ' + x.pid + '  \u2192  ' + x.url; }).join('\n');
-    var txt = 'ดึงลิงก์จาก\n   ' + pick + '\n\n'
+    var txt = (auto ? '\u26a1 โหมด Auto — เจอลิงก์ Assembly ของงานนี้\n\n' : '')
+            + 'ดึงลิงก์จาก\n   ' + pick + '\n\n'
             + 'จับคู่ได้ ' + st.hit + ' จาก ' + st.total + ' แถว\n'
             + (st.checked ? ('ชื่อตู้ตรงกัน ' + st.pct + '%\n') : '')
             + (st.fill ? ('เติมช่องว่าง ' + st.fill + ' แถว\n') : '')
@@ -10621,6 +10759,7 @@ function _asmRun(force){
       : ('\u26a0\ufe0f งานเดียวกันอาจมีหลายรอบ ตู้กับ PartID เหมือนกันหมด\n'
          + '   ต่างกันที่ลิงก์ — ดูตัวอย่างข้างบนให้แน่ใจว่าใช่รอบที่ต้องการ\n\n');
     txt += 'ยืนยันเขียน ' + will + ' แถว?';
+    if(auto) txt += '\n\n(Cancel = ไม่ดึง · ปิดการถามได้ที่ช่อง ⚡ Auto บนแถบดึงลิงก์)';
     if(!window.confirm(txt)){ _asmBar(); return; }
     _asmSetBusy(true);
     var n = _asmApply(rows, m, force);
@@ -10652,7 +10791,12 @@ try{
   window.IMP_asmMap    = _asmFetchMap; window.IMP_asmNeed     = _asmNeed;
   window.IMP_asmProv   = _asmProv;     window.IMP_asmSamples  = _asmSamples;
   window.IMP_asmWhen   = _asmWhen;
+  /* v65 */
+  window.IMP_asmMode   = function(v){ return (v === undefined) ? _asmMode() : _asmSetMode(v); };
+  window.IMP_asmAutoAsk= _asmAutoAsk;
+  window.IMP_asmWhy    = function(){ return _asmWhy(false) || 'พร้อมถาม — ไม่มีอะไรขวาง'; };
   window.IMPASM        = IMPASM;
+  window.IMPB          = IMPB;         /* v65: เอาไว้ดูสถานะจาก Console ได้ */
 }catch(e){}
 function q(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
@@ -11040,6 +11184,9 @@ function importFile(file){
 
     saveOrder(oid, rows, meta).then(function(){
       if(btn){ btn.innerHTML = oldTxt; btn.disabled = false; }
+      /* v65: นำเข้าไฟล์ใหม่ = ข้อมูลชุดใหม่ โหมด Auto ต้องถามใหม่ได้
+         (ล้างตรงนี้เท่านั้น — ไม่ล้างใน saveOrder เพราะ _asmRun ก็เรียก saveOrder จะกลายเป็นวงวน) */
+      try{ delete IMPASM.asked[oid]; }catch(e){}
       /* v2.1: ต้องดึงรายการใหม่จากฐานข้อมูลก่อน ไม่งั้น Order ที่เพิ่งบันทึกจะยังไม่โผล่
          (เดิม syncSidebar เติมรายการเอง แต่ตอนนี้รายการมาจาก Supabase แล้ว) */
       try{ setOrderFilter('import', document.querySelector('.ofchip[data-src="import"]')); }catch(e){}
@@ -11427,6 +11574,11 @@ function init(){
 }
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(init, 700); });
 else setTimeout(init, 700);
+
+/* v66: ปุ่มโหมดต้องขึ้นแม้ฐานข้อมูลยังไม่พร้อม — จึงแยกมาติดตั้งต่างหากจาก init() */
+var _asmModeIv = setInterval(function(){
+  try{ if(_asmInjectMode()) clearInterval(_asmModeIv); }catch(e){}
+}, 400);
 
 window.IMPB_import = function(file){ importFile(file); };
 window.IMPB_list   = function(){ return Object.keys(IMPB.store); };
@@ -12441,7 +12593,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '63', D = '09/09/2026';
+  var V = '66', D = '10/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
