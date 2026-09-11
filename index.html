@@ -2261,8 +2261,17 @@ function boardToAX(p, g, groupIdx, totalGroups, groupPartTotal, partSeq, groupPa
     if (!art || !hasFrontShapeM) return art;
     // ตำแหน่งที่ 4 คือ index 3 (นับจาก 0)
     if (art.charAt(3).toUpperCase() !== 'P') return art;
-    // แทนทุกตัวยกเว้นตัวสุดท้ายด้วย x (ยาว 8 ตัว) + ตัวสุดท้ายเดิม
-    return 'xxxxxxxx' + art.charAt(art.length - 1);
+    /* ══ v67: ไม้เตรียมลงท้าย N เสมอ ════════════════════════════════════
+       เดิมคง "ตัวสุดท้ายของรหัสสี" ไว้ → สีเคลือบที่ลงท้าย Y ได้ xxxxxxxxY
+       เช่น Color:G03P0049Y  →  MD19 + xxxxxxxxY + N01M0029N
+       ผิด เพราะตัวสุดท้ายตรงนี้เป็นของ "ไม้เตรียม" ไม่ใช่ของสีที่เคลือบทับ
+       สีจะเป็น Y X หรือ N ก็ไม่เกี่ยว ไม้เตรียมเป็น N เสมอ
+       ทั้งระบบใช้ xxxxxxxxN ตายตัวอยู่แล้ว — ฝั่ง SAW/NC hardcode ไว้ 11 จุด
+       (MD16/MD19/MD06/MD04/PW15/ME15 ล้วนต่อท้ายด้วย 'xxxxxxxxN')
+       และไฟล์ Excel BOM ที่หน้างานกรอกเองก็เป็น xxxxxxxxN เหมือนกัน
+       ตรงนี้เป็นที่เดียวในโปรแกรมที่ออกตัวอื่นได้ จึงเป็นที่เดียวที่ผิด
+       ═══════════════════════════════════════════════════════════════ */
+    return 'xxxxxxxxN';
   }
   var art5ForCut = maskIfPAtPos4(art5);
   var art6ForCut = maskIfPAtPos4(art6);
@@ -12593,7 +12602,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '66', D = '10/09/2026';
+  var V = '67', D = '11/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
