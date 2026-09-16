@@ -3522,9 +3522,16 @@ async function applyFrameFitScan(targetOrder) {
   var key = 'bom_edits:'+oid, ex = {};
   try { var {data:ed} = await db.from('app_settings').select('value').eq('key',key).single(); if(ed&&ed.value) ex=ed.value; } catch(e){}
   if (!ex.extra) ex.extra=[];
+  /* v81: จำไว้ก่อนว่าผู้ใช้เคยซ่อนรหัสไหนไว้ — สแกนใหม่แล้วจะได้ไม่โผลมาใหม่ */
+  var _wasHidden = {};
+  ex.extra.forEach(function(e){
+    if (e.FittingType === 'FrameAutoFit' && e.hidden) _wasHidden[String(e.ItemId||e.code||'')] = 1;
+  });
   ex.extra = ex.extra.filter(function(e){ return e.FittingType !== 'FrameAutoFit'; });
   extraFit.forEach(function(f){
-    ex.extra.push({ItemId:f.code, Qty:f.qty||1, Warehouse:'', FittingType:'FrameAutoFit', _name:f.name, _autoFit:true});
+    if (bomFrameBlocked(f.code)) return;   /* v84: รหัสที่สั่งไม่เอา — ไม่เกิดแถวตั้งแต่แรก */
+    ex.extra.push({ItemId:f.code, Qty:f.qty||1, Warehouse:'', FittingType:'FrameAutoFit',
+                   _name:f.name, _autoFit:true, hidden:!!_wasHidden[String(f.code)]});
   });
   await db.from('app_settings').upsert({key:key,value:ex},{onConflict:'key'});
   await loadBOMEdits(oid);
@@ -4219,14 +4226,21 @@ function buildBOMRows() {
   // ── 7. Frame Auto-Fit rows (from applyFrameFitScan) ──
   var frameArr = (eid && bomEdits[eid] && bomEdits[eid].extra) || [];
   frameArr.forEach(function(m) {
+    /* ══ v82: ลบแถวเฟรมแล้วหายไปเลย ══════════════════════════
+       v81 ทำเป็นแถวจาง ๆ ค้างไว้พร้อมปุ่มคืน — หน้างานไม่ต้องการ
+       ธง hidden ยังเก็บไว้ใน .extra เหมือนเดิม — สแกนเฟรมใหม่ก็ไม่โผลมา
+       เผลอลบผิดตัว: พิมพ์ BOM_frameRestore() ใน Console แล้วกดบันทึก
+       ════════════════════════════════════════════════ */
+    if (m.hidden) return;
     var code = m.ItemId || m.code || '';
+    if (bomFrameBlocked(code)) return;      /* v84: รหัสที่สั่งไม่เอา — ไม่ต้องวาด */
     var fgV  = fgLookup(code);
     var name = (fgV && fgV.name) || m._name || '';
     var key  = 'FrameFit:' + code;
     rows.push({
       _type:'FrameAutoFit', _code:code, _name:name,
       _qty:parseFloat(m.Qty||m.qty||1), _unit:'EA',
-      _extra:true, _isManual:true, _origKey:key, _hidden:false,
+      _extra:true, _isManual:true, _origKey:key, _hidden:!!m.hidden,   /* v81: เดิม false ตายตัว — กดลบแล้วแถวกลับมาทุกครั้ง */
       ItemId:code, Qty:parseFloat(m.Qty||m.qty||1), Warehouse:m.Warehouse||'', FittingType:'FrameAutoFit'
     });
   });
@@ -4249,10 +4263,14 @@ function renderBOM() {
   var allRows  = buildBOMRows();
   var visRows  = allRows.filter(function(r){ return !r._hidden; });
   var hidCount = allRows.length - visRows.length;
-  document.getElementById('cntBOM').textContent = visRows.length + (hidCount > 0 ? ' (+'+hidCount+' ซ่อน)' : '');
+  document.getElementById('cntBOM').textContent = visRows.length;
   updateExtraFitBadge();
 
-  var displayRows = bomEditMode ? allRows : visRows;
+  /* ══ v87: ลบแล้วหายเลย ═════════════════════════════════
+     เดิมโหมดแก้ไขยังโชว์แถวที่ลบไปแบบจาง ๆ พร้อมปุ่มคืน — หน้างานไม่เอา
+     ลบแล้วคือหาย อยากได้คืนก็พิมพ์รหัสใส่ใหม่ที่ช่องเพิ่มแถว
+     ════════════════════════════════════════════════════ */
+  var displayRows = visRows;
   var ffBanner    = _buildFrameFitBanner();  // สร้าง banner ก่อนเสมอ
 
   if (!bomEditMode && !displayRows.length) {
@@ -4331,9 +4349,7 @@ function renderBOM() {
       var unitDisp = '<span class="bom-unit" style="'+hideStyle+'">'+esc(r._unit)+'</span>';
       var dupBtn   = '<button onclick="bomDuplicateRow(\''+rowKey+'\')" title="Duplicate แถวนี้"'
         + ' style="background:var(--accent-glow);border:1px solid rgba(0,122,255,0.2);border-radius:4px;padding:1px 5px;font-size:11px;color:var(--accent);cursor:pointer;white-space:nowrap;line-height:1.4">⊕</button>';
-      var delBtn   = isHidden
-        ? '<button class="bom-del-btn" onclick="bomRestoreRow(\''+rowKey+'\')" title="คืนแถว" style="color:var(--green);opacity:1;font-size:14px">↩</button>'
-        : '<button class="bom-del-btn" onclick="bomDeleteRow(\''+rowKey+'\')" title="ซ่อนแถว">✕</button>';
+      var delBtn   = '<button class="bom-del-btn" onclick="bomDeleteRow(\''+rowKey+'\')" title="ลบแถวนี้">✕</button>';
 
       tbody += '<tr style="'+rowBg+rowHide+'">'
         + '<td>'+typeBadge+'</td>'
@@ -7485,6 +7501,21 @@ async function loadBOMEdits(oid) {
 }
 
 // ── helper: find manual row by key ────────────────────────────────
+/* ══ v81 — แถว Frame Auto-Fit กดลบไม่ได้ ══════════════════════════
+   แถวป้าย +เพิ่ม มีสองชนิด — ที่ผู้ใช้เพิ่มเอง (Manual:) กับที่ระบบสแกนเฟรมใส่ให้ (FrameFit:)
+   ของที่ผู้ใช้เพิ่มเก็บใน bomEdits[oid]._manual — ลบได้ปกติ
+   ของเฟรมเก็บใน bomEdits[oid].extra — bomDeleteRow เขียนธงซ่อนไปคนละที่
+   ตัววาดตารางจึงอ่านไม่เจอ แถวเลยกลับมาทุกครั้งที่กด
+   ═════════════════════════════════════════════════════ */
+function _bomFindFrame(oid, rowKey) {
+  var arr = (bomEdits[oid] && bomEdits[oid].extra) || [];
+  var code = String(rowKey).slice('FrameFit:'.length);
+  for (var i = 0; i < arr.length; i++) {
+    if (String(arr[i].ItemId || arr[i].code || '') === code) return arr[i];
+  }
+  return null;
+}
+
 function _bomFindManual(oid, rowKey) {
   var arr = (bomEdits[oid] && bomEdits[oid]._manual) || [];
   return arr.find(function(m){ return m.key === rowKey; }) || null;
@@ -7511,6 +7542,18 @@ function bomSetEdit(rowKey, field, val) {
         nameEl.textContent = fg2.name || '—';
         nameEl.className   = fg2.name ? '' : 'ax-empty';
       }
+    }
+  } else if (rowKey.indexOf('FrameFit:') === 0) {
+    /* v81: แถวเฟรมเก็บใน .extra ต้องแก้ที่นั่น ไม่งั้นแก้แล้วค่าเด้งกลับ */
+    var fm = _bomFindFrame(oid, rowKey);
+    if (!fm) return;
+    if (field === 'qty') { fm.Qty = parseFloat(val) || 0; }
+    else if (field === 'code') {
+      fm.ItemId = val;
+      var fg3 = fgLookup(val) || {};
+      fm._name = fg3.name || fm._name;
+      var nEl = document.getElementById('bomname_' + rowKey);
+      if (nEl) { nEl.textContent = fg3.name || '\u2014'; nEl.className = fg3.name ? '' : 'ax-empty'; }
     }
   } else {
     // Regular row — update top-level edit map
@@ -7572,14 +7615,36 @@ function bomDuplicateRow(rowKey) {
 }
 
 // ── Delete / Restore ───────────────────────────────────────────────
+/* ══ v86 — รหัสที่ห้ามใส่อัตโนมัติ ═════════════════════════════
+   หน้างานขอให้แบนไว้หลังโปรแกรมเลย ไม่เอาปุ่มเปิดปิด
+   รหัสในรายการนี้จะไม่ถูกสแกนกรอบบานใส่ให้อัตโนมัติ — รหัสอื่นทำงานตามปกติทุกตัว
+   กันเฉพาะการใส่อัตโนมัติ — พิมพ์เพิ่มเอง บันทึก แก้ ลบ ได้ตามปกติ
+   จะเพิ่มรหัสอื่น ให้เติมในอาร์เรย์ข้างล่าง
+   ═════════════════════════════════════════════════════ */
+var FRAMEFIT_NEVER = ['34WAD0290095'];
+function bomFrameBlocked(code) {
+  code = String(code || '').trim().toUpperCase();
+  if (!code) return false;
+  for (var i = 0; i < FRAMEFIT_NEVER.length; i++) {
+    if (String(FRAMEFIT_NEVER[i]).toUpperCase() === code) return true;
+  }
+  return false;
+}
+
 function bomDeleteRow(rowKey) {
   var oid = currentOrder;
   if (!oid) return;
   if (!bomEdits[oid]) bomEdits[oid] = { _manual: [] };
 
   if (rowKey.indexOf('Manual:') === 0) {
-    var m = _bomFindManual(oid, rowKey);
-    if (m) m.hidden = true;
+    /* v87: แถวที่ผู้ใช้เพิ่มเอง — ลบทิ้งจริง ไม่เก็บซากไว้ */
+    var arr = (bomEdits[oid] && bomEdits[oid]._manual) || [];
+    for (var qi = arr.length - 1; qi >= 0; qi--) {
+      if (arr[qi].key === rowKey) arr.splice(qi, 1);
+    }
+  } else if (rowKey.indexOf('FrameFit:') === 0) {
+    var fm = _bomFindFrame(oid, rowKey);          /* v81 */
+    if (fm) fm.hidden = true;
   } else {
     if (!bomEdits[oid][rowKey]) bomEdits[oid][rowKey] = {};
     bomEdits[oid][rowKey].hidden = true;
@@ -7593,11 +7658,28 @@ function bomRestoreRow(rowKey) {
   if (rowKey.indexOf('Manual:') === 0) {
     var m = _bomFindManual(oid, rowKey);
     if (m) m.hidden = false;
+  } else if (rowKey.indexOf('FrameFit:') === 0) {
+    var fm = _bomFindFrame(oid, rowKey);          /* v81 */
+    if (fm) fm.hidden = false;
   } else {
     if (bomEdits[oid] && bomEdits[oid][rowKey]) bomEdits[oid][rowKey].hidden = false;
   }
   renderBOM();
 }
+
+/* v82: คืนแถว Frame Auto-Fit ที่ลบไป — เผื่อกดผิด */
+window.BOM_frameRestore = function(oid) {
+  oid = oid || currentOrder;
+  var arr = (bomEdits[oid] && bomEdits[oid].extra) || [];
+  var n = 0;
+  arr.forEach(function(e2) {
+    if (e2.FittingType === 'FrameAutoFit' && e2.hidden) { e2.hidden = false; n++; }
+  });
+  console.log('[v82] คืนแถว Frame Auto-Fit ' + n + ' แถว'
+    + (n ? ' — กด บันทึก เพื่อเก็บถาวร' : ' — ไม่มีแถวที่ลบไว้'));
+  try { renderBOM(); } catch (e3) {}
+  return n;
+};
 
 // ── BOM FG Autocomplete ────────────────────────────────────────────
 var _bomFGTarget  = null;
@@ -12602,7 +12684,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '80', D = '12/09/2026';
+  var V = '87', D = '16/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
