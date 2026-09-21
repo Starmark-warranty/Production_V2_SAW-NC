@@ -4098,6 +4098,34 @@ function getFittingAgg(d) {
 }
 
 // สร้าง BOM rows — ดึงจาก currentData เหมือน Imos Detail เป๊ะ
+/* ══ v90 — จำนวนชุด / Order ใน BOM Fitting ═════════════════════════════
+   คูณเฉพาะขอบกับ Fitting — ไม่แตะ BOM ไม้
+   (แถวไม้ถูกเติมทีหลังโดยตัวห่อ buildBOMRows ใน tail จึงไม่ผ่านตัวคูณนี้ — กันสองชั้นด้วยการเช็คชนิดด้วย)
+   เก็บไว้กับออร์เดอร์ที่ bomEdits[oid]._sets — คนละออร์เดอร์ไม่ปนกัน เปิดใหม่ยังจำได้
+   เก็บจำนวนต่อ 1 ชุดไว้ที่ _qtyBase — โหมดแก้ไขแก้ค่านี้ จะได้ไม่คูณทบซ้อน
+   ═════════════════════════════════════════════════════ */
+function bomSetsOf(oid) {
+  var n = oid && bomEdits[oid] ? parseInt(bomEdits[oid]._sets, 10) : 1;
+  return (n >= 1 && isFinite(n)) ? n : 1;
+}
+function _bomMul(q, n) { return Math.round((parseFloat(q) || 0) * n * 100) / 100; }
+function _bomSaveQuiet(oid) {
+  try {
+    db.from('app_settings').upsert({ key:'bom_edits:' + oid, value: bomEdits[oid] || { _manual: [] } }, { onConflict:'key' })
+      .then(function(r){ if (r && r.error) console.warn('[v90] บันทึกจำนวนชุดไม่สำเร็จ', r.error.message); });
+  } catch (e) { console.warn('[v90]', e); }
+}
+function bomSetSets(v) {
+  var oid = currentOrder; if (!oid) return;
+  var n = parseInt(v, 10);
+  if (!(n >= 1 && isFinite(n))) n = 1;
+  if (n > 999) n = 999;
+  if (!bomEdits[oid]) bomEdits[oid] = { _manual: [] };
+  if (n === 1) delete bomEdits[oid]._sets; else bomEdits[oid]._sets = n;
+  if (!bomEditMode) _bomSaveQuiet(oid);        /* โหมดดูไม่มีปุ่มบันทึก — บันทึกให้เลย */
+  renderBOM();
+}
+
 function buildBOMRows() {
   var d = currentData;
   if (!d) return [];
@@ -4256,6 +4284,17 @@ function buildBOMRows() {
     return true;
   });
 
+  /* v90: คูณจำนวนชุด — ขอบกับ Fitting เท่านั้น */
+  var _sets = bomSetsOf(eid);
+  if (_sets > 1) {
+    rows.forEach(function(r) {
+      if (r._type === 'BOM ไม้') return;
+      r._qtyBase = r._qty;
+      r._qty = _bomMul(r._qty, _sets);
+      if (r.Qty !== undefined) r.Qty = _bomMul(r.Qty, _sets);
+    });
+  }
+
   return rows;
 }
 
@@ -4321,9 +4360,10 @@ function renderBOM() {
     var rowHide   = isHidden ? 'opacity:.4;' : '';
 
     if (bomEditMode) {
+      var _qb = (r._qtyBase !== undefined) ? r._qtyBase : r._qty;   /* v90: แก้จำนวนต่อ 1 ชุด */
       var qtyVal  = isManual
-        ? (r._qty || 1)
-        : (isQtyChanged ? ed.qty : r._qty);
+        ? (_qb || 1)
+        : (isQtyChanged ? ed.qty : _qb);
       var codeVal = isManual
         ? esc(r._code)
         : (isCodeChanged ? esc(ed.code) : esc(r._code));
@@ -4360,9 +4400,11 @@ function renderBOM() {
         + '<td style="text-align:center;padding:2px 4px"><div style="display:flex;gap:3px;justify-content:center;align-items:center">'+dupBtn+delBtn+'</div></td>'
         + '</tr>';
     } else {
+      var _mulTip = (r._qtyBase !== undefined)                                /* v90 */
+        ? ' style="color:#047857;font-weight:800" title="' + r._qtyBase + ' \u00d7 ' + bomSetsOf(currentOrder) + ' ชุด"' : '';
       var qtyDisp = (isEdge||isExtra)
-        ? '<span class="ax-num">'+r._qty.toFixed(2)+'</span>'
-        : '<span class="ax-num">'+r._qty+'</span>';
+        ? '<span class="ax-num"'+_mulTip+'>'+r._qty.toFixed(2)+'</span>'
+        : '<span class="ax-num"'+_mulTip+'>'+r._qty+'</span>';
       var codeDisp = (isEdge||isExtra)
         ? '<span class="ax-edge">'+esc(r._code)+'</span>'
         : isExtraFit
@@ -4430,8 +4472,21 @@ function renderBOM() {
 
   var tableClass = bomEditMode ? 'ax-table bom-table bom-edit-mode' : 'ax-table bom-table';
   var tableHtml = '<table class="'+tableClass+'"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody></table>';
+  var _sN = bomSetsOf(currentOrder);
+  var setsBar = '<div style="flex-shrink:0;padding:8px 10px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<label style="display:flex;align-items:center;gap:6px;background:#ecfdf5;border:1.5px solid #6ee7b7;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;color:#047857">'
+    +   '📦 จำนวนชุด / Order: '
+    +   '<input id="bomSets" type="number" min="1" max="999" step="1" value="' + _sN + '" onchange="bomSetSets(this.value)"'
+    +   ' style="width:62px;font-size:13px;font-weight:800;border:1.5px solid #10b981;border-radius:6px;padding:3px 6px;font-family:inherit;color:#047857;background:#fff;text-align:center">'
+    + '</label>'
+    + '<span style="font-size:11px;color:' + (_sN > 1 ? '#047857' : 'var(--text3)') + '">'
+    +   (_sN > 1 ? ('ขอบ + Fitting \u00d7 ' + _sN + ' \u00b7 BOM ไม้ไม่คูณ'
+                  + (bomEditMode ? ' \u00b7 โหมดแก้ไขแสดงจำนวนต่อ 1 ชุด' : ''))
+               : 'คูณเฉพาะขอบ + Fitting \u00b7 BOM ไม้ไม่คูณ')
+    + '</span></div>';
   document.getElementById('contentBOM').innerHTML =
     '<div style="flex:1;overflow:auto;box-sizing:border-box;min-height:0;display:flex;flex-direction:column">'
+    + setsBar
     + (ffBanner ? '<div style="flex-shrink:0;padding:8px 10px 0">' + ffBanner + '</div>' : '')
     + '<div class="ax-table-wrap" style="flex:1;overflow:auto;min-height:0">' + tableHtml + '</div>'
     + '</div>';
@@ -7602,7 +7657,8 @@ function bomDuplicateRow(rowKey) {
   if (!src) return;
 
   var key = _bomManualKey();
-  bomEdits[oid]._manual.push({ key:key, code:src._code||'', qty:src._qty||1, hidden:false });
+  var _q0 = (src._qtyBase !== undefined) ? src._qtyBase : src._qty;   /* v90 */
+  bomEdits[oid]._manual.push({ key:key, code:src._code||'', qty:_q0||1, hidden:false });
   renderBOM();
   // Highlight the new row briefly
   setTimeout(function(){
@@ -12684,7 +12740,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '89', D = '18/09/2026';
+  var V = '90', D = '18/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
