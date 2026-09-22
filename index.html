@@ -836,8 +836,17 @@ async function refreshStatus() {
     // Supabase free tier: 500 MB database storage
     // คำนวณจากจำนวน orders: estimate ~50KB per order average
     // แต่ถ้าได้ database size จริงจาก pg_database_size จะดีกว่า
-    try {
+    // v91: ฐานข้อมูลไม่มีฟังก์ชัน get_db_size_mb → เดิมยิงแล้วพลาดทุกครั้ง · จำไว้ 24 ชม. ไม่ยิงซ้ำ
+    if (window.__noDbSizeRpc === undefined) {
+      var _nr = 0; try { _nr = +localStorage.getItem('no_db_size_rpc') || 0; } catch(e) {}
+      window.__noDbSizeRpc = (Date.now() - _nr) < 86400000;
+    }
+    if (!window.__noDbSizeRpc) try {
       var dbSizeRes = await db.rpc('get_db_size_mb');
+      if (dbSizeRes && dbSizeRes.error) {
+        window.__noDbSizeRpc = true;
+        try { localStorage.setItem('no_db_size_rpc', String(Date.now())); } catch(e) {}
+      }
       var usedMB = dbSizeRes.data || 0;
       var totalMB = 500; // Supabase free tier
       var pct = Math.min(100, Math.round(usedMB / totalMB * 100));
@@ -1461,30 +1470,94 @@ function _closeSettingsOnOutside(ev) {
 function _originLabel(o){ return o === 'furtech' ? 'Furtech V.1' : o === 'manual' ? 'Manual' : 'IMOS'; }
 function _ofSetText(id, v){ var el = document.getElementById(id); if (el) el.textContent = v; }
 
+// ══ v91: รายการ Order ด้านซ้าย — ถนอมฐานข้อมูล ══════════════════════════
+// เดิม: วาดรายการทุกครั้ง (รวมทุกครั้งที่กด Order) ดึง data->>source และ
+//       data->>_isManualBOM ของ "ทุก Order" → ฐานข้อมูลต้องแตก JSON ทุก Order
+//       (~37 MB · 4,720 buffer · ~190 ms ต่อครั้ง)
+// ใหม่: ดึงแค่ order_id + loaded_at (19 buffer · 0.3 ms)
+//       ป้ายที่มาของแต่ละ Order จำไว้ในเครื่อง ผูกกับ loaded_at
+//       ถาม JSON เฉพาะ Order ที่ใหม่/ถูกโหลดทับ · ตรวจป้ายทั้งหมดซ้ำวันละครั้ง
+var _OM_KEY = 'ordmeta_v91', _OM_TTL = 24 * 3600 * 1000, _omMem = null, _omFullP = null;
+window.__sbLastFetch = 0;
+function _omLoad() {
+  if (_omMem) return _omMem;
+  var c = null;
+  try { c = JSON.parse(localStorage.getItem(_OM_KEY) || 'null'); } catch(e) { c = null; }
+  if (!c || typeof c !== 'object' || !c.m || typeof c.m !== 'object') c = { at:0, m:{} };
+  _omMem = c;
+  return c;
+}
+function _omSave(c) { try { localStorage.setItem(_OM_KEY, JSON.stringify(c)); } catch(e) {} }
+function _omPut(m, r) {
+  m[r.order_id] = [ r.loaded_at || '',
+    r.osrc  == null ? null : String(r.osrc),
+    r.oman  == null ? null : String(r.oman),
+    r.imeta == null ? null : String(r.imeta) ];
+}
+var _OM_COLS = 'order_id,loaded_at,osrc:data->>source,oman:data->>_isManualBOM,imeta:data->>__impMetaStr';
+// คืน [{ order_id, loaded_at, osrc, oman, imeta }] ทุก Order (โมดูลนำเข้า BOM ใช้ร่วม)
+async function _orderMetaList() {
+  var res = await db.from('imos_orders').select('order_id,loaded_at')
+    .order('loaded_at', { ascending:false, nullsFirst:false })
+    .order('order_id', { ascending:false });
+  if (res.error) throw res.error;
+  var rows = res.data || [];
+  var c = _omLoad(), m = c.m, t = Date.now();
+  if ((c.at || 0) > t + 5 * 60 * 1000) c.at = 0;   // นาฬิกาเครื่องเคยเดินเร็ว → ถือว่าต้องตรวจใหม่
+  var stale = (t - (c.at || 0)) > _OM_TTL;
+  var need = [];
+  rows.forEach(function(r) {
+    var e = m[r.order_id];
+    if (!e || e[0] !== (r.loaded_at || '')) need.push(r.order_id);
+  });
+  try {
+    if (stale) {
+      // วันละครั้ง: ตรวจป้ายทุก Order ในคำขอเดียว (ถ้ามีคนตรวจอยู่แล้ว รอผลร่วมกัน)
+      if (!_omFullP) {
+        _omFullP = Promise.resolve(db.from('imos_orders').select(_OM_COLS)).then(function(all) {
+          if (all.error) throw all.error;
+          (all.data || []).forEach(function(r) { _omPut(m, r); });
+          c.at = Date.now();
+        });
+        _omFullP.then(function(){ _omFullP = null; }, function(){ _omFullP = null; });
+      }
+      await _omFullP;
+      need = need.filter(function(id) { var e = m[id]; return !e; });
+    }
+    for (var i = 0; i < need.length; i += 50) {
+      var q = await db.from('imos_orders').select(_OM_COLS).in('order_id', need.slice(i, i + 50));
+      if (q.error) throw q.error;
+      (q.data || []).forEach(function(r) { _omPut(m, r); });
+    }
+  } catch(e) {
+    // ป้ายที่มาอ่านไม่ได้ ไม่ใช่เหตุให้รายการ Order หาย — ใช้ป้ายที่จำไว้ไปก่อน
+    // และถ้าเป็นรอบตรวจทั้งหมดประจำวัน → เลื่อนไปลองใหม่อีก 30 นาที ไม่ลองซ้ำทุกครั้งที่วาดรายการ
+    if (stale) c.at = Date.now() - _OM_TTL + 30 * 60 * 1000;
+    console.warn('[Order list] อ่านป้ายที่มาไม่ได้ (ใช้ที่จำไว้):', (e && e.message) || e);
+  }
+  var alive = {};
+  rows.forEach(function(r) { alive[r.order_id] = 1; });
+  Object.keys(m).forEach(function(k) { if (!alive[k]) delete m[k]; });
+  _omSave(c);
+  window.__sbLastFetch = Date.now();
+  return rows.map(function(r) {
+    var e = m[r.order_id] || [];
+    var ok = e[0] === (r.loaded_at || '');
+    return { order_id:r.order_id, loaded_at:r.loaded_at,
+             osrc: ok ? e[1] : null, oman: ok ? e[2] : null, imeta: ok ? e[3] : null };
+  });
+}
+window._orderMetaList = _orderMetaList;
+
 async function renderSidebar() {
   var listEl = document.getElementById('orderList');
-  if (listEl) listEl.innerHTML = '<div class="no-orders">⏳ กำลังโหลด Order...</div>';
+  // v91: มีรายการอยู่แล้ว → ไม่ล้างทิ้งระหว่างโหลด (เดิมกระพริบ "กำลังโหลด" ทุกครั้งที่กด Order)
+  if (listEl && !(_sidebarOrders && _sidebarOrders.length))
+    listEl.innerHTML = '<div class="no-orders">⏳ กำลังโหลด Order...</div>';
 
-  // ดึง order + ตัวบ่งชี้ที่มา (source / _isManualBOM) จาก JSON ในคอลัมน์ data
   var data, error;
-  try {
-    var res = await db.from('imos_orders')
-      .select('order_id,loaded_at,osrc:data->>source,oman:data->>_isManualBOM')
-      .order('loaded_at', { ascending:false, nullsFirst:false })
-      .order('order_id', { ascending:false });
-    data = res.data; error = res.error;
-  } catch(e){ error = { message:String((e&&e.message)||e) }; }
-
-  // เผื่อ DB/สิทธิ์ ไม่รองรับการ select JSON path → fallback แบบเดิม (ไม่มี badge ที่มา)
-  if (error) {
-    console.warn('renderSidebar primary query failed → fallback:', error.message);
-    try {
-      var res2 = await db.from('imos_orders').select('order_id,loaded_at')
-        .order('loaded_at', { ascending:false, nullsFirst:false })
-        .order('order_id', { ascending:false });
-      data = res2.data; error = res2.error;
-    } catch(e2){ error = { message:String((e2&&e2.message)||e2) }; }
-  }
+  try { data = await _orderMetaList(); }
+  catch(e){ error = { message:String((e&&e.message)||e) }; }
 
   // มี error จริง → โชว์ให้เห็น + ปุ่มลองใหม่ (ไม่เงียบ)
   if (error) {
@@ -1618,6 +1691,8 @@ async function selectOrder(oid) {
   }
   currentData = data.data;
   setStep('โหลด BOM...');
+  // v91: ถามรหัสใหม่ของ Fitting Global (เว้นระยะเอง ≥3 นาที · ไม่รอผล · ไม่โหลดทั้งคลัง)
+  try { if (typeof FG_sync === 'function') FG_sync('order'); } catch(e) {}
 
   document.getElementById('oid').textContent = '📋 ' + oid;
   document.getElementById('ibar').style.display = 'flex';
@@ -1653,7 +1728,10 @@ async function selectOrder(oid) {
   if (lbl) lbl.textContent = oid;
 
   setStep('render...');
-  await renderSidebar();
+  // v91: ไม่ดึงรายการ Order ใหม่ทุกครั้งที่กด — ไฮไลต์วาดจากรายการที่มีแล้ว
+  //      ดึงใหม่เมื่อห่างจากครั้งก่อนเกิน 60 วินาที (เผื่อเครื่องอื่นเพิ่ม Order)
+  if (!_sidebarOrders.length || (Date.now() - (window.__sbLastFetch || 0)) > 60000) await renderSidebar();
+  else if (typeof _renderOrderList === 'function') _renderOrderList();
   if (stale()) { if (overlay) overlay.style.display = 'none'; return; }
   // โหลด fittingGlobal ก่อน render — _suggestWiderEdge ต้องการ
   if (!Object.keys(fittingGlobal).length) { setStep('โหลด Fitting Global...'); await loadFittingGlobal(); }
@@ -3484,9 +3562,11 @@ async function applyFrameFitScan(targetOrder) {
     if (f._isGlass) glassQtyMap[f.code] = (glassQtyMap[f.code]||0) + 1;
   });
 
+  var _boardChanged = false;   /* v91: เขียน Order กลับเฉพาะเมื่อรหัสขอบเปลี่ยนจริง */
   (ffr.found||[]).forEach(function(f){
     if (!f._isGlass) {
-      var br = boardMap[f.pid]; if(br) br[f.eField] = f.code;
+      var br = boardMap[f.pid];
+      if (br && br[f.eField] !== f.code) { br[f.eField] = f.code; _boardChanged = true; }
     }
     if (f._isGlass) {
       if (!extraFit.find(function(e){ return e.code===f.code && e._isGlass; })) {
@@ -3517,10 +3597,16 @@ async function applyFrameFitScan(targetOrder) {
   });
   if (!extraFit.length) { alert('ไม่มีรายการที่ valid (ทั้งหมดเป็น raw profile)'); return; }
 
-  await db.from('imos_orders').upsert({ order_id:oid, data:currentData },{ onConflict:'order_id' });
+  // v91: เดิมเขียนข้อมูลทั้ง Order (เฉลี่ย 434 KB) กลับทุกครั้งที่เปิด Order แม้ไม่มีอะไรเปลี่ยน
+  if (_boardChanged) await db.from('imos_orders').upsert({ order_id:oid, data:currentData },{ onConflict:'order_id' });
 
-  var key = 'bom_edits:'+oid, ex = {};
+  var key = 'bom_edits:'+oid, ex = {}, _exBefore = '';
   try { var {data:ed} = await db.from('app_settings').select('value').eq('key',key).single(); if(ed&&ed.value) ex=ed.value; } catch(e){}
+  // v91: ฐานข้อมูล (jsonb) เรียงชื่อช่องใหม่เอง → เทียบแบบเรียงชื่อช่องก่อน ไม่งั้นไม่มีวันเท่ากัน
+  var _canon = function(v){ return JSON.stringify(v, function(k, x){
+    if (x && typeof x === 'object' && !Array.isArray(x)) { var o = {}; Object.keys(x).sort().forEach(function(n){ o[n] = x[n]; }); return o; }
+    return x; }); };
+  try { _exBefore = _canon(ex); } catch(e) { _exBefore = ''; }
   if (!ex.extra) ex.extra=[];
   /* v81: จำไว้ก่อนว่าผู้ใช้เคยซ่อนรหัสไหนไว้ — สแกนใหม่แล้วจะได้ไม่โผลมาใหม่ */
   var _wasHidden = {};
@@ -3533,12 +3619,15 @@ async function applyFrameFitScan(targetOrder) {
     ex.extra.push({ItemId:f.code, Qty:f.qty||1, Warehouse:'', FittingType:'FrameAutoFit',
                    _name:f.name, _autoFit:true, hidden:!!_wasHidden[String(f.code)]});
   });
-  await db.from('app_settings').upsert({key:key,value:ex},{onConflict:'key'});
+  var _exAfter = null;
+  try { _exAfter = _canon(ex); } catch(e) { _exAfter = null; }
+  if (_exAfter === null || _exAfter !== _exBefore)          /* v91: เหมือนเดิมเป๊ะ → ไม่ต้องเขียน */
+    await db.from('app_settings').upsert({key:key,value:ex},{onConflict:'key'});
   await loadBOMEdits(oid);
 
   var remainingMissing = (ffr.missing||[]).filter(function(m){ return !m._selectedCode; });
   _frameFitScanResult = { found:[], missing:remainingMissing, scanned:ffr.scanned, ts:ffr.ts, doors:ffr.doors||[] };
-  await renderSidebar();
+  if (typeof _renderOrderList === 'function') _renderOrderList();   /* v91: รายการ Order ไม่ได้เปลี่ยน ไม่ต้องดึงใหม่ */
   renderAX();
   renderBOM();
 }
@@ -5858,8 +5947,20 @@ async function fgSave(){
   if(!name){alert('กรุณาใส่ Product Name');return;}
   var btn=document.getElementById('fgFSave');
   btn.textContent='...';btn.disabled=true;
+  // v91: รหัสที่เพิ่มเอง ให้เลข recid ติดลบต่อจากตัวต่ำสุด (แบบเดียวกับรหัสเดิม -1…-416)
+  //      เครื่องอื่นจะเห็นรหัสนี้ในรอบ "ถามรหัสใหม่" ภายในไม่กี่นาที ไม่ต้องรอโหลดทั้งคลัง
+  var _newRow = {item_number:item,product_name:name,unit:unit,search_name:cat};
+  if (!fgEM) {
+    try {
+      var _mn = await db.from('fitting_global').select('recid').not('recid','is',null).order('recid',{ascending:true}).limit(1);
+      if (_mn && !_mn.error && Array.isArray(_mn.data)) {      // ถามไม่ได้ → ไม่ใส่ recid (เครื่องอื่นยังเจอในรอบตรวจรายชั่วโมง)
+        var _lo = _mn.data[0] ? Number(_mn.data[0].recid) : 0;
+        if (isFinite(_lo)) _newRow.recid = Math.min(_lo, 0) - 1;
+      }
+    } catch(e) {}
+  }
   var r=fgEM ? await db.from('fitting_global').update({product_name:name,unit:unit,search_name:cat}).eq('item_number',item)
-             : await db.from('fitting_global').insert({item_number:item,product_name:name,unit:unit,search_name:cat});
+             : await db.from('fitting_global').insert(_newRow);
   btn.textContent='บันทึก';btn.disabled=false;
   if(r.error){alert('ไม่สำเร็จ: '+r.error.message);return;}
   fittingGlobal[String(item).trim()] = { name: name, unit: unit }; _fgUpperIndex = null;
@@ -5912,10 +6013,47 @@ async function fgImport(text){
     rows.push({item_number:item,product_name:(c[ni]||'').trim(),unit:ui>=0?(c[ui]||'').trim():'',search_name:cti>=0?(c[cti]||'').trim():''});
   }
   if(!rows.length){alert('ไม่พบข้อมูลใน CSV');return;}
+  // v91: รหัสใหม่ (ยังไม่มีในตาราง) ให้เลข recid ติดลบต่อจากตัวต่ำสุด → เครื่องอื่นเห็นในรอบถามรหัสใหม่
+  //      รหัสเดิมส่งแบบไม่มีช่อง recid (ห้ามปนในชุดเดียวกัน ไม่งั้น recid ของรหัสเดิมจะถูกล้างเป็นว่าง)
+  var _oldRows = [], _newRows = [];
+  rows.forEach(function(r){
+    var k = String(r.item_number||'').replace(/[\u00A0\u200B]/g, ' ').trim();
+    if (Object.prototype.hasOwnProperty.call(fittingGlobal, k)) _oldRows.push(r); else _newRows.push(r);
+  });
+  // v92: รหัสที่ในเครื่องยังไม่มี ต้องถามฐานข้อมูลก่อนว่ามีอยู่แล้วไหม (ถามทีละ 50 รหัส)
+  //      ตารางในเครื่องอาจยังโหลดไม่เสร็จ/ไม่ครบ หรือยังไม่ได้รหัสที่ AX เพิ่งเพิ่ม
+  //      ถ้าเชื่อตารางในเครื่องอย่างเดียว รหัสที่มีอยู่แล้วจะถูกให้ recid ติดลบทับเลขเดิมของ AX
+  //      ถามไม่ได้ → ถือเป็นรหัสเดิมทั้งหมด (ส่งแบบไม่มี recid = ไม่ทับของเดิมแน่นอน)
+  if (_newRows.length) {
+    var _cand = _newRows, _exist = {}, _chkOK = true;
+    _newRows = [];
+    for (var _ci = 0; _ci < _cand.length && _chkOK; _ci += 50) {
+      try {
+        var _part = _cand.slice(_ci, _ci + 50).map(function(r){ return r.item_number; });
+        var _ex = await db.from('fitting_global').select('item_number').in('item_number', _part);
+        if (!_ex || _ex.error || !Array.isArray(_ex.data)) _chkOK = false;
+        else _ex.data.forEach(function(x){ _exist[x.item_number] = 1; });
+      } catch(e) { _chkOK = false; }
+    }
+    _cand.forEach(function(r){
+      if (!_chkOK || Object.prototype.hasOwnProperty.call(_exist, r.item_number)) _oldRows.push(r); else _newRows.push(r);
+    });
+  }
+  if (_newRows.length) {
+    try {
+      var _mn2 = await db.from('fitting_global').select('recid').not('recid','is',null).order('recid',{ascending:true}).limit(1);
+      if (_mn2 && !_mn2.error && Array.isArray(_mn2.data)) {
+        var _lo2 = _mn2.data[0] ? Number(_mn2.data[0].recid) : 0;
+        if (isFinite(_lo2)) { var _nx = Math.min(_lo2, 0); _newRows.forEach(function(r){ r.recid = --_nx; }); }
+      }
+    } catch(e) {}
+  }
   document.getElementById('fgPOv').style.display='flex';
   var CHUNK=50;
   var done=0,errs=0;
-  var totalBatch=Math.ceil(rows.length/CHUNK);
+  var _batches = [];
+  [_oldRows, _newRows].forEach(function(L){ for (var i = 0; i < L.length; i += CHUNK) _batches.push(L.slice(i, i + CHUNK)); });
+  var totalBatch=_batches.length;
 
   // Use fetch directly to Supabase REST API - most reliable
   var SB_REST = SB_URL + '/rest/v1/fitting_global';
@@ -5948,7 +6086,7 @@ async function fgImport(text){
       fgRefreshViews();
       return;
     }
-    var chunk = rows.slice(bi*CHUNK, Math.min((bi+1)*CHUNK, rows.length));
+    var chunk = _batches[bi];
     updateUI(bi);
 
     fetch(SB_REST, {
@@ -10449,10 +10587,16 @@ function isImp(d){ return !!(d && d.source === 'import' && d.__impRows); }
 /* อ่านรายชื่อ Order นำเข้าจากฐานข้อมูล (เก็บเฉพาะข้อมูลย่อ ไม่ดึงแถวทั้งหมด) */
 function load(){
   var d = _db(); if(!d) return Promise.resolve();
-  return Promise.resolve(
-    d.from('imos_orders')
-     .select('order_id,loaded_at,osrc:data->>source,meta:data->>__impMetaStr')
-  ).then(function(res){
+  /* v91: ใช้รายการ Order ร่วมกับแถบซ้าย (จำป้ายที่มาไว้ในเครื่อง)
+     เดิมดึง data->>source ของทุก Order = ฐานข้อมูลต้องแตก JSON ทุก Order ตอนเปิดโปรแกรม */
+  var src = (typeof window._orderMetaList === 'function')
+    ? Promise.resolve(window._orderMetaList()).then(function(rows){
+        return { data: (rows || []).map(function(r){
+          return { order_id:r.order_id, loaded_at:r.loaded_at, osrc:r.osrc, meta:r.imeta }; }) };
+      })
+    : Promise.resolve(d.from('imos_orders')
+        .select('order_id,loaded_at,osrc:data->>source,meta:data->>__impMetaStr'));
+  return src.then(function(res){
     if(res && res.error) throw res.error;
     var out = {};
     (res && res.data ? res.data : []).forEach(function(r){
@@ -12417,11 +12561,17 @@ var IDX_OH   = 32;       /* ดัชนี primary key โดยประมา
 
 /* ตาราง · จำนวนแถวที่สุ่ม (น้อย ๆ พอให้ได้ค่าเฉลี่ย) */
 var TABLES = [
-  { name:'imos_orders',    n:6  },
-  { name:'fitting_global', n:20 },
+  /* v91: ไม่ดึงข้อมูลเต็มของ Order มาสุ่มวัดขนาด (เดิม 6 Order ≈ 2.6 MB ทุกครั้งที่เปิดโปรแกรม)
+     ใช้ขนาดเฉลี่ยที่เก็บจริงในฐานข้อมูล (22/09/2026: ~48 KB/Order หลังบีบอัด) */
+  { name:'imos_orders',    n:0, avg:50000 },
+  /* v91: ไม่สุ่มแถวของ fitting_global แล้ว — เดิมใช้ OFFSET 27,000 / 81,000 / 135,000
+     = ฐานข้อมูลต้องไล่ข้ามแถวรวม ~240,000 แถวทุกครั้งที่เปิดโปรแกรม
+     ใช้ขนาดเฉลี่ยที่วัดจากฐานข้อมูลจริงแทน (22/09/2026: 308 ไบต์/แถว) */
+  { name:'fitting_global', n:0, avg:308 },
   { name:'imos_mapping',   n:15 },
   { name:'app_settings',   n:10 }
 ];
+var CAP_KEY = 'cap_est_v91', CAP_TTL = 12 * 3600 * 1000;   /* v91: คำนวณ 12 ชม. ครั้ง แล้วจำไว้ */
 
 function _db(){ try{ return (typeof db !== 'undefined') ? db : null; }catch(e){ return null; } }
 function u8(s){
@@ -12468,6 +12618,7 @@ function scanTable(t){
     if(res && res.error) throw res.error;
     var total = (res && res.count) || 0;
     if(!total) return { name:t.name, total:0, bytes:0 };
+    if(t.avg) return { name:t.name, total:total, bytes:(t.avg + IDX_OH) * total, sampled:0 };
 
     /* สุ่ม 3 ช่วง วางไว้กลางช่วง เพื่อไม่ให้ค่าเฉลี่ยเอน */
     var per = Math.max(1, Math.ceil(t.n / 3)), picks = [];
@@ -12561,13 +12712,23 @@ function watch(){
 }
 
 function run(){
+  /* v91: มีผลที่คำนวณไว้ไม่เกิน 12 ชม. → ใช้เลย ไม่ยิงฐานข้อมูล */
+  try{
+    var c = JSON.parse(localStorage.getItem(CAP_KEY) || 'null');
+    if(c && Array.isArray(c.list) && (Date.now() - (c.at || 0)) < CAP_TTL && (c.at || 0) <= Date.now() + 300000){
+      LAST = c.list; paint(c.list); watch(); return;
+    }
+  }catch(e){}
   if(!_db()) return setTimeout(run, 2000);
   TABLES.reduce(function(p, t){
     return p.then(function(acc){
       return scanTable(t).then(function(r){ acc.push(r); return acc; });
     });
   }, Promise.resolve([]))
-  .then(function(list){ LAST = list; try{ paint(list); watch(); }catch(e){} })
+  .then(function(list){
+    LAST = list; try{ paint(list); watch(); }catch(e){}
+    try{ if(list.some(Boolean)) localStorage.setItem(CAP_KEY, JSON.stringify({ at:Date.now(), list:list })); }catch(e){}
+  })
   .catch(function(){});   /* พังก็เงียบ ไม่กระทบโปรแกรม */
 }
 
@@ -12740,7 +12901,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '90', D = '18/09/2026';
+  var V = '92', D = '22/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
@@ -12798,138 +12959,147 @@ else setTimeout(run, 6000);
 </script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   Fitting Global — โหลดให้ครบจริง  (v1.0)
+   Fitting Global — v91: โหลดครั้งเดียว แล้วดึงเฉพาะ "รหัสใหม่"
    ─────────────────────────────────────────────────────────────────────────
-   อาการเดิม: fgLookup('PB16N01M0029N01M0029SNP48') หาไม่เจอ
-              ทั้งที่เปิดหน้า Fitting Global แล้วเห็นรหัสนี้อยู่จริง
+   เหตุการณ์ 21/09/2026 ฐานข้อมูลค้าง 16:13–17:13 · ตรวจกับ log จริงแล้ว:
+     1. เดิมเช็คว่า cache ยังใช้ได้ไหมด้วย "จำนวนแถว" (count exact)
+        = อ่านทั้งตาราง 52 MB ทุกครั้ง
+     2. Sync AX เพิ่มรหัสทุก ~10 นาที → จำนวนแถวเปลี่ยน → ทุกเครื่องที่เปิด
+        โปรแกรมดาวน์โหลดใหม่ทั้งคลัง 161,000 แถว (162 คำขอ)
+        วันนั้นโหลดทั้งคลัง 7 รอบ · ช่วง 14:00–16:00 มี 4 รอบ ก่อนล่ม 16:13
+     3. เปิดจาก cache แล้วสถานะค้าง "ไม่ครบ" (รหัสไม่ซ้ำ < จำนวนแถว)
+        → FG_ready() ทุกครั้งที่รับรายการไม้ = นับแถว/โหลดทั้งคลังซ้ำอีก
+     4. cache เกิน 12 ชม. → เปิดโปรแกรมตอนเช้าโหลดซ้อนกัน 2 ชุดพร้อมกัน
+     5. โหลดพลาด → ลองทั้งคลังใหม่ทุก 1 นาที ทุกเครื่อง (ฐานข้อมูลฟื้นไม่ได้)
 
-   ต้นเหตุ:   loadFittingGlobal() เดิมวนดึงทีละ 1,000 แถว
-              ถ้ารอบไหน error มันสั่ง break เงียบ ๆ แล้วไปทำงานต่อ
-                  if (r.error) { console.error(...); break; }
-              → ตารางในหน่วยความจำได้ไม่ครบ (ขาดตั้งแต่รอบที่ error เป็นต้นไป)
-              → แต่หน้า Fitting Global ยิงถามฐานข้อมูลตรง ๆ จึงยังเห็นครบ
-              → เลยดูเหมือน "มีรหัสอยู่แต่โปรแกรมหาไม่เจอ"
-              ยิ่งรหัสเรียงตามตัวอักษร ยิ่งขาดเป็นช่วงท้าย ๆ ชัดเจน
-              (ต้องยิง ~158 รอบต่อการเปิดโปรแกรม 1 ครั้ง พลาดรอบเดียวก็ขาด)
-
-   วิธีแก้:   ห่อทับ loadFittingGlobal (ไม่แตะโค้ดเดิมสักบรรทัด)
-              1. ถามจำนวนแถวจริงจากฐานข้อมูลก่อน (count exact)
-              2. ดึงทีละ 1,000 · รอบไหนพลาด ลองซ้ำ 3 ครั้ง แบบหน่วงเพิ่มขึ้น
-              3. ดึงครบแล้วค่อยสลับตารางทั้งก้อน (ระหว่างโหลดจะไม่เห็นของครึ่ง ๆ)
-              4. ได้ไม่ครบ → ขึ้นป้ายเตือนมุมจอ + บอกใน console
-              5. เปิดทางให้โมดูลอื่นรอจนโหลดครบด้วย FG_ready()
+   ใหม่:
+     • เปิดโปรแกรม = ใช้ cache ในเครื่องทันที ไม่ถามฐานข้อมูลก่อน
+     • ถามเฉพาะรหัสใหม่ด้วย recid · 1 คำขอ · ไม่มีรหัสใหม่ = ได้ 0 แถว
+         recid มากกว่าค่ามากสุดที่มี · ติดลบต่ำกว่าที่มี · recid ว่าง
+       (วัดจริง: 12 buffer / 0.1 ms  เทียบกับนับทั้งตาราง 6,629 buffer)
+     • ไม่ถี่กว่า 3 นาที — กด Order กี่ครั้งก็ไม่ยิงเพิ่ม
+       เปิดหน้าทิ้งไว้ = ถามทุก ~10 นาที เฉพาะตอนหน้าจอเปิดดูอยู่
+     • ทุก ~1 ชม. ตรวจ 600 รหัสล่าสุดซ้ำอีกชั้น เผื่อ AX ให้เลข recid ไม่เรียง
+     • โหลดทั้งคลังเฉพาะ: เครื่องที่ยังไม่มี cache · อัปเกรดจาก cache รุ่นเก่า ·
+       ครบรอบ ~3 วัน (สุ่มวันและเวลาต่อเครื่อง ไม่พร้อมกัน) · สั่งเอง
+       และโหลดแบบผ่อนแรง เว้นช่วงทุกหน้า · หลายแท็บในเครื่องเดียวโหลดแค่แท็บเดียว
+     • พลาด → เว้นระยะทวีคูณ 1 → 2 → 4 … สูงสุด 30 นาที + สุ่ม ไม่รุมยิงพร้อมกัน
+       โหลดทั้งคลังค้างหน้าไหน รอบหน้าไล่ต่อจากหน้านั้น ไม่เริ่มใหม่
+     • ไม่นับแถวทั้งตารางอีกเลย
    ══════════════════════════════════════════════════════════════════════════ */
 (function(){
 'use strict';
 
-var CHUNK = 1000;          /* v2.2: Supabase คืนสูงสุด 1000/ครั้ง ขอมากกว่านี้ก็ได้เท่าเดิม */
-var CACHE_KEY = 'fg_cache_v3';   /* v17.1: ขึ้นเวอร์ชัน — cache เดิมไม่มีข้อมูล recid */
-var MAXAGE = 12 * 3600 * 1000;   /* v2.3: cache เกิน 12 ชม. → โหลดใหม่เบื้องหลังเสมอ */
-var ST = { done:false, loaded:0, expected:-1, err:'', at:0 };
-var RUN = null;                                   /* promise ที่กำลังโหลดอยู่ */
-var USE_KEYSET = null;                            /* v17.1: page() บอกว่าใช้ keyset ได้ไหม */
-var DUP = 0;                                      /* v17.1: จำนวนแถวที่รหัสซ้ำกัน */
+var CHUNK       = 1000;                       /* PostgREST ส่งได้สูงสุด 1000 แถว/คำขอ */
+var CACHE_KEY   = 'fg_cache_v4';              /* ก้อนหลัก { v:4, map, meta } */
+var DELTA_KEY   = 'fg_delta_v4';              /* ของที่เพิ่มหลังก้อนหลัก { base, ops, maxPos, minNeg, at } */
+var OLD_KEYS    = ['fg_cache_v3'];            /* cache รุ่นเก่า — ใช้ชั่วคราวระหว่างอัปเกรด แล้วลบทิ้ง */
+var MIN_GAP     = 3 * 60 * 1000;              /* ถามรหัสใหม่ห่างกันอย่างน้อย 3 นาที */
+var TIMER_GAP   = 10 * 60 * 1000;             /* เปิดหน้าทิ้งไว้ → ถามเองทุก ~10 นาที */
+var CHECK_GAP   = 60 * 60 * 1000;             /* ตรวจรหัสล่าสุดซ้ำ ~ทุก 1 ชม. */
+var CHECK_N     = 600;                        /* จำนวนรหัสล่าสุดที่ตรวจซ้ำ */
+var FULL_EVERY  = 3 * 86400000;               /* โหลดทั้งคลังใหม่ ~ทุก 3 วัน (เผื่อชื่อ/หน่วยของรหัสเดิมถูกแก้) */
+var FULL_JITTER = 1 * 86400000;               /* + สุ่ม 0–1 วัน ต่อเครื่อง */
+var PAGE_GAP_BG = 250;                        /* โหลดเบื้องหลัง: เว้น 0.25 วิ ต่อหน้า */
+var PAGE_GAP_FG = 60;                         /* ต้องรอใช้งาน: เว้นนิดเดียว */
+var FAST_OK     = 50;                         /* ได้น้อยกว่านี้ = ครบแน่ · มากกว่านี้ไล่เรียงลำดับจนหน้าว่าง (กันเพดานแถวถูกลด) */
+var RESUME_TTL  = 2 * 3600 * 1000;            /* โหลดค้างไว้แล้ว "ไม่คืบหน้า" เกิน 2 ชม. = เริ่มใหม่ ไม่ไล่ต่อของเก่า */
+var REQ_TIMEOUT = 30000;                      /* คำขอเดียวค้างเกิน 30 วิ = ถือว่าพลาด */
+var BACKOFF_MIN = 60 * 1000, BACKOFF_MAX = 30 * 60 * 1000;
+var COMPACT_AT  = 3000;                       /* ของที่เพิ่มสะสมเกินนี้ → รวมเข้าก้อนหลัก */
+var LOCK_KEY    = 'fg_full_lock', LOCK_TTL = 3 * 60 * 1000;
+var STAMP_KEY   = 'fg_cache_stamp';           /* แจ้งแท็บอื่นในเครื่องว่า cache เปลี่ยน */
+var LASTQ_KEY   = 'fg_last_delta';            /* เวลาที่ถามรหัสใหม่ล่าสุด (ใช้ร่วมทุกแท็บ) */
+var LASTC_KEY   = 'fg_last_check';
+var TAB_ID      = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+var ST = { done:false, loaded:0, expected:-1, err:'', at:0, keys:0, src:'',
+           lastDelta:0, lastCheck:0, lastFull:0, added:0, requests:0 };
+var META  = null;     /* { maxPos, minNeg, rows, fullAt, nextFullAt, baseId } — null = ยังไม่มีข้อมูล recid */
+var BASE  = 0;        /* รุ่นของก้อนหลักที่ใช้อยู่ (baseId) */
+var OPS   = [];       /* ของที่เพิ่มหลังก้อนหลัก (เรียงตามเวลา) */
+var RUN   = null;     /* โหลดทั้งคลังที่กำลังทำงาน */
+var DRUN  = null;     /* ถามรหัสใหม่ที่กำลังทำงาน */
+var RESUME = null;    /* โหลดทั้งคลังค้างไว้ → ไล่ต่อจากตรงนี้ */
+var FAILS = 0, PAUSE_UNTIL = 0, RETRY_T = null, FULL_T = null, TICK_T = null;
+var NO_RECID = false, DUP = 0, BOOTP = null, IMPORTING = false;
 
 function _db(){ try{ return (typeof db !== 'undefined') ? db : null; }catch(e){ return null; } }
 function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+function now(){ return Date.now(); }
+function jit(ms, f){ f = (typeof f === 'number') ? f : 0.3; return Math.max(0, Math.round(ms * (1 - f + Math.random() * 2 * f))); }
+function normKey(v){ return String(v == null ? '' : v).replace(/[\u00A0\u200B]/g, ' ').trim(); }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, String(v)); }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+function lsNum(k){ var v = Number(lsGet(k)); return isFinite(v) ? sane(v) : 0; }
+/* นาฬิกาเครื่องเคยเดินเร็วแล้วถูกตั้งกลับ → เวลาที่จำไว้อยู่ "ในอนาคต"
+   ถ้าเชื่อค่านั้น การเว้นระยะจะค้างไม่ถามรหัสใหม่อีกเลย → ถือว่าไม่เคยถาม */
+function sane(t){ t = Number(t) || 0; return (t > Date.now() + 5 * 60 * 1000) ? 0 : t; }
+function fgMap(){ var m = null; try{ m = window.fittingGlobal; }catch(e){} return (m && typeof m === 'object') ? m : null; }
+function keyCount(){ var m = fgMap(); if(!m) return 0; try{ return Object.keys(m).length; }catch(e){ return 0; } }
+function log(){ try{ console.log.apply(console, ['[FittingGlobal]'].concat([].slice.call(arguments))); }catch(e){} }
+function warn(){ try{ console.warn.apply(console, ['[FittingGlobal]'].concat([].slice.call(arguments))); }catch(e){} }
 
-/* จำนวนแถวจริงในฐานข้อมูล — ไว้เทียบว่าโหลดครบไหม */
-function countRows(){
-  var d = _db(); if(!d) return Promise.resolve(-1);
-  return Promise.resolve(
-    d.from('fitting_global').select('item_number', { count:'exact', head:true })
-  ).then(function(r){
-    if(r && r.error) return -1;
-    return (r && typeof r.count === 'number') ? r.count : -1;
-  }).catch(function(){ return -1; });
-}
-
-/* ดึง 1 หน้า · พลาดแล้วลองซ้ำ */
-/* ══════════════════════════════════════════════════════════════════════
-   v2.4 — keyset pagination (ไล่ต่อจากรหัสล่าสุด)
-   ─────────────────────────────────────────────────────────────────────
-   ปัญหาของ 2 วิธีก่อนหน้า:
-     v1  .order() + .range()  → ครบ แต่ Postgres เรียงทั้งตารางทุกหน้า
-                                 + OFFSET ต้องข้ามแถวสะสม → timeout
-     v2  ตัด .order() ทิ้ง     → เร็ว แต่ Postgres ไม่รับประกันลำดับ
-                                 หน้าเหลื่อมกัน ได้ไม่ครบ (159,276 → ~103,000)
-   วิธีนี้: เรียงตาม item_number แต่ไม่ใช้ OFFSET
-            บอกว่า "เอาที่มากกว่ารหัสสุดท้ายที่ได้มา" แล้วเอาแค่ 1000
-     · ลำดับคงที่ → ไม่มีหน้าเหลื่อม ได้ครบแน่นอน
-     · ไม่มี OFFSET → ไม่ต้องข้ามแถวสะสม หน้าท้าย ๆ เร็วเท่าหน้าแรก
-     · Postgres หาแค่ top-1000 หลังกรอง ไม่ต้องเรียงทั้งตาราง
-     · ถ้ามี index บน item_number จะยิ่งเร็วอีกมาก
-   ══════════════════════════════════════════════════════════════════════ */
-function page(after, offset, tries){
-  var d = _db();
-  if(!d) return Promise.reject(new Error('ยังไม่ได้เชื่อมฐานข้อมูล'));
-  /* ลำดับสำคัญ: supabase-js มี .gt() อยู่บน FilterBuilder เท่านั้น
-     พอเรียก .order()/.limit() ไปแล้วจะได้ TransformBuilder ซึ่งไม่มี .gt()
-     → ต้องกรองก่อน แล้วค่อยเรียง/จำกัดจำนวน */
-  /* v17.1: ดึง recid มาด้วย — ตารางมี item_number ซ้ำ 172 รหัส
-     ถ้าไม่รู้ว่าแถวไหนใหม่กว่า ตัวที่มาทีหลังจะทับตัวก่อนแบบสุ่ม
-     → ชื่อ/หน่วยของรหัสซ้ำเปลี่ยนไปมาทุกครั้งที่เปิดโปรแกรม
-     ถ้าฐานข้อมูลไม่มีคอลัมน์ recid จะถอยกลับไปแบบเดิมเองอัตโนมัติ */
-  var q = d.from('fitting_global')
-           .select(window.__fgNoRecid ? 'item_number,product_name,unit'
-                                      : 'item_number,product_name,unit,recid');
-  var useKeyset = (typeof q.gt === 'function');
-  USE_KEYSET = useKeyset;
-  if(useKeyset){
-    if(after != null && after !== '') q = q.gt('item_number', after);
-    q = q.order('item_number', { ascending: true }).limit(CHUNK);
-  } else {
-    /* client รุ่นเก่าไม่มี .gt() → ถอยไปใช้ order + range
-       ช้ากว่าเพราะต้องข้ามแถวสะสม แต่ยังได้ครบและลำดับคงที่ */
-    q = q.order('item_number', { ascending: true })
-         .range(offset, offset + CHUNK - 1);
-  }
-  return Promise.resolve(q).then(function(r){
-    if(r && r.error) throw new Error((r.error && r.error.message) || 'query error');
-    return (r && r.data) || [];
-  }).catch(function(e){
-    /* v17.1: ฐานข้อมูลไม่มีคอลัมน์ recid → ถอยไปใช้ชุดคอลัมน์เดิมทันที ไม่นับเป็นความผิดพลาด */
-    var m = (e && e.message) || '';
-    if(!window.__fgNoRecid && (/recid/i.test(m) || /42703/.test(m) || /does not exist/i.test(m))){
-      window.__fgNoRecid = true;
-      console.log('[FittingGlobal] ไม่มีคอลัมน์ recid — ใช้ชุดคอลัมน์เดิมแทน');
-      return page(after, offset, tries);
+/* ══ คำขอ 1 ครั้ง · จำกัดเวลา · นับจำนวนคำขอไว้ดูได้ใน FG_state() ══ */
+function send(q){
+  ST.requests++;
+  var ctl = null;
+  try{
+    if(typeof AbortController !== 'undefined' && q && typeof q.abortSignal === 'function'){
+      ctl = new AbortController(); q = q.abortSignal(ctl.signal);
     }
-    if(tries <= 1) throw e;
-    console.warn('[FittingGlobal] หลังรหัส ' + (after||'(เริ่มต้น)')
-      + ' พลาด — ลองใหม่ (' + ((e&&e.message)||e) + ')');
-    return sleep(500 * (4 - tries)).then(function(){ return page(after, offset, tries - 1); });
+  }catch(e){ ctl = null; }
+  return new Promise(function(res, rej){
+    var t = setTimeout(function(){
+      try{ if(ctl) ctl.abort(); }catch(e){}
+      rej(new Error('ฐานข้อมูลไม่ตอบภายใน ' + (REQ_TIMEOUT / 1000) + ' วินาที'));
+    }, REQ_TIMEOUT);
+    Promise.resolve(q).then(function(r){
+      clearTimeout(t);
+      if(r && r.error) return rej(new Error((r.error && r.error.message) || 'query error'));
+      res((r && r.data) || []);
+    }, function(e){ clearTimeout(t); rej(e); });
   });
 }
+function isNoRecid(e){ var m = (e && e.message) || ''; return /recid/i.test(m) || /42703/.test(m); }
 
-/* ══ v2.0: เก็บ cache ไว้ในเครื่อง ═══════════════════════════════════════
-   150,000 แถวแทบไม่เปลี่ยน แต่โหลดใหม่ทุกครั้งที่เปิดโปรแกรม
-   ใหม่: เก็บไว้ใน localStorage · เปิดครั้งต่อไปใช้ของเดิมทันที
-         แล้วเช็คจำนวนแถวเบา ๆ อยู่เบื้องหลัง ถ้าไม่ตรงค่อยโหลดใหม่เงียบ ๆ
-   ══════════════════════════════════════════════════════════════════════ */
-/* ══ v2.1: ใช้ IndexedDB ไม่ใช่ localStorage ═══════════════════════════
-   150,000 แถวแปลงเป็น JSON ได้ ~18.6 MB
-   localStorage รับได้แค่ ~5 MB → เก็บไม่ลง เขียนพลาดทุกครั้งเงียบ ๆ
-   IndexedDB เก็บได้ระดับหลายร้อย MB และเก็บ object ตรง ๆ ไม่ต้องแปลงเป็น string
-   ══════════════════════════════════════════════════════════════════════ */
+/* ══ ผ่อนแรงเมื่อฐานข้อมูลมีปัญหา ══════════════════════════════════════ */
+function noteFail(e){
+  FAILS++;
+  var d = Math.min(BACKOFF_MAX, BACKOFF_MIN * Math.pow(2, FAILS - 1));
+  d = jit(d, 0.3);
+  PAUSE_UNTIL = now() + d;
+  ST.err = (e && e.message) || String(e || '');
+  warn('ติดต่อฐานข้อมูลไม่สำเร็จ (' + ST.err + ') · พักก่อน ' + Math.round(d / 1000) + ' วินาที');
+  return d;
+}
+function noteOK(){ FAILS = 0; PAUSE_UNTIL = 0; ST.err = ''; }
+function paused(){ return now() < PAUSE_UNTIL; }
+
+/* ══ IndexedDB (ฐานข้อมูลในเครื่อง ไม่ใช่ Supabase) ══════════════════ */
+var _idb = null;
 function idbOpen(){
-  return new Promise(function(res, rej){
+  if(_idb) return _idb;
+  _idb = new Promise(function(res, rej){
     try{
       if(!window.indexedDB) return rej(new Error('เบราว์เซอร์ไม่รองรับ IndexedDB'));
       var rq = indexedDB.open('fg_cache', 1);
       rq.onupgradeneeded = function(e){
-        var db = e.target.result;
-        if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        var d = e.target.result;
+        if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv');
       };
       rq.onsuccess = function(e){ res(e.target.result); };
       rq.onerror   = function(){ rej(rq.error || new Error('เปิด IndexedDB ไม่ได้')); };
     }catch(e){ rej(e); }
   });
+  _idb.catch(function(){ _idb = null; });
+  return _idb;
 }
 function idbGet(key){
-  return idbOpen().then(function(db){
+  return idbOpen().then(function(d){
     return new Promise(function(res, rej){
-      var tx = db.transaction('kv', 'readonly');
+      var tx = d.transaction('kv', 'readonly');
       var rq = tx.objectStore('kv').get(key);
       rq.onsuccess = function(){ res(rq.result || null); };
       rq.onerror   = function(){ rej(rq.error); };
@@ -12937,304 +13107,677 @@ function idbGet(key){
   });
 }
 function idbSet(key, val){
-  return idbOpen().then(function(db){
+  return idbOpen().then(function(d){
     return new Promise(function(res, rej){
-      var tx = db.transaction('kv', 'readwrite');
-      tx.objectStore('kv').put(val, key);
+      var tx = d.transaction('kv', 'readwrite');
+      if(val === null || val === undefined) tx.objectStore('kv').delete(key);
+      else tx.objectStore('kv').put(val, key);
       tx.oncomplete = function(){ res(true); };
       tx.onerror    = function(){ rej(tx.error); };
+      tx.onabort    = function(){ rej(tx.error || new Error('IndexedDB abort')); };
     });
   });
 }
-function cacheWrite(map, n){
-  idbSet(CACHE_KEY, { map:map, n:n, at:Date.now() })
-    .then(function(){ console.log('[FittingGlobal] เก็บ cache ' + n + ' แถวลงเครื่องแล้ว'); })
-    .catch(function(e){ console.warn('[FittingGlobal] เก็บ cache ไม่ได้:', (e&&e.message)||e); });
-}
-function publish(map, got, expected){
-  window.fittingGlobal = map;
-  window._fgUpperIndex = null;
-  window._fgToken = (typeof window._fgToken === 'number' ? window._fgToken : 0) + 1;
-  ST.loaded = got; ST.expected = expected;
-  ST.done = (expected < 0) || (got >= expected);
-  ST.at = Date.now();
-}
-/* ══ v10.0: ล้มแบบนุ่ม — บั๊กที่เจอจริงหน้างาน ══════════════════════════
-   ส่วนเสริมเบราว์เซอร์ (แถบ AI/แปลภาษา) ครอบ fetch แล้วพังเป็น
-   "DataCloneError ... postMessage ... Headers" ระหว่างอัปเดตเบื้องหลัง
-   ทั้งที่ cache ในเครื่องมี 159,315 รหัสใช้งานได้ครบ — ป้ายแดงเดิมทำคนตกใจฟรี
-   ใหม่: (1) โหลดค้างกลางทางได้กี่รหัสก็เก็บมาใช้ก่อน ไม่ทิ้งเปล่า
-         (2) มีข้อมูลใช้ได้อยู่แล้ว → ป้ายฟ้าแจ้งเบา ๆ + นัดลองใหม่เองใน 1 นาที
-         (3) ไม่มีข้อมูลเลยจริง ๆ ค่อยขึ้นป้ายเตือนแบบเดิม ═══════════════ */
-function fgSoftFail(errMsg, tgtPart, gotPart){
-  var have = 0;
-  try{ have = Object.keys(window.fittingGlobal || {}).length; }catch(e){}
-  var part = 0;
-  try{ part = Object.keys(tgtPart || {}).length; }catch(e){}
-  var published = false;
-  if(part > have){
-    try{
-      publish(tgtPart, gotPart || part, ST.expected);
-      have = part; published = true;
-      console.log('[FittingGlobal] เก็บของที่โหลดค้างไว้ใช้ก่อน ' + part + ' รหัส');
-    }catch(e){}
-  }
-  var ext = /could not be cloned|postMessage|DataCloneError/i.test(errMsg || '');
-  if(have > 0){
-    warnChip((ext
-      ? 'ส่วนเสริมของเบราว์เซอร์ (เช่น แถบ AI/แปลภาษา) รบกวนการเชื่อมต่อระหว่างอัปเดต<br>'
-      : 'อัปเดตล่าสุดไม่สำเร็จ (' + errMsg + ')<br>')
-      + 'ใช้ข้อมูลชุดเดิม <b>' + have.toLocaleString() + '</b> รหัสไปก่อน · จะลองใหม่ให้เองใน 1 นาที', true);
-    if(!window.__fgRetryT){
-      window.__fgRetryT = setTimeout(function(){
-        window.__fgRetryT = null;
-        try{ RUN = null; window.loadFittingGlobal(true); }catch(e){}
-      }, 60000);
-    }
-    return { mode:'soft', have:have, published:published, ext:ext };
-  }
-  warnChip('โหลด Fitting Global ไม่สำเร็จ — ' + errMsg);
-  return { mode:'hard', have:0, published:published, ext:ext };
-}
-window.__fgSoftFail = fgSoftFail;
+function stamp(){ lsSet(STAMP_KEY, TAB_ID + '|' + BASE + '|' + OPS.length + '|' + now()); }
 
-/* ใช้ cache ก่อน แล้วค่อยเช็คเบื้องหลัง — คืน promise เพราะ IndexedDB เป็น async */
-function loadCachedFirst(){
-  return idbGet(CACHE_KEY).then(function(c){
-    if(!c || !c.map || typeof c.n !== 'number') return null;
-    var keys = Object.keys(c.map).length;
-    if(!keys) return null;
-    publish(c.map, keys, c.n);
-    console.log('[FittingGlobal] ใช้ cache ในเครื่อง ' + keys + ' รหัส — เช็คกับฐานข้อมูลเบื้องหลัง');
-    /* ══ v2.3: เช็ค 2 ชั้น ไม่บล็อกการเปิดโปรแกรม ═══════════════════════
-       ชั้น 1  จำนวนแถวเปลี่ยน  → จับ "เพิ่ม/ลบรหัส" ได้ทันที
-       ชั้น 2  cache เก่าเกิน 12 ชม. → โหลดใหม่เผื่อมีคนแก้ชื่อรหัสเดิม
-                (จำนวนเท่าเดิม ชั้น 1 จับไม่ได้)
-       ═════════════════════════════════════════════════════════════════ */
-    var age = Date.now() - (c.at || 0);
-    if(age > MAXAGE){
-      console.log('[FittingGlobal] cache เก่า ' + (age/3600000).toFixed(1)
-        + ' ชม. → โหลดใหม่เบื้องหลัง');
-      RUN = null;
-      setTimeout(function(){ window.loadFittingGlobal(true); }, 1500);
+/* ══ รวมแถวจากฐานข้อมูลเข้าตาราง ═══════════════════════════════════════
+   โหลดทั้งคลัง: รหัสซ้ำ (หลังตัดช่องว่าง) → เก็บแถวที่ recid มากที่สุด
+   ของใหม่ทีหลัง: recid บวกที่ใหม่กว่า = ทับได้ · ติดลบ/ว่าง = เติมเฉพาะที่ยังไม่มี */
+function takeFull(tgt, rec, row, m){
+  var k = normKey(row.item_number);
+  var rc = (row.recid == null) ? null : Number(row.recid);
+  if(rc != null && isFinite(rc)){
+    if(rc > 0){ if(rc > m.maxPos) m.maxPos = rc; }
+    else if(rc < m.minNeg) m.minNeg = rc;
+  }
+  if(!k) return;
+  if(Object.prototype.hasOwnProperty.call(tgt, k)){
+    DUP++;
+    var prev = rec[k];
+    if(rc != null && prev != null && !(rc > prev)) return;   /* ของเดิมใหม่กว่า → ไม่ทับ */
+  }
+  tgt[k] = { name: row.product_name || '', unit: row.unit || '' };
+  if(rc != null) rec[k] = rc;
+}
+/* คืน op ถ้าตารางเปลี่ยนจริง ไม่งั้นคืน null */
+function mergeNew(map, row){
+  var k = normKey(row.item_number); if(!k) return null;
+  var rc = (row.recid == null) ? null : Number(row.recid);
+  var name = row.product_name || '', unit = row.unit || '';
+  var cur = Object.prototype.hasOwnProperty.call(map, k) ? map[k] : undefined;
+  if(cur !== undefined){
+    if(rc != null && rc < 0) return null;                          /* ติดลบ = เก่ากว่าเสมอ */
+    var cn = (cur && typeof cur === 'object') ? (cur.name || '') : String(cur || '');
+    var cu = (cur && typeof cur === 'object') ? (cur.unit || '') : '';
+    if(cn === name && cu === unit) return null;                    /* เหมือนเดิม */
+  }
+  map[k] = { name:name, unit:unit };
+  return ['s', k, name, unit];
+}
+function applyOne(map, o){
+  if(!o || !o[1]) return;
+  if(o[0] === 'd') delete map[o[1]];
+  else map[o[1]] = { name:o[2] || '', unit:o[3] || '' };
+}
+function applyOps(map, ops, from){
+  for(var i = from || 0; i < ops.length; i++) applyOne(map, ops[i]);
+}
+function bump(){
+  try{ window._fgUpperIndex = null; }catch(e){}
+  try{ window._fgToken = (typeof window._fgToken === 'number' ? window._fgToken : 0) + 1; }catch(e){}
+  ST.keys = keyCount();
+}
+function publish(map, rows, src, done){
+  window.fittingGlobal = map;
+  bump();
+  ST.loaded = rows; ST.src = src || ST.src;
+  ST.done = !!done; ST.at = now();
+}
+
+/* ══ บันทึก cache ════════════════════════════════════════════════════ */
+function saveBase(map, meta){
+  var id = Math.max(now(), (BASE || 0) + 1);
+  meta.baseId = id; BASE = id; OPS = [];
+  return idbSet(CACHE_KEY, { v:4, map:map, meta:meta })
+    .then(function(){ return idbSet(DELTA_KEY, null); })
+    .then(function(){
+      OLD_KEYS.forEach(function(k){ idbSet(k, null).catch(function(){}); });
+      stamp();
+      log('เก็บ cache ' + (meta.rows || 0).toLocaleString() + ' แถว ลงเครื่องแล้ว');
+    })
+    .catch(function(e){ warn('เก็บ cache ไม่ได้:', (e && e.message) || e); });
+}
+var _dsT = null;
+function opSig(o){ return o[0] + '\u0001' + o[1] + '\u0001' + (o[2] || '') + '\u0001' + (o[3] || ''); }
+/* รับของใหม่ที่แท็บอื่นในเครื่องเขียนไว้ · รหัสเดียวกันใช้ตัวที่ดึงมาทีหลังสุด (o[4] = เวลา) */
+function absorb(dl){
+  if(!dl || dl.base !== BASE || !Array.isArray(dl.ops)) return 0;
+  if(META){
+    if(typeof dl.maxPos === 'number' && dl.maxPos > META.maxPos) META.maxPos = dl.maxPos;
+    if(typeof dl.minNeg === 'number' && dl.minNeg < META.minNeg) META.minNeg = dl.minNeg;
+  }
+  var m = fgMap(); if(!m || !dl.ops.length) return 0;
+  var have = {};
+  OPS.forEach(function(o){ have[opSig(o)] = 1; });
+  var extra = dl.ops.filter(function(o){ return o && o[1] && !have[opSig(o)]; });
+  if(!extra.length) return 0;
+  var all = OPS.concat(extra).sort(function(a, b){ return (a[4] || 0) - (b[4] || 0); });
+  var last = {};
+  all.forEach(function(o){ last[o[1]] = o; });
+  var n = 0;
+  extra.forEach(function(o){ if(last[o[1]] === o){ applyOne(m, o); n++; } });
+  OPS = all;
+  if(n) bump();
+  return n;
+}
+function saveDeltaSoon(){
+  clearTimeout(_dsT);
+  _dsT = setTimeout(function(){
+    if(!META || !BASE) return;
+    var m = fgMap(); if(!m) return;
+    if(OPS.length > COMPACT_AT && ST.done){        /* สะสมเยอะ → รวมเข้าก้อนหลักทีเดียว */
+      saveBase(m, META);
       return;
     }
-    countRows().then(function(n){
-      if(n < 0) return;                     /* เช็คไม่ได้ ก็ใช้ cache ต่อ */
-      if(Math.abs(n - c.n) < 1){
-        console.log('[FittingGlobal] cache ตรงกับฐานข้อมูล (' + n + ' แถว) \u2713');
-        fgChipOK(n, age);
-        return;
-      }
-      console.log('[FittingGlobal] ฐานข้อมูลเปลี่ยน (' + c.n + ' \u2192 ' + n + ') โหลดใหม่เบื้องหลัง');
-      RUN = null;
-      window.loadFittingGlobal(true);
-    }).catch(function(){});
-    return ST;
-  }).catch(function(){ return null; });
+    var base = BASE;
+    idbGet(DELTA_KEY).catch(function(){ return null; }).then(function(dl){
+      if(base !== BASE) return;                     /* ก้อนหลักเปลี่ยนระหว่างรอ */
+      absorb(dl);                                   /* แท็บอื่นเขียนไว้ก่อน → รวมกัน ไม่ทับของเขาหาย */
+      return idbSet(DELTA_KEY, { base:BASE, ops:OPS, maxPos:META.maxPos, minNeg:META.minNeg, at:now() })
+        .then(stamp);
+    }).catch(function(e){ warn('เก็บรหัสใหม่ลงเครื่องไม่ได้:', (e && e.message) || e); });
+  }, 400);
 }
-function loadAll(){
-  var tgt = {}, after = null, got = 0, reachedEnd = false;
-  ST.done = false; ST.err = ''; ST.loaded = 0;
 
-  return countRows().then(function(n){
-    ST.expected = n;
-    /* ══ v2.2: เลื่อนหน้าตาม "จำนวนที่ได้จริง" ไม่ใช่จำนวนที่ขอ ═══════════
-       Supabase (PostgREST) มีเพดาน max-rows = 1000 แถวต่อครั้ง
-       ขอ 5000 ก็ได้กลับมา 1000 เสมอ
-       โค้ดเดิมเช็ค `rows.length < CHUNK` แล้วถือว่าหมด → หยุดตั้งแต่หน้าแรก
-       ได้ 1000/159276 แล้วจบ
-       ใหม่: หยุดเมื่อได้ 0 แถว หรือครบตามจำนวนที่นับไว้เท่านั้น
-       ══════════════════════════════════════════════════════════════════ */
-    var guard = 0, off = 0, seenRec = {};
-    /* v17.1: รหัสซ้ำ → เก็บแถวที่ recid มากที่สุด (AX ให้เลขรัน ยิ่งมากยิ่งใหม่)
-       ไม่มี recid → คงพฤติกรรมเดิม (ตัวที่มาทีหลังทับ) */
-    function take(row){
-      var k = String(row.item_number == null ? '' : row.item_number)
-                .replace(/[\u00A0\u200B]/g, ' ').trim();   /* กัน nbsp / zero-width */
-      if(!k) return;
-      var rc = (row.recid == null) ? null : Number(row.recid);
-      if(Object.prototype.hasOwnProperty.call(tgt, k)){
-        DUP++;
-        var prev = seenRec[k];
-        /* ของเดิมใหม่กว่า → ไม่ทับ */
-        if(rc != null && prev != null && !(rc > prev)) return;
+/* ══ อ่าน cache ในเครื่อง ═══════════════════════════════════════════════ */
+function readCache(){
+  return idbGet(CACHE_KEY).then(function(c){
+    if(!c || !c.map || !c.meta || c.v !== 4) return null;
+    return idbGet(DELTA_KEY).catch(function(){ return null; }).then(function(dl){
+      var meta = {}; for(var k in c.meta) meta[k] = c.meta[k];
+      if(!meta.baseId) meta.baseId = meta.fullAt || 1;
+      var ops = [];
+      if(dl && dl.base === meta.baseId && Array.isArray(dl.ops)){
+        ops = dl.ops;
+        if(typeof dl.maxPos === 'number' && dl.maxPos > meta.maxPos) meta.maxPos = dl.maxPos;
+        if(typeof dl.minNeg === 'number' && dl.minNeg < meta.minNeg) meta.minNeg = dl.minNeg;
       }
-      tgt[k] = { name: row.product_name || '', unit: row.unit || '' };
-      if(rc != null) seenRec[k] = rc;
-    }
-    function step(){
-      return page(after, off, 3).then(function(rows){
-        off += rows.length;
-        /* ══ v17.1: กันรหัสซ้ำตกหล่นตรงรอยต่อหน้า ══════════════════════
-           keyset ใช้ .gt('item_number', รหัสสุดท้ายของหน้า)
-           ถ้ารหัสนั้นมีหลายแถวและถูกตัดคาบเกี่ยวรอยต่อ แถวที่เหลือจะถูกข้ามหมด
-           (อาจข้ามตัวที่ใหม่กว่าไปด้วย) → ตัดกลุ่มท้ายที่รหัสเดียวกันทิ้งก่อน
-           แล้วให้หน้าถัดไปเริ่มจากรหัสก่อนหน้ากลุ่มนั้น จะได้กลุ่มนั้นมาครบทั้งกลุ่ม */
-        var use = rows, full = (rows.length >= CHUNK);
-        var cut = -1;
-        if(USE_KEYSET === true && full){
-          var lastKey = String(rows[rows.length-1] && rows[rows.length-1].item_number);
-          cut = rows.length;
-          while(cut > 0 && String(rows[cut-1].item_number) === lastKey) cut--;
-          if(cut > 0) use = rows.slice(0, cut);   /* cut === 0 = ทั้งหน้าเป็นรหัสเดียว → ไม่ตัด */
-        }
-        use.forEach(take);
-        got += use.length; ST.loaded = got;
-        ST.keys = Object.keys(tgt).length;
-        fgProgress(got, ST.expected);
-        /* ══ v2.5: ตัดสินว่า "ครบ" จากการไล่จนสุด ไม่ใช่จากจำนวนแถว ═══════
-           keyset ใช้ .gt('item_number', ...) ถ้าตารางมี item_number ซ้ำกัน
-           แถวซ้ำจะถูกข้าม → got น้อยกว่า count(*) เสมอ
-           เทียบ got >= expected จึงขึ้น "ไม่ครบ" ทั้งที่โหลดจบแล้วจริง
-           ใหม่: หน้าไหนได้น้อยกว่าที่ขอ = ถึงท้ายตารางแล้ว
-           ══════════════════════════════════════════════════════════════ */
-        if(rows.length < CHUNK){ reachedEnd = true; return; }
-        if(!rows.length){ reachedEnd = true; return; }            /* หมดจริง */
-        if(++guard > 5000){                                      /* กันวนไม่รู้จบ */
-          console.warn('[FittingGlobal] วนเกิน 5000 รอบ — หยุดไว้ก่อน');
-          return;
-        }
-        /* keyset: ไล่ต่อจากรหัสสุดท้ายของ "ส่วนที่รับไว้แล้ว" (ไม่ใช่ของทั้งหน้า) */
-        var last = use[use.length - 1] || rows[rows.length - 1];
-        var nk = String(last && last.item_number != null ? last.item_number : '');
-        if(!nk || nk === after){ reachedEnd = true; return; }    /* กันวนซ้ำที่เดิม */
-        after = nk;
-        return step();
+      applyOps(c.map, ops, 0);
+      return { map:c.map, meta:meta, ops:ops };
+    });
+  });
+}
+function readOld(){
+  var i = 0;
+  function next(){
+    if(i >= OLD_KEYS.length) return Promise.resolve(null);
+    var k = OLD_KEYS[i++];
+    return idbGet(k).then(function(c){
+      if(c && c.map && Object.keys(c.map).length) return { map:c.map, n:c.n || 0, at:c.at || 0 };
+      return next();
+    }).catch(next);
+  }
+  return next();
+}
+
+/* ══ โหลดทั้งคลัง (keyset ตาม item_number · ผ่อนแรง · ค้างแล้วไล่ต่อได้) ══ */
+function fullPage(after){
+  var d = _db(); if(!d) return Promise.reject(new Error('ยังไม่ได้เชื่อมฐานข้อมูล'));
+  var q = d.from('fitting_global').select(NO_RECID ? 'item_number,product_name,unit'
+                                                   : 'item_number,product_name,unit,recid');
+  if(after != null && after !== '') q = q.gt('item_number', after);
+  q = q.order('item_number', { ascending:true }).limit(CHUNK);
+  return send(q).catch(function(e){
+    if(!NO_RECID && isNoRecid(e)){ NO_RECID = true; log('ไม่มีคอลัมน์ recid — ใช้ชุดคอลัมน์เดิม'); return fullPage(after); }
+    throw e;
+  });
+}
+function lockFree(){
+  var v = lsGet(LOCK_KEY); if(!v) return true;
+  var p = v.split('|');
+  if(p[0] === TAB_ID) return true;
+  return (now() - Number(p[1] || 0)) > LOCK_TTL;
+}
+function lockTake(){ lsSet(LOCK_KEY, TAB_ID + '|' + now()); }
+function lockDrop(){ var v = lsGet(LOCK_KEY); if(v && v.split('|')[0] === TAB_ID) lsDel(LOCK_KEY); }
+
+function needFull(){ return !!RESUME || !META || now() >= (META.nextFullAt || 0); }
+function retryFullLater(ms){
+  clearTimeout(FULL_T);
+  FULL_T = setTimeout(function(){
+    if(!RUN && needFull()) loadFull({ bg:true });
+  }, ms);
+}
+/* ค่า recid สูงสุด/ต่ำสุด "ก่อนเริ่มโหลด" — รหัสที่เพิ่มระหว่างโหลดจะถูกถามซ้ำหลังโหลดเสร็จ */
+function recidBounds(){
+  var d = _db();
+  var hi = send(d.from('fitting_global').select('recid').not('recid', 'is', null)
+                 .order('recid', { ascending:false }).limit(1));
+  var lo = send(d.from('fitting_global').select('recid').not('recid', 'is', null)
+                 .order('recid', { ascending:true }).limit(1));
+  return Promise.all([hi, lo]).then(function(r){
+    var mx = (r[0][0] && r[0][0].recid != null) ? Number(r[0][0].recid) : 0;
+    var mn = (r[1][0] && r[1][0].recid != null) ? Number(r[1][0].recid) : 0;
+    return { maxPos: Math.max(0, mx), minNeg: Math.min(0, mn) };
+  }).catch(function(e){
+    if(isNoRecid(e)){ NO_RECID = true; log('ไม่มีคอลัมน์ recid — โหลดแบบเดิม (ไม่ถามรหัสใหม่)'); return null; }
+    throw e;
+  });
+}
+function estRows(){
+  var d = _db();
+  return Promise.resolve(d.from('fitting_global').select('item_number', { count:'estimated', head:true }))
+    .then(function(r){ return (r && !r.error && typeof r.count === 'number') ? r.count : -1; })
+    .catch(function(){ return -1; });
+}
+var SHORT = 0;   /* โหลดครบแต่ได้แถวน้อยผิดปกติติดกันกี่รอบ */
+
+function loadFull(opts){
+  opts = opts || {};
+  if(RUN) return RUN;
+  var d = _db();
+  if(!d) return Promise.resolve(ST);
+  var bg = !!opts.bg;
+  if(bg && !opts.manual && !lockFree()){
+    log('แท็บอื่นในเครื่องนี้กำลังโหลดทั้งคลังอยู่ — ไม่โหลดซ้ำ (จะดูใหม่ภายหลัง)');
+    retryFullLater(LOCK_TTL + jit(60000, 0.5));
+    return Promise.resolve(ST);
+  }
+  /* ของที่ค้างไว้นานแล้ว หรือมีคลังที่ใหม่กว่ามาแทนแล้ว → ทิ้ง เริ่มใหม่ */
+  if(RESUME && ((now() - (RESUME.last || RESUME.start)) > RESUME_TTL || (META && RESUME.start < (META.fullAt || 0)))) RESUME = null;
+  lockTake();
+  var S = RESUME || { tgt:{}, rec:{}, after:null, got:0, m:{ maxPos:0, minNeg:0 }, pages:0, start:now(), last:now(), b:null };
+  RESUME = S;
+  DUP = 0;
+  var expect = (META && META.rows) ? META.rows : (ST.expected > 0 ? ST.expected : -1);
+  ST.expected = expect;
+  if(!ST.done) { ST.loaded = S.got; }
+  var gap = bg ? PAGE_GAP_BG : PAGE_GAP_FG;
+  var hb = setInterval(lockTake, 30000);
+
+  function step(){
+    return (function tryPage(n){
+      return fullPage(S.after).catch(function(e){
+        if(n >= 2) throw e;
+        return sleep(n === 0 ? 2000 : 5000).then(function(){ return tryPage(n + 1); });
       });
-    }
-    return step();
+    })(0).then(function(rows){
+      S.pages++;
+      /* จบเมื่อได้หน้าว่างเท่านั้น (ไม่เดาจาก "ได้น้อยกว่า 1000")
+         เผื่อวันหนึ่งมีคนลดเพดานแถวต่อคำขอของฐานข้อมูล จะได้ไม่เข้าใจผิดว่าหมดตาราง */
+      if(!rows.length) return true;
+      var use = rows;
+      if(rows.length >= CHUNK){
+        /* กันแถวรหัสเดียวกันถูกตัดคาบรอยต่อหน้า */
+        var lastKey = String(rows[rows.length - 1].item_number), cut = rows.length;
+        while(cut > 0 && String(rows[cut - 1].item_number) === lastKey) cut--;
+        if(cut > 0) use = rows.slice(0, cut);
+      }
+      for(var i = 0; i < use.length; i++) takeFull(S.tgt, S.rec, use[i], S.m);
+      S.got += use.length;
+      S.last = now();                                  /* คืบหน้า — ใช้ตัดสินว่าของที่ค้างยังไล่ต่อได้ไหม */
+      if(!ST.done) ST.loaded = S.got;
+      fgProgress(S.got, expect);
+      var last = use[use.length - 1] || rows[rows.length - 1];
+      var nk = String(last && last.item_number != null ? last.item_number : '');
+      if(!nk || nk === S.after) return true;
+      S.after = nk;
+      if(S.pages > 5000) return true;
+      return sleep(gap).then(step);
+    });
+  }
+
+  var start = (S.b || NO_RECID) ? Promise.resolve(S.b) : recidBounds().then(function(b){ S.b = b; return b; });
+  RUN = start.then(step).then(function(){
+    /* ตรวจความครบ: เทียบกับจำนวนแถวโดยประมาณจากสถิติฐานข้อมูล (ไม่ต้องนับทั้งตาราง) */
+    return estRows().then(function(est){
+      /* ต้องมี 2 สัญญาณพร้อมกันถึงจะไม่เชื่อ: น้อยกว่าค่าประมาณ และน้อยกว่าที่เคยโหลดได้
+         (ค่าประมาณของ Postgres อาจสูงเกินจริงหลังลบข้อมูลจำนวนมาก) */
+      var prev = (META && META.rows) ? META.rows : 0;
+      var low = est > 1000 && S.got < est * 0.9 && (!prev || S.got < prev * 0.9);
+      if(low && SHORT < 1){
+        SHORT++;
+        var e = new Error('ได้ ' + S.got.toLocaleString() + ' แถว น้อยกว่าที่ฐานข้อมูลมี (~' + est.toLocaleString() + ') ผิดปกติ');
+        RESUME = null;
+        throw e;
+      }
+      SHORT = 0;
+    });
   }).then(function(){
-    var keys = Object.keys(tgt).length;
-    /* สลับทั้งก้อนทีเดียว — ไม่มีจังหวะที่คนอื่นเห็นตารางครึ่ง ๆ */
-    publish(tgt, got, ST.expected);
-    ST.done = reachedEnd || (ST.expected < 0) || (got >= ST.expected);   /* v2.5 */
-    if(ST.done) cacheWrite(tgt, got);   /* เก็บไว้ใช้รอบหน้า */
-    try{ fgProgressDone(); }catch(e){}   /* v2.4: คืนปุ่มเป็นปกติ */
-    console.log('[FittingGlobal] โหลด ' + got + ' แถว → ' + keys + ' รหัส'
-      + (ST.expected >= 0 ? (' (ในฐานข้อมูลมี ' + ST.expected + ')') : '')
-      + (ST.done ? ' ✓ ครบ' : ' ❌ ไม่ครบ'));
-    if(!ST.done) warnChip('โหลด Fitting Global ได้ ' + got + '/' + ST.expected + ' แถว');
-    else if(DUP > 0 || (ST.expected > 0 && got < ST.expected)){
-      /* v17.1: แก้คำอธิบายเดิมที่ผิด — รหัสซ้ำ "ไม่ได้" ใช้ค่าเดียวกันเสมอ
-         ตอนนี้เลือกแถวที่ recid มากที่สุดแล้ว ผลลัพธ์จึงคงที่ทุกครั้ง
-         แต่ต้นเหตุยังอยู่ที่ข้อมูล ควรตามไปลบตัวซ้ำในตาราง fitting_global */
-      console.warn('[FittingGlobal] พบ item_number ซ้ำ ' + DUP + ' แถว'
-        + ' — เลือกแถวที่ recid ใหม่ที่สุดให้แล้ว'
-        + ' (ควรตามไปลบตัวซ้ำในฐานข้อมูล: select item_number,count(*)'
-        + ' from fitting_global group by item_number having count(*)>1)');
-    }
+    clearInterval(hb); lockDrop();
+    RESUME = null;
+    noteOK();
+    var t = now();
+    var b = S.b || { maxPos:S.m.maxPos, minNeg:S.m.minNeg };
+    META = { maxPos: Math.min(S.m.maxPos || b.maxPos, b.maxPos || S.m.maxPos),
+             minNeg: Math.max(S.m.minNeg, b.minNeg),
+             rows:S.got, fullAt:t,
+             nextFullAt: t + FULL_EVERY + Math.round(Math.random() * FULL_JITTER), baseId:0 };
+    publish(S.tgt, S.got, 'full', true);
+    ST.expected = S.got; ST.lastFull = t;
+    saveBase(S.tgt, META);
+    try{ fgProgressDone(); }catch(e){}
+    log('โหลดทั้งคลัง ' + S.got.toLocaleString() + ' แถว → ' + ST.keys.toLocaleString() + ' รหัส · '
+      + (S.pages + 2) + ' คำขอ · ' + Math.round((t - S.start) / 1000) + ' วินาที'
+      + (DUP ? ' · รหัสซ้ำ ' + DUP + ' แถว (เลือก recid ใหม่สุดให้แล้ว)' : ''));
+    try{ var w = document.getElementById('__fgWarnChip'); if(w) w.parentNode.removeChild(w); }catch(e){}
+    scheduleFull();
+    /* ถามรหัสที่เพิ่มเข้ามา "ระหว่าง" โหลด (recid มากกว่าค่าก่อนเริ่ม) ทันที 1 ครั้ง */
+    setTimeout(function(){ sync('after-full', { force:true }).catch(function(){}); }, 3000);
     return ST;
   }).catch(function(e){
-    ST.err  = (e && e.message) || String(e);
-    ST.done = false;
-    ST.at   = Date.now();
-    console.error('[FittingGlobal] โหลดไม่สำเร็จ:', ST.err);
-    try{ fgSoftFail(ST.err, tgt, got); }
-    catch(_e){ warnChip('โหลด Fitting Global ไม่สำเร็จ — ' + ST.err); }
+    clearInterval(hb); lockDrop();
+    var wait = noteFail(e);
+    try{ fgProgressDone(); }catch(x){}
+    var have = keyCount();
+    if(!ST.done && S.got > have){
+      /* ยังไม่มีข้อมูลใช้ได้เลย → เอาที่โหลดมาได้ใช้ไปก่อน */
+      publish(S.tgt, S.got, 'partial', false);
+      have = ST.keys;
+    }
+    if(!ST.done){
+      warnChip((have ? ('โหลดได้ ' + S.got.toLocaleString() + ' แถว ยังไม่ครบ<br>') : '')
+        + 'ฐานข้อมูลตอบช้า/ติดต่อไม่ได้ (' + ST.err + ')<br>'
+        + 'จะไล่ต่อจากที่ค้างไว้เองใน ' + Math.max(1, Math.round(wait / 60000)) + ' นาที', !!have);
+    }
+    clearTimeout(RETRY_T);
+    RETRY_T = setTimeout(function(){
+      RETRY_T = null;
+      if(RUN || !needFull()) return;
+      loadFull({ bg: ST.done }).catch(function(){});
+    }, wait);
     return ST;
   }).then(function(r){ RUN = null; return r; });
+  return RUN;
 }
 
-/* ══ v2.3: ปุ่มรีเฟรชข้างปุ่ม Fitting Global ══════════════════════════
-   ปุ่มเดิมอยู่ในโค้ด Production V2 ต้นฉบับซึ่งห้ามแก้
-   จึงแทรกปุ่มใหม่ด้วย JS ตอนหน้าโหลดเสร็จ — ไม่แตะ HTML เดิมสักตัวอักษร
-   ═══════════════════════════════════════════════════════════════════ */
+/* ══ ถามเฉพาะรหัสใหม่ ═══════════════════════════════════════════════════ */
+function bounds(){
+  return { mx: Math.max(0, Math.floor(META.maxPos || 0)), mn: Math.min(0, Math.floor(META.minNeg || 0)) };
+}
+/* ทางปกติ: 1 คำขอ ไม่เรียง (ฐานข้อมูลใช้ดัชนี recid ตรง ๆ · ไม่มีรหัสใหม่ = 0 แถว) */
+function deltaFetch(){
+  var d = _db(), b = bounds();
+  return send(d.from('fitting_global').select('item_number,product_name,unit,recid')
+      .or('recid.gt.' + b.mx + ',recid.lt.' + b.mn).limit(CHUNK))
+    .then(function(rows){
+      if(rows.length < FAST_OK) return rows;
+      return deltaFetchPaged();                   /* มีเยอะ → ไล่เป็นหน้า ๆ แบบเรียงลำดับจนหน้าว่าง */
+    });
+}
+/* ทางสำรอง (รหัสใหม่เยอะ): ไล่ตาม recid เป็นหน้า ๆ จนไม่มีแถวใหม่
+   หน้าถัดไปเริ่มที่ recid ตัวสุดท้าย "รวมตัวมันเอง" (gte/lte) แล้วตัดแถวที่ได้แล้วทิ้ง
+   → recid ซ้ำกันคาบรอยต่อหน้าก็ไม่หลุด และไม่ต้องใส่ค่ารหัสลงในเงื่อนไข (กันอักขระพิเศษ) */
+function deltaFetchPaged(){
+  var d = _db(), b = bounds(), out = [], seen = {}, pages = 0;
+  var COLS = 'item_number,product_name,unit,recid';
+  function walk(dir, r, first){
+    if(++pages > 400) return Promise.resolve();       /* กันวนไม่รู้จบ */
+    var q = d.from('fitting_global').select(COLS);
+    if(dir > 0) q = (first ? q.gt('recid', r) : q.gte('recid', r)).order('recid', { ascending:true });
+    else        q = (first ? q.lt('recid', r) : q.lte('recid', r)).order('recid', { ascending:false });
+    return send(q.order('item_number', { ascending:true }).limit(CHUNK)).then(function(rows){
+      var fresh = rows.filter(function(x){
+        var key = String(x.item_number);
+        if(seen[key]) return false;
+        seen[key] = 1; return true;
+      });
+      if(!fresh.length) return;                       /* ไม่มีแถวใหม่แล้ว = จบ */
+      out = out.concat(fresh);
+      if(out.length > 200000) return;
+      var last = rows[rows.length - 1];
+      return sleep(PAGE_GAP_BG).then(function(){ return walk(dir, Number(last.recid), false); });
+    });
+  }
+  return walk(1, b.mx, true).then(function(){ return walk(-1, b.mn, true); }).then(function(){ return out; });
+}
+/* แถวที่ recid ว่าง (เพิ่มจากหน้าจัดการ/นำเข้า CSV) — ถามรวมกับรอบตรวจรายชั่วโมง */
+function nullRows(){
+  var d = _db(), out = [];
+  var pages = 0;
+  function walk(after){
+    if(++pages > 100) return Promise.resolve();
+    var q = d.from('fitting_global').select('item_number,product_name,unit,recid').is('recid', null);
+    if(after != null) q = q.gt('item_number', after);
+    return send(q.order('item_number', { ascending:true }).limit(CHUNK)).then(function(rows){
+      if(!rows.length) return;
+      out = out.concat(rows);
+      if(out.length > 50000) return;
+      var nk = String(rows[rows.length - 1].item_number);
+      if(nk === after) return;
+      return sleep(PAGE_GAP_BG).then(function(){ return walk(nk); });
+    });
+  }
+  return walk(null).then(function(){ return out; });
+}
+function mergeRows(rows, reason){
+  var map = fgMap(); if(!map) return 0;
+  var changed = 0;
+  for(var i = 0; i < rows.length; i++){
+    var r = rows[i];
+    var rc = (r.recid == null) ? null : Number(r.recid);
+    if(rc != null && isFinite(rc)){
+      if(rc > 0 && rc > META.maxPos) META.maxPos = rc;
+      if(rc < 0 && rc < META.minNeg) META.minNeg = rc;
+    }
+    var op = mergeNew(map, r);
+    if(op){ op.push(now()); OPS.push(op); changed++; }
+  }
+  if(changed){
+    ST.added += changed;
+    bump();
+    log((reason || 'รหัสใหม่') + ' ' + changed + ' รายการ — เพิ่มเข้าตารางแล้ว (ไม่ต้องโหลดทั้งคลัง)');
+  }
+  saveDeltaSoon();
+  return changed;
+}
+/* opts.force = ข้ามการเว้นระยะ (ผู้ใช้สั่งเอง) */
+function sync(reason, opts){
+  opts = opts || {};
+  if(DRUN) return DRUN;
+  if(!META || NO_RECID || !ST.done || RUN) return Promise.resolve(0);
+  if(!_db()) return Promise.resolve(0);
+  if(!opts.force){
+    if(paused()) return Promise.resolve(0);
+    var last = Math.max(sane(ST.lastDelta), lsNum(LASTQ_KEY));
+    if(now() - last < MIN_GAP) return Promise.resolve(0);
+  }
+  var t0 = now();
+  ST.lastDelta = t0; lsSet(LASTQ_KEY, t0);
+  DRUN = deltaFetch().then(function(rows){
+    noteOK();
+    var n = mergeRows(rows, 'รหัสใหม่');
+    var needCheck = opts.check || (now() - Math.max(sane(ST.lastCheck), lsNum(LASTC_KEY)) > CHECK_GAP);
+    if(!needCheck) return n;
+    return sleep(opts.force ? 0 : 400).then(recheck).then(function(m){ return n + m; });
+  }).catch(function(e){
+    if(isNoRecid(e)){ NO_RECID = true; return 0; }
+    noteFail(e);
+    if(opts.force) throw e;
+    return 0;
+  }).then(function(n){ DRUN = null; return n; }, function(e){ DRUN = null; throw e; });
+  return DRUN;
+}
+/* ตรวจซ้ำ: 600 รหัสล่าสุด (เฉพาะชื่อรหัส) → ขาดตัวไหนค่อยดึงตัวนั้น
+   กันกรณี AX ให้เลข recid ไม่เรียงตามเวลา (หลายเครื่องแม่ข่ายจองเลขเป็นช่วง) */
+function recheck(){
+  var d = _db(), map = fgMap();
+  if(!d || !map) return Promise.resolve(0);
+  var t = now(); ST.lastCheck = t; lsSet(LASTC_KEY, t);
+  return send(d.from('fitting_global').select('item_number,recid')
+      .not('recid', 'is', null).order('recid', { ascending:false }).limit(CHECK_N))
+    .then(function(rows){
+      var miss = [];
+      rows.forEach(function(r){
+        var k = normKey(r.item_number);
+        if(k && !Object.prototype.hasOwnProperty.call(map, k)) miss.push(String(r.item_number));
+      });
+      if(!miss.length) return 0;
+      var got = [], i = 0;
+      function next(){
+        if(i >= miss.length) return Promise.resolve();
+        var part = miss.slice(i, i + 50); i += 50;
+        return send(d.from('fitting_global').select('item_number,product_name,unit,recid').in('item_number', part))
+          .then(function(rs){ got = got.concat(rs); return next(); });
+      }
+      return next().then(function(){ return mergeRows(got, 'ตรวจซ้ำเจอรหัสที่ยังไม่มี'); });
+    })
+    .then(function(n){
+      return nullRows().then(function(rows){ return n + (rows.length ? mergeRows(rows, 'รหัสที่ไม่มี recid') : 0); });
+    });
+}
+
+/* ══ ตั้งเวลา: โหลดทั้งคลังตามรอบ · ถามรหัสใหม่ตอนเปิดหน้าทิ้งไว้ ══════ */
+function scheduleFull(){
+  clearTimeout(FULL_T);
+  if(!META) return;
+  /* นาฬิกาเครื่องเพี้ยน (เวลาที่จำไว้อยู่ในอนาคตไกลเกินรอบ) → นับรอบใหม่จากตอนนี้ */
+  var cap = now() + FULL_EVERY + FULL_JITTER;
+  if(!(META.nextFullAt <= cap) || (META.fullAt || 0) > now() + 5 * 60 * 1000)
+    META.nextFullAt = now() + Math.round(Math.random() * FULL_EVERY);
+  var due = (META.nextFullAt || 0) - now();
+  /* ถึงรอบแล้ว → เริ่มหลังเปิดโปรแกรม 5–60 นาที (สุ่ม) ไม่ให้ทุกเครื่องพร้อมกันตอนเช้า
+     v92: ยังไม่ถึงรอบ → บวกสุ่ม 0–10 นาทีต่อแท็บ: ทุกแท็บอ่านเวลานัดเดียวกันจาก cache ถ้าไม่สุ่ม
+     แท็บที่เปิดดูอยู่พร้อมกันจะเริ่มโหลดในเสี้ยววินาทีเดียวกันจนล็อกกันไม่ทัน (ทดสอบแล้วโหลดซ้อน 2 ชุด) */
+  var wait = Math.max(due, 0) + (due <= 0 ? (5 * 60000 + Math.round(Math.random() * 55 * 60000))
+                                          : Math.round(Math.random() * 10 * 60000));
+  if(wait > 0x7fffffff) return;                     /* setTimeout รับได้ ~24.8 วัน */
+  FULL_T = setTimeout(function(){
+    if(RUN) return;
+    if(META && now() < (META.nextFullAt || 0)) return scheduleFull();   /* แท็บอื่นโหลดไปแล้ว */
+    if(document.visibilityState === 'hidden'){ FULL_T = setTimeout(scheduleFull, 10 * 60 * 1000); return; }
+    log('ครบรอบโหลดทั้งคลังใหม่ (~3–4 วัน) — โหลดเบื้องหลังแบบผ่อนแรง');
+    loadFull({ bg:true });
+  }, wait);
+}
+function tick(){
+  clearTimeout(TICK_T);
+  TICK_T = setTimeout(function(){
+    try{ if(document.visibilityState !== 'hidden') sync('timer'); }catch(e){}
+    tick();
+  }, jit(TIMER_GAP, 0.2));
+}
+try{
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible') sync('visible');
+  });
+}catch(e){}
+/* แท็บอื่นในเครื่องเดียวกันเขียน cache ใหม่ → รับของใหม่จากในเครื่อง ไม่ต้องถามฐานข้อมูล */
+try{
+  window.addEventListener('storage', function(ev){
+    if(!ev || ev.key !== STAMP_KEY || !ev.newValue) return;
+    var p = String(ev.newValue).split('|');
+    if(p[0] === TAB_ID || RUN) return;
+    var base = Number(p[1] || 0);
+    if(base && base === BASE){
+      idbGet(DELTA_KEY).then(function(dl){
+        var n = absorb(dl);
+        if(n) log('รับรหัสใหม่ ' + n + ' รายการจากแท็บอื่นในเครื่อง');
+      }).catch(function(){});
+    } else if(base && base !== BASE){
+      readCache().then(function(c){
+        if(!c || RUN || c.meta.baseId === BASE) return;
+        RESUME = null; clearTimeout(RETRY_T); RETRY_T = null;   /* แท็บอื่นโหลดครบแล้ว → ไม่ต้องไล่ต่อของเรา */
+        META = c.meta; BASE = c.meta.baseId; OPS = c.ops.slice();
+        publish(c.map, c.meta.rows || 0, 'cache', true);
+        ST.expected = c.meta.rows || -1;
+        scheduleFull();
+        log('รับ cache ใหม่จากแท็บอื่นในเครื่อง ' + ST.keys.toLocaleString() + ' รหัส');
+      }).catch(function(){});
+    }
+  });
+}catch(e){}
+
+/* ══ เปิดโปรแกรม ═════════════════════════════════════════════════════ */
+function boot(){
+  if(ST.done) return Promise.resolve(ST);
+  if(BOOTP) return BOOTP;
+  BOOTP = readCache().catch(function(){ return null; }).then(function(c){
+    if(c){
+      META = c.meta; BASE = c.meta.baseId; OPS = c.ops.slice();
+      publish(c.map, c.meta.rows || 0, 'cache', true);
+      ST.expected = c.meta.rows || -1; ST.lastFull = c.meta.fullAt || 0;
+      var age = now() - (c.meta.fullAt || 0);
+      log('ใช้ cache ในเครื่อง ' + ST.keys.toLocaleString() + ' รหัส (โหลดทั้งคลังล่าสุด '
+        + (age / 86400000).toFixed(1) + ' วันก่อน) — ถามฐานข้อมูลเฉพาะรหัสใหม่');
+      setTimeout(function(){ sync('startup', { check:true }); }, jit(2500, 0.5));
+      scheduleFull(); tick();
+      return ST;
+    }
+    return readOld().then(function(o){
+      if(o){
+        /* อัปเกรดจาก cache รุ่นเก่า: ใช้ของเดิมไปก่อน แล้วโหลดทั้งคลังใหม่ "ครั้งเดียว"
+           เบื้องหลังแบบผ่อนแรง · สุ่มเวลาเริ่ม 1–10 นาที ไม่ให้ทุกเครื่องพร้อมกัน */
+        publish(o.map, o.n || Object.keys(o.map).length, 'cache-old', true);
+        ST.expected = o.n || -1;
+        var w = 2 * 60000 + Math.round(Math.random() * 28 * 60000);   /* 2–30 นาที */
+        log('ใช้ cache รุ่นเก่า ' + ST.keys.toLocaleString() + ' รหัสไปก่อน · อีก '
+          + Math.round(w / 60000) + ' นาทีจะโหลดทั้งคลังครั้งเดียวเพื่อเก็บเลข recid');
+        clearTimeout(FULL_T);
+        FULL_T = setTimeout(function migrate(){
+          if(META || RUN) return;
+          if(document.visibilityState === 'hidden'){ FULL_T = setTimeout(migrate, 5 * 60000); return; }
+          loadFull({ bg:true });                     /* ติดล็อกแท็บอื่น → loadFull นัดใหม่เอง */
+        }, w);
+        tick();
+        return ST;
+      }
+      /* เครื่องนี้ยังไม่เคยมีข้อมูล → ต้องโหลดทั้งคลังตอนนี้ */
+      if(RESUME && paused()) return ST;             /* โหลดค้างไว้ + ฐานข้อมูลมีปัญหา → รอรอบที่นัดไว้ */
+      log('ยังไม่มี cache ในเครื่อง — โหลดทั้งคลังครั้งแรก');
+      tick();
+      return loadFull({ bg:false });
+    });
+  }).then(function(r){ BOOTP = null; return r; }, function(e){ BOOTP = null; throw e; });
+  return BOOTP;
+}
+
+/* ══ ปุ่ม ↻ ข้างปุ่ม Fitting Global ════════════════════════════════════
+   กด = ถามรหัสใหม่ทันที (เร็ว เบา) · ต้องการโหลดทั้งคลังจริง ๆ กดปุ่มในป้ายที่ขึ้นมา */
 var _fgBtn = null;
 function fgMountBtn(){
   try{
     if(_fgBtn && document.body.contains(_fgBtn)) return;
     var host = null, all = document.querySelectorAll('button');
-    for(var i=0;i<all.length;i++){
-      if(/Fitting Global/.test(all[i].textContent||'')){ host = all[i]; break; }
+    for(var i = 0; i < all.length; i++){
+      if(/Fitting Global/.test(all[i].textContent || '')){ host = all[i]; break; }
     }
     if(!host || !host.parentNode) return;
     var b = document.createElement('button');
     b.id = '__fgReload';
-    b.title = 'โหลดรายการ Fitting Global ใหม่จากฐานข้อมูล';
+    b.title = 'ดึงรหัสใหม่จาก Fitting Global';
     b.style.cssText = 'background:rgba(255,149,0,0.10);border:1px solid rgba(255,149,0,0.25);'
       + 'border-radius:7px;padding:5px 9px;font-size:12px;color:#ff9500;cursor:pointer;'
       + 'font-family:inherit;font-weight:500;margin-left:5px;transition:all .13s';
-    b.textContent = '\u21bb';
+    b.textContent = '↻';
     b.onmouseover = function(){ b.style.background = 'rgba(255,149,0,0.20)'; };
     b.onmouseout  = function(){ b.style.background = 'rgba(255,149,0,0.10)'; };
-    b.onclick = function(){
+    b.onclick = function(ev){
       if(b.disabled) return;
-      b.disabled = true; b.textContent = '\u23f3';
-      b.title = 'กำลังโหลด...';
-      fgToast('\u23f3 กำลังโหลด Fitting Global ใหม่ — ดูความคืบหน้าที่ปุ่ม \u21bb', true);
-      window.FG_refresh().then(function(){
+      if(ev && ev.shiftKey){ askFull(); return; }
+      if(!META || !ST.done){ askFull(); return; }
+      b.disabled = true; b.textContent = '⏳';
+      sync('manual', { force:true, check:true }).then(function(n){
         fgProgressDone();
-        var st = window.FG_state();
-        b.title = 'โหลดรายการ Fitting Global ใหม่จากฐานข้อมูล';
-        fgToast(st.done
-          ? ('\u2705 โหลดครบ ' + st.loaded.toLocaleString() + ' แถว \u00b7 '
-             + st.keys.toLocaleString() + ' รหัสไม่ซ้ำ')
-          : ('\u26a0 โหลดได้ ' + st.loaded.toLocaleString() + '/'
-             + st.expected.toLocaleString() + ' แถว'), st.done);
+        fgToast('✅ ตรวจแล้ว · ' + (n ? ('ได้รหัสใหม่ ' + n + ' รายการ') : 'ไม่มีรหัสใหม่')
+          + ' · ในเครื่องมี ' + keyCount().toLocaleString() + ' รหัส', true, true);
       }).catch(function(e){
         fgProgressDone();
-        fgToast('\u274c โหลดไม่สำเร็จ: ' + ((e&&e.message)||e), false);
+        fgToast('❌ ติดต่อฐานข้อมูลไม่ได้: ' + ((e && e.message) || e), false, true);
       });
     };
     host.parentNode.insertBefore(b, host.nextSibling);
     _fgBtn = b;
+    fgChipOK();
   }catch(e){}
 }
-function fgToast(msg, ok){
+function askFull(){
+  if(RUN){ fgToast('⏳ กำลังโหลดทั้งคลังอยู่แล้ว — ดูความคืบหน้าที่ปุ่ม ↻', true); return; }
+  if(!confirm('โหลด Fitting Global ใหม่ทั้งคลัง (~161,000 รหัส · 162 คำขอ · ~1 นาที)?\n\n'
+    + 'ปกติไม่ต้องทำ — โปรแกรมดึงรหัสใหม่ให้เองอยู่แล้ว\n'
+    + 'ใช้เมื่อมีการแก้ "ชื่อ/หน่วย" ของรหัสเดิม หรือลบรหัสออกจากฐานข้อมูล')) return;
+  window.FG_refresh();
+}
+window.FG_askFull = askFull;
+function fgToast(msg, ok, withFull){
   try{
     var el = document.createElement('div');
-    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:99999;max-width:340px;'
+    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:99999;max-width:360px;'
       + 'background:' + (ok ? '#e9f9ef' : '#fff4e5') + ';border:1px solid '
       + (ok ? '#34c759' : '#f0a800') + ';border-radius:10px;padding:10px 14px;font-size:12.5px;'
       + 'color:' + (ok ? '#1a7f3c' : '#8a5a00') + ';box-shadow:0 6px 20px rgba(0,0,0,.15);'
-      + 'font-family:inherit';
+      + 'font-family:inherit;line-height:1.5';
     el.textContent = msg;
+    if(withFull){
+      var bt = document.createElement('button');
+      bt.textContent = '⬇ โหลดทั้งคลังใหม่';
+      bt.style.cssText = 'display:block;margin-top:7px;padding:3px 9px;border:1px solid #cbd5e1;'
+        + 'background:#fff;border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit;color:#475569';
+      bt.onclick = function(){ try{ el.parentNode.removeChild(el); }catch(e){} askFull(); };
+      el.appendChild(bt);
+    }
     document.body.appendChild(el);
-    setTimeout(function(){ try{ el.parentNode.removeChild(el); }catch(e){} }, 4000);
+    setTimeout(function(){ try{ el.parentNode.removeChild(el); }catch(e){} }, withFull ? 7000 : 4000);
   }catch(e){}
 }
-/* ══ v2.4: แถบความคืบหน้าบนปุ่ม ↻ ═════════════════════════════════════
-   ระหว่างโหลด 160 รอบ ปุ่มจะแสดงเปอร์เซ็นต์ + ตัวเลขจริง
-   จะได้รู้ว่ากำลังทำงานอยู่ ไม่ใช่ค้าง
-   ══════════════════════════════════════════════════════════════════ */
 function fgProgress(got, expected){
   try{
-    if(!_fgBtn) return;
-    if(!got){ return; }
+    if(!_fgBtn || !got) return;
     var pct = (expected > 0) ? Math.min(99, Math.floor(got * 100 / expected)) : 0;
-    _fgBtn.textContent = pct ? (pct + '%') : (Math.round(got/1000) + 'k');
+    _fgBtn.textContent = pct ? (pct + '%') : (Math.round(got / 1000) + 'k');
     _fgBtn.style.background = 'rgba(255,149,0,0.22)';
     _fgBtn.style.minWidth = '46px';
     _fgBtn.title = 'กำลังโหลด Fitting Global ' + got.toLocaleString()
-      + (expected > 0 ? (' / ' + expected.toLocaleString()) : '') + ' แถว';
+      + (expected > 0 ? (' / ~' + expected.toLocaleString()) : '') + ' แถว';
   }catch(e){}
 }
 function fgProgressDone(){
   try{
     if(!_fgBtn) return;
-    _fgBtn.textContent = '\u21bb';
+    _fgBtn.textContent = '↻';
     _fgBtn.style.background = 'rgba(255,149,0,0.10)';
     _fgBtn.style.minWidth = '';
     _fgBtn.disabled = false;
+    fgChipOK();
   }catch(e){}
 }
-function fgChipOK(n, age){
+function fgChipOK(){
   try{
     if(!_fgBtn) return;
-    _fgBtn.title = 'Fitting Global ' + n.toLocaleString() + ' รหัส \u00b7 ตรวจล่าสุด '
-      + (age < 60000 ? 'เมื่อครู่' : (Math.round(age/60000) + ' นาทีที่แล้ว'))
-      + '\nกดเพื่อโหลดใหม่';
+    var t = Math.max(ST.lastDelta, ST.lastFull);
+    var age = t ? (now() - t) : -1;
+    _fgBtn.title = 'Fitting Global ' + keyCount().toLocaleString() + ' รหัส'
+      + (age >= 0 ? (' · ตรวจรหัสใหม่ล่าสุด ' + (age < 60000 ? 'เมื่อครู่' : (Math.round(age / 60000) + ' นาทีที่แล้ว'))) : '')
+      + '\nกด = ดึงรหัสใหม่ (เร็ว) · Shift+กด = โหลดทั้งคลังใหม่';
   }catch(e){}
 }
 if(document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', function(){ setTimeout(fgMountBtn, 300); });
 else setTimeout(fgMountBtn, 300);
-setTimeout(fgMountBtn, 2000);   /* เผื่อแถบบนถูกวาดทีหลัง */
+setTimeout(fgMountBtn, 2000);
 
-/* ป้ายเตือนมุมจอ (กดปิดได้ · กดตรงกลางเพื่อโหลดซ้ำ) */
+/* ป้ายเตือนมุมจอ (กดปิดได้) */
 function warnChip(msg, soft){
-  /* v10.0: soft = แจ้งเฉย ๆ (ข้อมูลชุดเดิมยังใช้ได้ครบ) ไม่ใช่ป้ายเตือน */
   try{
     var id = '__fgWarnChip', old = document.getElementById(id);
     if(old) old.parentNode.removeChild(old);
@@ -13245,60 +13788,114 @@ function warnChip(msg, soft){
         ? 'background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 12px;font-size:12px;color:#1e40af;'
         : 'background:#fff4e5;border:1px solid #f0a800;border-radius:10px;padding:10px 12px;font-size:12px;color:#8a5a00;')
       + 'box-shadow:0 6px 20px rgba(0,0,0,.15);line-height:1.55;font-family:inherit';
-    el.innerHTML = (soft ? '<b>\u2139\ufe0f Fitting Global</b><br>' : '<b>\u26a0 Fitting Global ไม่ครบ</b><br>') + msg
+    el.innerHTML = (soft ? '<b>ℹ️ Fitting Global</b><br>' : '<b>⚠ Fitting Global ไม่ครบ</b><br>') + msg
       + (soft ? '' : '<br><span style="color:#a06a00">รหัสไม้อาจแปลงเป็น P48/P68 ไม่ได้</span>')
-      + '<br><button id="__fgWarnGo" style="margin-top:7px;margin-right:6px;padding:4px 10px;'
-      + 'border:1px solid #f0a800;background:#fff;border-radius:6px;cursor:pointer;'
-      + 'font-size:11px;font-family:inherit;color:#8a5a00">\u21bb โหลดใหม่</button>'
-      + '<button id="__fgWarnX" style="margin-top:7px;padding:4px 10px;border:1px solid #ddd;'
+      + '<br><button id="__fgWarnX" style="margin-top:7px;padding:4px 10px;border:1px solid #ddd;'
       + 'background:#fff;border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit;'
       + 'color:#777">ปิด</button>';
     document.body.appendChild(el);
     document.getElementById('__fgWarnX').onclick = function(){
       try{ el.parentNode.removeChild(el); }catch(e){} };
-    document.getElementById('__fgWarnGo').onclick = function(){
-      var b = document.getElementById('__fgWarnGo');
-      b.textContent = '\u23f3 กำลังโหลด...'; b.disabled = true;
-      window.FG_refresh().then(function(){
-        try{ el.parentNode.removeChild(el); }catch(e){}
-        if(ST.done) alert('\u2705 โหลด Fitting Global ครบแล้ว ' + ST.loaded + ' รหัส');
-      });
-    };
   }catch(e){}
 }
 
-/* ── แทนที่ของเดิม (ชื่อเดียวกัน โค้ดเดิมที่เรียกอยู่จึงได้ตัวใหม่ทันที) ── */
-window.loadFittingGlobal = function(force){
-  if(RUN) return RUN;
-  if(force){ RUN = loadAll(); return RUN; }
-  /* v2.1: มี cache → คืนทันที ไม่ต้องรอ 150,000 แถว */
-  RUN = loadCachedFirst().then(function(quick){
-    if(quick){ RUN = null; return quick; }
-    return loadAll();
+/* ══ บันทึกการแก้ในหน้า Fitting Global ลงเครื่องด้วย ═══════════════════
+   หน้าจัดการ Fitting Global แก้ตารางในหน่วยความจำอยู่แล้ว (เพิ่ม/แก้/ลบ/นำเข้า CSV)
+   แต่ไม่เคยเขียน cache → เปิดโปรแกรมรอบหน้าค่าที่แก้หาย
+   ใหม่: หลังแก้เสร็จ เก็บตารางในหน่วยความจำลงเครื่องเป็นก้อนหลักใหม่ */
+var _persistT = null;
+function persistSoon(ms){
+  clearTimeout(_persistT);
+  _persistT = setTimeout(function(){
+    var m = fgMap();
+    if(!m || !ST.done || !META || RUN) return;
+    bump();
+    saveBase(m, META);                              /* ก้อนหลักใหม่ = ตารางปัจจุบันทั้งหมด */
+  }, ms || 2500);
+}
+function hookEdits(){
+  var ok = true;
+  ['fgSave', 'fgDel', 'fgDelSelected'].forEach(function(n){
+    var f = window[n];
+    if(typeof f !== 'function'){ ok = false; return; }
+    if(f.__fg91) return;
+    var w = function(){
+      var r = f.apply(this, arguments);
+      Promise.resolve(r).then(function(){ persistSoon(); }, function(){});
+      return r;
+    };
+    w.__fg91 = true; window[n] = w;
   });
-  return RUN;
-};
-/* ล้าง cache แล้วโหลดใหม่ทั้งหมด */
-window.FG_refresh = function(){
-  RUN = null;
-  return idbSet(CACHE_KEY, null).catch(function(){})
-    .then(function(){ return window.loadFittingGlobal(true); });
-};
+  /* นำเข้า CSV ยิงทีละชุดต่อเนื่อง แล้วเรียก fgLoad() ตอนจบ (หลังปิดหน้าต่างความคืบหน้า) */
+  var fi = window.fgImport;
+  if(typeof fi === 'function' && !fi.__fg91){
+    var wi = function(){ IMPORTING = true; return fi.apply(this, arguments); };
+    wi.__fg91 = true; window.fgImport = wi;
+  } else if(typeof fi !== 'function') ok = false;
+  var fl = window.fgLoad;
+  if(typeof fl === 'function' && !fl.__fg91){
+    var wl = function(){
+      if(IMPORTING){
+        var ov = document.getElementById('fgPOv');
+        if(!ov || ov.style.display === 'none'){ IMPORTING = false; persistSoon(); }
+      }
+      return fl.apply(this, arguments);
+    };
+    wl.__fg91 = true; window.fgLoad = wl;
+  } else if(typeof fl !== 'function') ok = false;
+  return ok;
+}
+(function hookLater(n){
+  if(hookEdits() || n > 40) return;
+  setTimeout(function(){ hookLater(n + 1); }, 500);
+})(0);
 
-/* รอจนตาราง Fitting Global พร้อมใช้ — โมดูลอื่นเรียกได้ */
-window.FG_ready = function(){
-  if(RUN) return RUN;
+/* ══ ทางเข้าที่โมดูลอื่นเรียก (ชื่อเดิมทั้งหมด) ══════════════════════════ */
+window.loadFittingGlobal = function(force){
+  if(force) return loadFull({ bg:false, manual:true });
   if(ST.done) return Promise.resolve(ST);
+  if(RUN) return RUN;
+  if(RESUME && paused()) return Promise.resolve(ST);   /* ฐานข้อมูลมีปัญหา → ไม่รุมยิง รอรอบที่นัดไว้ */
+  return boot();
+};
+/* โหลดทั้งคลังใหม่ (ผู้ใช้สั่งเอง) — ใช้ของเดิมระหว่างโหลด สลับเมื่อครบ */
+window.FG_refresh = function(){
+  clearTimeout(RETRY_T); RETRY_T = null;
+  PAUSE_UNTIL = 0;
+  if(RUN) return RUN;
+  RESUME = null;
+  fgToast('⏳ กำลังโหลด Fitting Global ทั้งคลัง — ดูความคืบหน้าที่ปุ่ม ↻', true);
+  return loadFull({ bg:false, manual:true }).then(function(st){
+    fgProgressDone();
+    fgToast(st.done && !st.err
+      ? ('✅ โหลดครบ ' + st.loaded.toLocaleString() + ' แถว · ' + keyCount().toLocaleString() + ' รหัส')
+      : ('⚠ ยังโหลดไม่ครบ (' + (st.err || 'ไม่ทราบสาเหตุ') + ') — จะไล่ต่อให้เอง'), !!(st.done && !st.err));
+    return st;
+  });
+};
+/* รอจนตาราง Fitting Global ใช้งานได้ — มีข้อมูลแล้วคืนทันที ไม่ยิงฐานข้อมูล */
+window.FG_ready = function(){
+  if(ST.done) return Promise.resolve(ST);
+  if(RUN) return RUN;
   return window.loadFittingGlobal();
 };
-
+/* ถามรหัสใหม่ (เว้นระยะเอง 3 นาที) — เรียกได้บ่อยเท่าไหร่ก็ได้ */
+window.FG_sync = function(reason){ return sync(reason || 'call').catch(function(){ return 0; }); };
 window.FG_state = function(){
-  var n = 0;
-  try{ n = Object.keys(window.fittingGlobal || {}).length; }catch(e){}
-  return { done:ST.done, loaded:ST.loaded, expected:ST.expected, keys:n, err:ST.err };
+  return { done:ST.done, loaded:ST.loaded, expected:ST.expected, keys:keyCount(), err:ST.err,
+           src:ST.src, maxRecid: META ? META.maxPos : null, minRecid: META ? META.minNeg : null,
+           lastDelta: ST.lastDelta ? new Date(ST.lastDelta).toLocaleString('th') : '',
+           lastFull: ST.lastFull ? new Date(ST.lastFull).toLocaleString('th') : '',
+           nextFull: (META && META.nextFullAt) ? new Date(META.nextFullAt).toLocaleString('th') : '',
+           added:ST.added, pending:OPS.length, requests:ST.requests,
+           pausedSec: paused() ? Math.round((PAUSE_UNTIL - now()) / 1000) : 0,
+           loading: !!RUN };
 };
+window.__fgSoftFail = function(){ return { mode:'soft', have:keyCount() }; };
+window.__FG91 = { mergeNew:mergeNew, applyOps:applyOps, takeFull:takeFull, normKey:normKey,
+                  meta:function(){ return META; }, ops:function(){ return OPS; } };
 
-console.log('[FittingGlobal] ตัวโหลดแบบทนพลาดพร้อมใช้งาน — พิมพ์ FG_state() เพื่อดูสถานะ');
+log('v91 พร้อมใช้งาน — โหลดครั้งเดียว แล้วดึงเฉพาะรหัสใหม่ · พิมพ์ FG_state() เพื่อดูสถานะ');
 })();
 </script>
 
@@ -14735,6 +15332,8 @@ function apply(msg, quiet){
 /* ══ ประตูหน้า — รอ Fitting Global ให้ครบก่อนแปลง ═══════════════════ */
 function receive(msg){
   var quiet = !!(msg && msg.fromSheet);
+  /* v91: ถามรหัสใหม่ของ Fitting Global (เว้นระยะเอง ≥3 นาที · ไม่โหลดทั้งคลัง) */
+  try{ if(typeof window.FG_sync === 'function') window.FG_sync('bomline'); }catch(e){}
   if(!msg || !msg.rows || !msg.rows.length){
     if(!quiet) alert('ไม่พบรายการไม้ที่ส่งมา');
     return { ok:false, reason:'ไม่พบรายการไม้ที่ส่งมา' };
@@ -16506,6 +17105,21 @@ async function checkBase(oid){
   paint();
   queueChanged(oid);
 }
+/* ══ v91: กันตรวจซ้ำ ═══════════════════════════════════════════════════
+   ตัวห่อ selectOrder ของโมดูลนี้ถูกติดตั้งซ้อนได้ถึง 3 ชั้น (boot ที่ 1.2 / 4 / 9 วินาที
+   เพราะโมดูลอื่นห่อทับแล้วธง __orv หาย) → checkBase ทำงาน 3 รอบต่อการกด 1 ครั้ง
+   เปิด Order ครั้งแรก = อ่าน order_base 3 ครั้ง + เขียนภาพถ่ายทั้ง Order ลงฐานข้อมูล 3 ชุด
+   ใหม่: Order เดียวกันที่กำลังตรวจอยู่ → รอผลรอบเดียวกัน ไม่ยิงซ้ำ */
+var _cbInflight = {};
+var _checkBaseOnce = checkBase;
+checkBase = function(oid){
+  if (!oid) return _checkBaseOnce(oid);
+  if (_cbInflight[oid]) return _cbInflight[oid];
+  var p = Promise.resolve().then(function(){ return _checkBaseOnce(oid); });
+  _cbInflight[oid] = p;
+  p.then(function(){ delete _cbInflight[oid]; }, function(){ delete _cbInflight[oid]; });
+  return p;
+};
 
 /* ── คิว: กดทีละ Order เด้งทันที · กดหลาย Order เด้งสรุปตอนจบ ──── */
 function queueChanged(oid){
