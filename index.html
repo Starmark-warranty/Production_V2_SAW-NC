@@ -10844,6 +10844,7 @@ function _asmWhy(force){
   if(!rows.length)           return 'Order นี้ยังไม่มีแถวข้อมูล';
   if(!_asmNeed(rows))        return 'ช่อง Assembly ครบทุกแถวแล้ว — ไม่มีอะไรต้องดึง\n(อยากดึงทับใหม่ ใช้ปุ่ม "ดึงใหม่ทับของเดิม")';
   if(!force && IMPASM.asked[oid]) return 'ถามไปแล้วรอบนี้ — กดปุ่ม "ดึงลิงก์" เองได้';
+  if(_asmSets(rows).length >= 2) return '';                /* v103: หลาย Order แม่ หาเองตาม Item Id Set */
   var sel = q('impAsmSel');
   if(!((sel && sel.value) || IMPASM.pick))
     return 'ยังหา Order ต้นทางใน StarNexus ไม่เจอ\n(งานนี้ต้อง export จาก StarNexus ก่อน)';
@@ -11082,7 +11083,7 @@ function _asmBar(){
       bg   = warn ? '#fffbeb' : '#ecfdf5',
       ink  = warn ? '#b45309' : '#047857';
   /* v46: จำค่าที่เลือกไว้ก่อนวาดใหม่ — กดยกเลิกแล้วตัวที่เลือกต้องไม่หาย */
-  try{ var _ps = q('impAsmSel'); if(_ps && _ps.value) IMPASM.pick = _ps.value; }catch(e){}
+  try{ var _ps = q('impAsmSel'); if(_ps && _ps.value && _ps.value !== '__multi__') IMPASM.pick = _ps.value; }catch(e){}
   if(!box){ box = document.createElement('div'); box.id = 'impAsmBox'; ib.appendChild(box); }
   box.style.cssText = 'display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-left:auto;'
     + 'padding:3px 10px;border:1.5px solid ' + line + ';border-radius:8px;background:' + bg + ';'
@@ -11127,6 +11128,18 @@ function _asmBar(){
     el.textContent = '\u2714 Assembly ครบ ' + done + ' แถว · จาก ' + p.from
                    + (w ? (' · ' + w) : '');
   });
+  /* v103: หลาย Item Id Set → ไม่ให้เลือกแม่ตัวเดียว (หาแม่ของแต่ละชุดให้เองตอนกดดึง) */
+  var _sets = _asmSets(rows);
+  if(_sets.length >= 2){
+    var _s2 = q('impAsmSel');
+    if(_s2){
+      _s2.innerHTML = '<option value="__multi__">แม่ ' + _sets.length + ' ตัว · หาเองตาม Item Id Set</option>';
+      _s2.value = '__multi__';
+      _s2.title = _sets.map(function(g){ return g.set + ' (' + g.rows.length + ' แถว)'; }).join('\n');
+    }
+    _asmAutoAsk(false, false);
+    return;
+  }
   var setKey = String((rows[0] && rows[0]['Item Id Set']) || oid || '');
   if(IMPASM.candFor === setKey && IMPASM.cand){ _asmFillSel(IMPASM.cand); _asmAutoAsk(false, false); return; }
   _asmSetBusy(true);
@@ -11161,12 +11174,172 @@ function _asmFillSel(list){
   IMPASM.pick = sel.value || '';
 }
 /* กดดึงลิงก์ */
+/* ══ v103: ไฟล์เดียวมีหลาย Order แม่ (หลาย Item Id Set) ══════════════════════════════════
+   เดิม: เลือก Order แม่ได้ตัวเดียว แล้วจับคู่ทุกแถวด้วย PartID → แถวของแม่ตัวอื่นได้ลิงก์ผิดตู้ (P1 มีทุก Order)
+   ใหม่: แยกแถวตาม Item Id Set → หาแม่ของแต่ละชุดจาก Item Id Set ที่ตรงกันเป๊ะ
+           1) ช่อง itemIdSet ใน BOM ของแม่ (BoardForge/Furtech)  2) ค่าที่บันทึกไว้ app_settings iids:<order>
+         ไม่นับ Order นำเข้า (source = import) · เจอหลายตัว → ตัวที่ตรงจาก BOM ก่อน แล้วตัวที่โหลดล่าสุด
+         แล้วเติมลิงก์ให้แต่ละชุดจากแม่ของมันเอง · ชุดที่หาแม่ไม่เจอ = ไม่เติม และบอกให้รู้
+   ไฟล์ที่มี Item Id Set ชุดเดียว → ทางเดิมทุกอย่าง (เลือกแม่จากช่องเลือก) */
+function _asmSets(rows){
+  var seen = {}, out = [];
+  (rows || []).forEach(function(r){
+    var s = String((r && r['Item Id Set']) || '').trim();
+    if(!s) return;
+    if(!seen[s]){ seen[s] = { set:s, rows:[] }; out.push(seen[s]); }
+    seen[s].rows.push(r);
+  });
+  return out;
+}
+var _asmIdx = null;
+function _asmMotherIndex(){
+  if(_asmIdx && (Date.now() - _asmIdx.at) < 120000) return Promise.resolve(_asmIdx);
+  var d = _db();
+  if(!d) return Promise.reject(new Error('ยังไม่ได้เชื่อมฐานข้อมูล — ลองรีเฟรชหน้า'));
+  var pO = Promise.resolve(d.from('imos_orders').select('order_id,loaded_at,iids:data->>itemIdSet,src:data->>source').limit(20000));
+  var pS = Promise.resolve(d.from('app_settings').select('key,value').like('key', 'iids:%').limit(20000));
+  return Promise.all([pO, pS]).then(function(rs){
+    var o = rs[0], s = rs[1];
+    if(o && o.error) throw o.error;
+    var info = {}, bySet = {};
+    ((o && o.data) || []).forEach(function(r){ if(r && r.order_id) info[r.order_id] = r; });
+    function add(set, oid, how){
+      set = String(set == null ? '' : set).trim();
+      if(!set || !oid) return;
+      var r = info[oid]; if(!r) return;                      /* ไม่มี Order นี้ในฐานข้อมูลแล้ว */
+      if(String(r.src || '') === 'import') return;           /* Order นำเข้าไม่ใช่แม่ */
+      var L = bySet[set] || (bySet[set] = []);
+      for(var i = 0; i < L.length; i++){ if(L[i].oid === oid){ if(how === 'bom') L[i].how = 'bom'; return; } }
+      L.push({ oid:oid, how:how, at:String(r.loaded_at || '') });
+    }
+    Object.keys(info).forEach(function(oid){ add(info[oid].iids, oid, 'bom'); });
+    ((s && !s.error && s.data) || []).forEach(function(r){
+      var v = r && r.value;
+      if(v && typeof v === 'object') v = v.value || '';
+      add(v, String((r && r.key) || '').slice(5), 'saved');
+    });
+    Object.keys(bySet).forEach(function(k){
+      bySet[k].sort(function(a, b){
+        return ((b.how === 'bom') - (a.how === 'bom')) || (a.at < b.at ? 1 : (a.at > b.at ? -1 : 0));
+      });
+    });
+    _asmIdx = { at:Date.now(), bySet:bySet };
+    return _asmIdx;
+  });
+}
+/* v103: ชุดที่หา Item Id Set ตรงเป๊ะไม่เจอ (Order IMOS ส่วนใหญ่ไม่ได้เก็บ Item Id Set ไว้)
+   → ใช้วิธีเดาเดิมของปุ่มนี้ (เลขใน Item Id Set เทียบชื่อ Order ใน StarNexus) แต่ต้องผ่านด่านก่อนถึงจะใช้:
+     ชื่อตู้ตรงกัน ≥ ASM_MIN_PCT% และจับคู่ PartID ได้ ≥ 75% · ไม่ผ่าน = ถือว่าหาไม่เจอ (ไม่เติม)
+   ขึ้นป้าย "เดา" ในกล่องยืนยันเสมอ ให้คนดูตัวอย่างลิงก์ก่อนกด */
+function _asmGuessMom(g, force){
+  if(!/\d/.test(g.set)) return Promise.resolve();
+  return _asmFindOrders(g.set).then(function(list){
+    list = (list || []).slice(0, 5);
+    var ok = [];
+    return list.reduce(function(p, c){
+      return p.then(function(){
+        return _asmFetchMap(c.oid).then(function(m){
+          var st = _asmDryRun(g.rows, m, force);
+          if(st.checked && st.pct >= ASM_MIN_PCT && st.hit >= 0.75 * st.total) ok.push({ oid:c.oid, pct:st.pct, hit:st.hit });
+        })['catch'](function(){});
+      });
+    }, Promise.resolve()).then(function(){
+      if(!ok.length) return;
+      ok.sort(function(a, b){ return (b.pct - a.pct) || (b.hit - a.hit); });
+      g.mom = ok[0].oid; g.guess = true;
+      g.cands = ok.map(function(x){ return { oid:x.oid, how:'guess' }; });
+    });
+  })['catch'](function(){});
+}
+function _asmRunMulti(sets, force, auto){
+  var oid = IMPB.active, it = oid ? IMPB.store[oid] : null;
+  var rows = (it && it.rows) || [];
+  _asmSetBusy(true); _asmMsg('กำลังหา Order แม่ของ ' + sets.length + ' ชุด…');
+  return _asmMotherIndex().then(function(idx){
+    var plan = sets.map(function(g){
+      var c = idx.bySet[g.set] || [];
+      return { set:g.set, rows:g.rows, cands:c, mom:(c.length ? c[0].oid : '') };
+    });
+    return plan.reduce(function(p, g){
+      return p.then(function(){
+        return g.mom ? null : _asmGuessMom(g, force);        /* v103: ไม่เจอแบบตรงเป๊ะ → ลองเดา (มีด่าน) */
+      }).then(function(){
+        if(!g.mom) return;
+        return _asmFetchMap(g.mom).then(function(m){
+          var s0 = _asmDryRun(g.rows, m, force);
+          return (s0.miss ? _asmFillFromOrder(g.mom, m) : 0);
+        }).then(function(){
+          g.m = IMPASM.map[g.mom];
+          g.st = _asmDryRun(g.rows, g.m, force);
+        })['catch'](function(e){ g.err = (e && e.message) || String(e); });
+      });
+    }, Promise.resolve()).then(function(){ return plan; });
+  }).then(function(plan){
+    _asmSetBusy(false);
+    var ok = plan.filter(function(g){ return g.st && g.st.hit; });
+    var will = 0, lowPct = false;
+    ok.forEach(function(g){
+      will += force ? (g.st.fill + g.st.over) : g.st.fill;
+      if(g.st.checked && g.st.pct < ASM_MIN_PCT) lowPct = true;
+    });
+    var lines = plan.map(function(g){
+      if(!g.mom) return '❌ ' + g.set + ' (' + g.rows.length + ' แถว)\n     ไม่พบ Order แม่ที่ใช้ Item Id Set นี้ — ไม่เติม';
+      if(g.err || !g.st) return '❌ ' + g.set + ' → ' + g.mom + '\n     ดึงลิงก์ไม่ได้: ' + (g.err || '-');
+      var st = g.st, h = st.hits[0];
+      return (st.miss || g.guess || (st.checked && st.pct < ASM_MIN_PCT) ? '⚠️ ' : '✔ ') + g.set + '\n     → ' + g.mom
+        + (g.guess ? '  [เดาจากเลขใน Item Id Set — ตรวจตัวอย่างลิงก์]' : '')
+        + (g.cands.length > 1 ? ((g.guess ? '  (ตัวอื่นที่เข้าได้: ' : '  (Order อื่นที่ใช้ชุดนี้: ') + g.cands.slice(1).map(function(x){ return x.oid; }).join(', ') + ')') : '')
+        + '\n     จับคู่ได้ ' + st.hit + '/' + st.total + ' แถว' + (st.checked ? (' · ชื่อตู้ตรงกัน ' + st.pct + '%') : '')
+        + (st.miss ? (' · ไม่เจอ ' + st.miss + ': ' + st.missIds.join(', ') + (st.miss > st.missIds.length ? ' …' : '')) : '')
+        + (h ? ('\n     ตัวอย่าง ' + h.pid + ' → ' + h.url) : '');
+    });
+    var head = 'ไฟล์นี้มี ' + plan.length + ' Item Id Set — ดึงลิงก์จาก Order แม่ของแต่ละชุด\n\n' + lines.join('\n\n');
+    if(!ok.length){
+      _asmBar();
+      if(auto){ _asmMsg('⚠️ ดึงอัตโนมัติไม่สำเร็จ — หา Order แม่ไม่เจอ'); return; }
+      alert('❌ จับคู่ไม่ได้เลย\n\n' + head);
+      return;
+    }
+    if(!will){ _asmBar(); if(!auto) alert('ทุกแถวมีลิงก์อยู่แล้ว ไม่มีอะไรต้องเปลี่ยน\n\n' + head); return; }
+    var txt = (auto ? '⚡ โหมด Auto — เจอลิงก์ Assembly ของงานนี้\n\n' : '') + head + '\n\n'
+      + (lowPct ? '⚠️ บางชุดชื่อตู้ตรงกันไม่ถึง ' + ASM_MIN_PCT + '% — ตรวจว่า Order แม่ถูกตัว\n\n' : '')
+      + 'ยืนยันเขียน ' + will + ' แถว?';
+    if(auto) txt += '\n\n(Cancel = ไม่ดึง · ปิดการถามได้ที่ช่อง ⚡ Auto บนแถบดึงลิงก์)';
+    if(!window.confirm(txt)){ _asmBar(); return; }
+    _asmSetBusy(true);
+    var n = 0, per = [];
+    ok.forEach(function(g){ var k = _asmApply(g.rows, g.m, force); n += k; per.push(g.set + ' → ' + g.mom + ' · ' + k + ' แถว'); });
+    var stamp = new Date().toISOString();
+    var from = ok.map(function(g){ return g.mom; }).join(', ');
+    var meta = { file:(it.file || ''), nRow:rows.length, nSet:(it.nSet || 0), nMat:(it.nMat || 0), nProd:(it.nProd || 0),
+                 asmFrom:from, asmAt:stamp, asmN:n };
+    return Promise.resolve(saveOrder(oid, rows, meta)).then(function(){
+      IMPASM.prov[oid] = { from:from, at:stamp, n:n };
+      _asmSetBusy(false);
+      try{ renderAX(); }catch(e){}
+      _asmBar();
+      var skip = plan.filter(function(g){ return !(g.st && g.st.hit); });
+      var miss = 0; ok.forEach(function(g){ miss += g.st.miss; });
+      var fromOrd = 0; ok.forEach(function(g){ fromOrd += (g.m && g.m.__fromOrder) || 0; });
+      alert('✔ เขียนลิงก์ Assembly แล้ว ' + n + ' แถว (จาก ' + rows.length + ' แถว)\n\n' + per.join('\n')
+        + (fromOrd ? ('\n(' + fromOrd + ' แถวดัชนี StarNexus ไม่มี — ดึงจากข้อมูล Order แม่ให้แล้ว)') : '')
+        + (miss ? ('\n\n⚠️ ไม่เจอ ' + miss + ' แถว (ดูรายการในกล่องก่อนหน้า)') : '')
+        + (skip.length ? ('\n\n❌ ไม่ได้เติม ' + skip.length + ' ชุด (หา Order แม่ไม่เจอ): ' + skip.map(function(g){ return g.set; }).join(', ')) : ''));
+    });
+  })['catch'](function(e){
+    _asmSetBusy(false); _asmBar();
+    alert('ดึงลิงก์ไม่สำเร็จ: ' + ((e && e.message) || e));
+  });
+}
+
 function _asmRun(force, auto){
   if(IMPASM.busy) return;
   var oid = IMPB.active;
   var it  = oid ? IMPB.store[oid] : null;
   var rows = (it && it.rows) || [];
   if(!rows.length) return;
+  var sets = _asmSets(rows);                               /* v103 */
+  if(sets.length >= 2) return _asmRunMulti(sets, force, auto);
   var sel = q('impAsmSel');
   var pick = sel ? sel.value : '';
   if(!pick){ alert('เลือกออร์เดอร์ต้นทางก่อน'); return; }
@@ -13143,7 +13316,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '102', D = '23/09/2026';
+  var V = '103', D = '23/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
