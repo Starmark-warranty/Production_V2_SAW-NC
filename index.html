@@ -10963,6 +10963,28 @@ function _asmFetchMap(oid){
     return m;
   });
 }
+/* ══ v102: ชิ้นที่ part_index ไม่มี → อ่านลิงก์จากข้อมูล Order ต้นทางเอง (imos_orders.data) ═══════════════
+   StarNexus เก็บชิ้นที่ไม่มีบาร์โค้ดด้วยชื่อชิ้น (เช่น BEF159-01-01) เป็นคีย์ร่วมทุกออร์เดอร์
+   ออร์เดอร์อื่นที่มีตู้ชื่อเดียวกันส่งออกทีหลัง → แถวนั้นถูกย้ายไปเป็นของออร์เดอร์นั้น
+   (เจอจริง: 2609170003_FOREST_J_PANTRY เสีย P83 ให้ _SHOE และ P162 ให้ _BED2)
+   ข้อมูล Order ต้นทางมี PART_URL ครบทุกชิ้นอยู่แล้ว → ดึงเฉพาะตอนมีชิ้นขาด ครั้งเดียวต่อออร์เดอร์ */
+function _asmFillFromOrder(oid, m){
+  if(m.__fromOrderDone) return Promise.resolve(0);
+  var d = _db(); if(!d) return Promise.resolve(0);
+  return Promise.resolve(d.from('imos_orders').select('data').eq('order_id', oid).single()).then(function(res){
+    m.__fromOrderDone = true;
+    var data = res && res.data && res.data.data, n = 0;
+    ((data && data.groups) || []).forEach(function(g){ ((g && g.rows) || []).forEach(function(r){
+      if(!r || r._tp !== 3) return;
+      var k = String(r.ID || '').trim(), u = String(r.PART_URL || '').trim();
+      if(!/^P\d+$/.test(k) || !u || m[k]) return;
+      m[k] = { url:u, cab:String(r.NAME2 || ''), src:'order' }; n++;
+    }); });
+    m.__fromOrder = (m.__fromOrder || 0) + n;
+    if(n) try{ console.log('[Assembly] part_index ขาด ' + n + ' ชิ้น — เติมจากข้อมูล Order ' + oid); }catch(e){}
+    return n;
+  })['catch'](function(e){ m.__fromOrderDone = true; console.warn('[Assembly] อ่านข้อมูล Order ต้นทางไม่ได้:', (e && e.message) || e); return 0; });
+}
 /* ลองจับคู่ดูก่อน ยังไม่เขียนอะไรทั้งสิ้น */
 function _asmDryRun(rows, m, force){
   var st = { total:(rows||[]).length, hit:0, miss:0, cabOk:0, cabBad:0,
@@ -10980,7 +11002,9 @@ function _asmDryRun(rows, m, force){
     else if(cur === e.url) st.same++;
     else if(force)         st.over++;
     if(!e.cab) return;
-    if(_asmCabOf(r['ProductID']) === e.cab) st.cabOk++;
+    /* v102: ไฟล์ที่ออกจากปุ่ม Export BOM ไม้ (PD) มี ProductID = PD12 ไม่ใช่ BNT028-01 → ดูชื่อตู้จาก ProductArticle ด้วย
+       (เดิมเทียบ ProductID อย่างเดียว ไฟล์ PD จึงได้ "ชื่อตู้ตรงกัน 0%" แล้วเตือนว่าเลือกออร์เดอร์ผิด ทั้งที่ถูก) */
+    if(_asmCabOf(r['ProductID']) === e.cab || String(r['ProductArticle'] || '').trim() === e.cab) st.cabOk++;
     else { st.cabBad++; if(st.badIds.length < 12) st.badIds.push(pid); }
   });
   st.checked = st.cabOk + st.cabBad;
@@ -11148,6 +11172,10 @@ function _asmRun(force, auto){
   if(!pick){ alert('เลือกออร์เดอร์ต้นทางก่อน'); return; }
   _asmSetBusy(true); _asmMsg('กำลังดึง…');
   return _asmFetchMap(pick).then(function(m){
+    /* v102: มีชิ้นที่ part_index ไม่มี → ลองเติมจากข้อมูล Order ต้นทางก่อน แล้วค่อยนับใหม่ */
+    var st0 = _asmDryRun(rows, m, force);
+    return (st0.miss ? _asmFillFromOrder(pick, m) : Promise.resolve(0)).then(function(){ return m; });
+  }).then(function(m){
     var st = _asmDryRun(rows, m, force);
     _asmSetBusy(false);
     if(!st.hit){
@@ -11198,6 +11226,7 @@ function _asmRun(force, auto){
       var msg = '\u2714 เขียนลิงก์ Assembly แล้ว ' + n + ' แถว (จาก ' + st.total + ' แถว)'
               + '\nดึงจาก ' + pick;
       if(st.checked) msg += '\nชื่อตู้ตรงกัน ' + st.pct + '%';
+      if(m.__fromOrder) msg += '\n(' + m.__fromOrder + ' แถวดัชนี StarNexus ไม่มี — ดึงจากข้อมูล Order ต้นทางให้แล้ว)';
       if(st.miss) msg += '\n\n\u26a0\ufe0f ไม่เจอ ' + st.miss + ' แถว: '
                        + st.missIds.join(', ') + (st.miss > st.missIds.length ? ' …' : '');
       alert(msg);
@@ -13114,7 +13143,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '101', D = '23/09/2026';
+  var V = '102', D = '23/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
