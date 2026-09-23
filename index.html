@@ -10427,6 +10427,34 @@ else setTimeout(init,600);
     return out;
   }
 
+  /* ══ v96: ส่งออกตามที่เห็นในตาราง AX Detail ═════════════════════════════
+     เดิมปุ่มนี้เรียงตาม PartID เองเสมอ ไม่สนการเรียง/ค้นหาบนจอ
+     พอรวมหลาย Order แถวของแต่ละ Order จึงสลับกัน (P1 ของ A, P1 ของ B, P2 ของ A …)
+     ใหม่: ใช้ช่องค้นหา (qAX) และคอลัมน์ที่กดเรียง (axSortCol/axSortDir) แบบเดียวกับ renderAX
+     → ลำดับในไฟล์ = ลำดับในตารางบนจอทุกแถว
+     ถ้ายังไม่มีการเรียงบนจอเลย ใช้การเรียงตาม PartID แบบเดิม (v17.53) */
+  function viewOrder(rows){
+    var q = '';
+    try{ q = ((document.getElementById('qAX') || {}).value || '').toLowerCase(); }catch(e){}
+    if(q){
+      rows = rows.filter(function(r){ return Object.values(r).join(' ').toLowerCase().indexOf(q) >= 0; });
+    }
+    var col = '', dir = 1;
+    try{ col = (typeof axSortCol !== 'undefined') ? (axSortCol || '') : ''; dir = (typeof axSortDir !== 'undefined') ? (axSortDir || 1) : 1; }catch(e){}
+    if(!col) return pdSortOn() ? sortByPartId(rows) : rows;
+    var nat = (typeof _axNatCmp === 'function') ? _axNatCmp : natCmp;
+    var NUMC = {}; try{ if(typeof AX_NUMCOLS !== 'undefined' && AX_NUMCOLS) NUMC = AX_NUMCOLS; }catch(e){}
+    var out = rows.slice();
+    out.sort(function(a, b){                      /* เหมือน renderAX ทุกอย่าง */
+      var va = a[col] || '', vb = b[col] || '';
+      var cmp;
+      if(col === 'PartID' || col === 'ProductID') cmp = nat(String(va), String(vb));
+      else cmp = NUMC[col] ? (parseFloat(va) || 0) - (parseFloat(vb) || 0) : String(va).localeCompare(String(vb), 'th');
+      return cmp * dir;
+    });
+    return out;
+  }
+
   function runExport(){
     if(typeof buildAXRows !== 'function'){
       alert('ยังใช้ปุ่มนี้ไม่ได้ — หน้ายังโหลดไม่เสร็จ กรุณาลองใหม่อีกครั้ง');
@@ -10440,7 +10468,7 @@ else setTimeout(init,600);
        เรียงแล้ว "ตู้ยังอยู่ติดกันเหมือนเดิม" เพราะแต่ละตู้ถือเลขเป็นช่วง ๆ
        เปลี่ยนแค่ลำดับของตู้ ไม่ได้สลับชิ้นข้ามตู้
        ปิดได้ถ้าปลายทางต้องการลำดับเดิม: PD_sortByPart(false)              */
-    if(pdSortOn()) rows = sortByPartId(rows);
+    rows = viewOrder(rows);                        /* v96: เรียง/กรองตามตาราง AX Detail บนจอ */
     if(!rows.length){
       alert('ยังไม่ได้เปิด Order\n\n'
           + 'กรุณาคลิกเลือก Order จากรายการด้านซ้ายก่อน\n'
@@ -12935,7 +12963,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '95', D = '22/09/2026';
+  var V = '96', D = '23/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
