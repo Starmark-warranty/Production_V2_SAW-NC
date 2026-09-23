@@ -12202,6 +12202,9 @@ function run(){
     alert('ไม่พบฟังก์ชันของ Production V2'); return;
   }
   MBOM.busy = true; MBOM.blank = false; paintCount();
+  /* v93: ล้างผลรวมรอบก่อนก่อนเริ่มเก็บ ไม่งั้น buildAXRows/buildBOMRows ที่ห่อไว้จะคืนผลรวมเดิม
+     แทนแถวของ Order ที่กำลังโหลด → กดรวม BOM ซ้ำแล้วแถวซ้อนทวีคูณ (ทดสอบ: 18 → 54 → 108 แถว) */
+  MBOM.ax = []; MBOM.fit = [];
 
   var oids = MBOM.seq.slice();
   var origOrder = null;
@@ -12433,6 +12436,20 @@ function fromName(oid){
   return '';
 }
 
+/* v93: Item Id Set ที่ติดมากับข้อมูล Order เอง (Order จาก Furtech/BoardForge มีช่อง itemIdSet)
+   เดิมไม่เคยถูกใช้ → Order ที่ยังไม่มีค่าบันทึกไว้ ถูกเดาจากชื่อ (RE-2609-170003) แล้วบันทึกค่าที่เดาไว้ */
+function ownIids(){
+  try{ var d = window.currentData; var v = d && d.itemIdSet; return v ? String(v).trim() : ''; }catch(e){ return ''; }
+}
+/* ค่าที่โปรแกรมเดาจากชื่อ Order เอง (ไม่ใช่ค่าที่คนพิมพ์) */
+function isGuess(v, oid){
+  v = String(v || '').trim();
+  if(!v) return true;
+  var g2 = '';
+  try{ g2 = (typeof _suggestIids === 'function') ? (_suggestIids(oid) || '') : ''; }catch(e){}
+  return v === fromName(oid) || (g2 && v === g2);
+}
+
 function apply(val, oid, save){
   var inp = q('itemIdSetInput');
   try{ axItemIdSet = val; }catch(e){}
@@ -12446,9 +12463,16 @@ function apply(val, oid, save){
   }
 }
 
-function fill(){
+function fill(expect){
   var oid = cur();
   if(!oid) return;
+  /* v93: นัดไว้ให้ Order ไหน ทำเฉพาะ Order นั้น และต้องโหลดเสร็จแล้ว
+     เดิมตอนสลับ Order เร็ว ๆ (รวม BOM / ส่งหลาย Order เข้า SAW/NC วนโหลดทีละ Order) ตัวที่นัดไว้ของ Order ก่อนหน้า
+     มาทำงานตอน Order ถัดไปกำลังโหลด (ช่องยังว่าง) → เดาค่าจากชื่อ Order แล้วบันทึกทับค่าจริงในฐานข้อมูล */
+  if(expect && oid !== expect) return;
+  try{ var ov = q('orderLoadingOverlay'); if(ov && ov.style.display === 'flex') return; }catch(e){}
+  /* v93: กำลังแสดงผลรวมหลาย Order → ไม่เดาหรือบันทึก Item Id Set ให้ Order ที่เปิดอยู่จากแถวรวม */
+  try{ var mb = (typeof window.MBOM_state === 'function') ? window.MBOM_state() : null; if(mb && mb.on && mb.ax) return; }catch(e){}
   var inp = q('itemIdSetInput');
   var now = '';
   try{ now = String(axItemIdSet || '').trim(); }catch(e){}
@@ -12464,6 +12488,9 @@ function fill(){
       : 'Item Id Set ที่ใช้กับทุกแถว';
   }
 
+  /* v93: ค่าที่บันทึกไว้เป็นค่าเดาจากชื่อ (หรือยังว่าง) แต่ Order มีค่าของตัวเอง → ใช้ค่าของ Order และบันทึกแทนค่าเดา */
+  var own = ownIids();
+  if(own && own !== now && isGuess(now, oid)){ AUTO[oid] = own; apply(own, oid, true); return; }
   if(now) return;                            /* มีค่าอยู่แล้ว -> ไม่แตะ */
   if(sc.n > 1){ AUTO[oid] = ''; return; }    /* หลายค่า -> ปล่อยว่าง ให้ตารางโชว์ค่าจริง */
 
@@ -12489,10 +12516,17 @@ function hook(){
   window.buildAXRows = function(){
     var rows = origBuild.apply(this, arguments);
     if(!rows || !rows.length) return rows;
+    /* v93: แถวจากโหมดรวม BOM หลาย Order มี Item Id Set ของ Order ตัวเองติดมาแล้ว (เก็บตอนโหลดทีละ Order)
+       ห้ามทับด้วยค่าของ Order ที่เปิดอยู่ — เดิมทุกแถวกลายเป็นค่าเดียวกันหมด */
+    for(var i = 0; i < rows.length; i++){ if(rows[i] && rows[i].__mbOrder) return rows; }
     var oid = cur(), v = '';
     try{ v = String(axItemIdSet || '').trim(); }catch(e){}
+    /* v93: Order มีค่าของตัวเอง และค่าที่ใช้อยู่เป็นค่าเดาจากชื่อ/ว่าง → ใช้ค่าของ Order (ทันที ไม่ต้องรอ fill) */
+    var own = ownIids(), useOwn = false;
+    if(own && isGuess(v, oid)){ v = own; useOwn = true; }
     if(!v) return rows;
-    if(AUTO[oid] && AUTO[oid] === v){
+    /* ค่าของ Order เอง → ทับทุกแถวเสมอ (ไม่ใช้ทางลัดด้านล่าง เพราะแถวดิบอาจยังเป็นค่าเดาที่ถูกอ่านกลับมาจากฐานข้อมูลช้ากว่า) */
+    if(!useOwn && AUTO[oid] && AUTO[oid] === v){
       /* ค่าที่เราเติมเอง: ถ้าแถวมีค่าของตัวเองอยู่แล้ว -> ไม่ทับ
          แต่ถ้าแถวว่าง (ข้อมูลไม่มีคอลัมน์นี้) -> ต้องเติมให้ ไม่งั้นตารางโล่ง */
       var hasOwn = rows.some(function(r){
@@ -12512,8 +12546,8 @@ function hook(){
   window.selectOrder = function(oid){
     var r = origSel.apply(this, arguments);
     Promise.resolve(r).catch(function(){}).then(function(){
-      setTimeout(fill, 250);
-      setTimeout(fill, 900);
+      setTimeout(function(){ fill(oid); }, 250);
+      setTimeout(function(){ fill(oid); }, 900);
     });
     return r;
   };
@@ -12529,7 +12563,7 @@ else setTimeout(init, 1000);
 
 window.IIDS_fill    = function(){ fill(); };
 window.IIDS_info    = function(){ var o=cur(); return { oid:o, auto:AUTO[o]||'', sets:MULTI[o]||0 }; };
-window.IIDS_suggest = function(oid){ var s=scanRows(); return (s.n===1 ? s.best : '') || fromName(oid || cur()); };
+window.IIDS_suggest = function(oid){ var s=scanRows(); return ownIids() || (s.n===1 ? s.best : '') || fromName(oid || cur()); };
 })();
 </script>
 
@@ -12901,7 +12935,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '92', D = '22/09/2026';
+  var V = '95', D = '22/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
