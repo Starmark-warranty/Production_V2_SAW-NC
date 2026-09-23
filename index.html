@@ -2658,6 +2658,9 @@ function renderAX() {
 
   // Sort
   if (axSortCol) {
+    /* v97: ลำดับ Order ตามที่รวมมา (ใช้ตัดสินตอน Item Id Set เท่ากัน) */
+    var _ordIx = {};
+    rows.forEach(function(r, i){ var o = r && r.__mbOrder; if(o && !(o in _ordIx)) _ordIx[o] = i; });
     rows.sort(function(a,b){
       var va = a[axSortCol]||'', vb = b[axSortCol]||'';
       /* ══ v17.0 แก้บั๊ก: PartID/ProductID เรียงผิด ═══════════════════════
@@ -2675,7 +2678,17 @@ function renderAX() {
           ? (parseFloat(va)||0)-(parseFloat(vb)||0)
           : String(va).localeCompare(String(vb),'th');
       }
-      return cmp * axSortDir;
+      cmp = cmp * axSortDir;
+      /* ══ v97: เรียงตาม Item Id Set → ค่าเท่ากันเรียงต่อด้วย Order (ตามลำดับที่รวม) แล้ว PartID น้อยไปมาก
+         (PartID เท่ากันใช้ ProductID) — ตอนรวมหลาย Order จะได้ Item แรกครบก่อน แล้วค่อย Item ถัดไป
+         ชั้นรองเรียงน้อยไปมากเสมอ แม้กด ▼ ที่ Item Id Set */
+      if(!cmp && axSortCol === 'Item Id Set'){
+        var oa = (a.__mbOrder in _ordIx) ? _ordIx[a.__mbOrder] : -1, ob = (b.__mbOrder in _ordIx) ? _ordIx[b.__mbOrder] : -1;
+        cmp = (oa - ob)
+          || _axNatCmp(String(a['PartID']||''), String(b['PartID']||''))
+          || _axNatCmp(String(a['ProductID']||''), String(b['ProductID']||''));
+      }
+      return cmp;
     });
   }
 
@@ -10445,14 +10458,100 @@ else setTimeout(init,600);
     var nat = (typeof _axNatCmp === 'function') ? _axNatCmp : natCmp;
     var NUMC = {}; try{ if(typeof AX_NUMCOLS !== 'undefined' && AX_NUMCOLS) NUMC = AX_NUMCOLS; }catch(e){}
     var out = rows.slice();
-    out.sort(function(a, b){                      /* เหมือน renderAX ทุกอย่าง */
+    var ordIx = {};
+    out.forEach(function(r, i){ var o = r && r.__mbOrder; if(o && !(o in ordIx)) ordIx[o] = i; });
+    out.sort(function(a, b){                      /* เหมือน renderAX ทุกอย่าง (รวมชั้นรองของ v97) */
       var va = a[col] || '', vb = b[col] || '';
       var cmp;
       if(col === 'PartID' || col === 'ProductID') cmp = nat(String(va), String(vb));
       else cmp = NUMC[col] ? (parseFloat(va) || 0) - (parseFloat(vb) || 0) : String(va).localeCompare(String(vb), 'th');
-      return cmp * dir;
+      cmp = cmp * dir;
+      if(!cmp && col === 'Item Id Set'){
+        var oa = (a.__mbOrder in ordIx) ? ordIx[a.__mbOrder] : -1, ob = (b.__mbOrder in ordIx) ? ordIx[b.__mbOrder] : -1;
+        cmp = (oa - ob) || nat(String(a['PartID'] || ''), String(b['PartID'] || '')) || nat(String(a['ProductID'] || ''), String(b['ProductID'] || ''));
+      }
+      return cmp;
     });
     return out;
+  }
+
+  /* ══ v97: ชื่อไฟล์ตอนรวมหลาย Order ═══════════════════════════════════════
+     เดิมใช้ชื่อ Order ที่เปิดอยู่ชื่อเดียว (currentOrder) แม้ในไฟล์จะมีหลาย Order
+     ใหม่: ชื่อทุก Order ต่อกันด้วย + ตามลำดับที่กดเลือก (ลำดับเดียวกับแถบ "รวม N Order")
+       BOM_2609170004_FOREST_J_BED3+2609170005_FOREST_J_BED4_PD.xlsx
+     ยาวเกิน ~150 ตัวอักษร → ใส่ชื่อเท่าที่พอ แล้วต่อท้าย +อีกN (กันชื่อไฟล์ยาวเกินที่ Windows รับได้)
+     Order เดียว → ชื่อเหมือนเดิมทุกอย่าง */
+  function mergedOids(rows){
+    var seen = {}, out = [];
+    (rows || []).forEach(function(r){
+      var o = r && r.__mbOrder;
+      if(o && !seen[o]){ seen[o] = 1; out.push(String(o)); }
+    });
+    return out;
+  }
+  function fileBase(oids){
+    function safe(x){ return String(x || '').replace(/[\\/:*?"<>|]/g, '_').trim(); }
+    if(!oids || oids.length < 2){
+      var one = oids && oids[0];
+      if(!one){ try{ one = window.currentOrder; }catch(e){} }
+      return safe(one) || 'export';
+    }
+    var MAX = 150, parts = [];
+    for(var i = 0; i < oids.length; i++){
+      var rest = oids.length - i - 1;
+      var cand = parts.concat([safe(oids[i])]).join('+') + (rest ? '+อีก' + rest : '');
+      if(parts.length && cand.length > MAX) return parts.join('+') + '+อีก' + (oids.length - parts.length);
+      parts.push(safe(oids[i]));
+    }
+    return parts.join('+');
+  }
+
+  /* ══ v97: กล่องแก้ชื่อไฟล์ (เฉพาะตอนรวมหลาย Order) ══════════════════════
+     ใช้กล่องในหน้าเอง ไม่ใช้ prompt() เพราะเบราว์เซอร์อาจปิดกล่องเงียบ ๆ (ดู v15.5)
+     Enter = ส่งออก · Esc / ยกเลิก = ไม่ออกไฟล์ · ช่องว่าง = ใช้ชื่อเริ่มต้น
+     ไม่ปิดเมื่อคลิกนอกกล่อง — กันชื่อที่พิมไว้หายเพราะเผลอคลิก */
+  function cleanName(x){
+    return String(x || '').replace(/\.xlsx\s*$/i, '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+  }
+  function askFileName(def, n, go){
+    try{ var old = document.getElementById('pdNameAsk'); if(old) old.remove(); }catch(e){}
+    var ov = document.createElement('div');
+    ov.id = 'pdNameAsk';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.35);'
+      + 'display:flex;align-items:center;justify-content:center;'
+      + "font-family:-apple-system,'Sarabun',sans-serif";
+    ov.innerHTML =
+        '<div style="background:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25);'
+      +   'padding:18px 20px 16px;width:560px;max-width:calc(100vw - 32px)">'
+      + '<div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:4px">Export BOM ไม้ (PD)</div>'
+      + '<div style="font-size:12px;color:#64748b;margin-bottom:12px">รวม ' + n + ' Order · แก้ชื่อไฟล์ได้ก่อนส่งออก</div>'
+      + '<label for="pdNameInp" style="display:block;font-size:12px;color:#334155;margin-bottom:5px">ชื่อไฟล์</label>'
+      + '<div style="display:flex;align-items:center;gap:6px">'
+      +   '<input id="pdNameInp" type="text" spellcheck="false" autocomplete="off" style="flex:1;min-width:0;'
+      +     'border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;color:#0f172a;font-family:inherit">'
+      +   '<span style="font-size:13px;color:#64748b">.xlsx</span></div>'
+      + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">'
+      +   '<button id="pdNameNo" style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;'
+      +     'padding:6px 14px;font-size:12.5px;color:#334155;cursor:pointer;font-family:inherit">ยกเลิก</button>'
+      +   '<button id="pdNameGo" style="background:#0369a1;border:1px solid #0369a1;border-radius:8px;'
+      +     'padding:6px 16px;font-size:12.5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">⬇ ส่งออก</button>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    var inp = document.getElementById('pdNameInp');
+    inp.value = def;
+    function close(){
+      try{ document.removeEventListener('keydown', onKey, true); }catch(e){}
+      try{ ov.remove(); }catch(e){}
+    }
+    function ok(){ var v = cleanName(inp.value) || def; close(); go(v); }
+    function onKey(ev){
+      if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); close(); }
+      else if(ev.key === 'Enter'){ ev.preventDefault(); ev.stopPropagation(); ok(); }
+    }
+    document.getElementById('pdNameGo').onclick = ok;
+    document.getElementById('pdNameNo').onclick = close;
+    document.addEventListener('keydown', onKey, true);
+    try{ inp.focus(); inp.select(); }catch(e){}
   }
 
   function runExport(){
@@ -10468,6 +10567,7 @@ else setTimeout(init,600);
        เรียงแล้ว "ตู้ยังอยู่ติดกันเหมือนเดิม" เพราะแต่ละตู้ถือเลขเป็นช่วง ๆ
        เปลี่ยนแค่ลำดับของตู้ ไม่ได้สลับชิ้นข้ามตู้
        ปิดได้ถ้าปลายทางต้องการลำดับเดิม: PD_sortByPart(false)              */
+    var mbOids = mergedOids(rows);                 /* v97: Order ทั้งหมดที่รวมอยู่ (ก่อนค้นหา/เรียง) → ใช้ตั้งชื่อไฟล์ */
     rows = viewOrder(rows);                        /* v96: เรียง/กรองตามตาราง AX Detail บนจอ */
     if(!rows.length){
       alert('ยังไม่ได้เปิด Order\n\n'
@@ -10475,6 +10575,11 @@ else setTimeout(init,600);
           + 'แล้วค่อยกดปุ่มนี้อีกครั้ง');
       return;
     }
+    /* v97: รวมหลาย Order → เด้งกล่องให้แก้ชื่อไฟล์ก่อน (ตั้งค่าเริ่มต้น = ชื่อทุก Order ต่อกัน) · Order เดียว → ออกชื่อเดิมทันที */
+    var defName = 'BOM_' + fileBase(mbOids) + '_PD';
+    if(mbOids.length >= 2) askFileName(defName, mbOids.length, function(nm){ go(nm + '.xlsx'); });
+    else go(defName + '.xlsx');
+    function go(fname){
     var btn = document.getElementById('ncPdExportBtn');
     var lbl = btn ? btn.textContent : '';
     if(btn && !window.XLSX){
@@ -10502,12 +10607,13 @@ else setTimeout(init,600);
         else c['ProductID'] = pdOf(c);
         return c;
       });
-      try{ writeXlsx(out); }
+      try{ writeXlsx(out, fname); }
       catch(e){ alert('ส่งออกไม่สำเร็จ: ' + ((e && e.message) || e)); }
     });
+    }
   }
   /* เขียนไฟล์แบบเดียวกับ Export BOM ไม้ เดิม (บังคับชนิดข้อมูลเหมือนกัน) */
-  function writeXlsx(rows){
+  function writeXlsx(rows, fname){
     var XLSX = window.XLSX;
     var ws = {}, range = { s:{r:0,c:0}, e:{r:rows.length, c:AX_COLS.length-1} };
     AX_COLS.forEach(function(col, ci){
@@ -10531,9 +10637,7 @@ else setTimeout(init,600);
     ws['!ref'] = XLSX.utils.encode_range(range);
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'BOM');
-    var oid = '';
-    try{ oid = String(window.currentOrder || '').replace(/[\\/:*?"<>|]/g, '_'); }catch(e){}
-    XLSX.writeFile(wb, 'BOM_' + (oid || 'export') + '_PD.xlsx');
+    XLSX.writeFile(wb, fname);
   }
   function place(){
     TRY++;
@@ -12000,6 +12104,7 @@ function resetView(){
      → ปิดโหมดเองแบบตรง ๆ แล้วอัปปุ่มให้ตรงสถานะ */
   try{
     MBOM.seq = []; MBOM.ax = []; MBOM.fit = []; MBOM.blank = false; MBOM.on = false;
+    restoreSort();                                /* v97 */
     var tg = q('mbToggle');
     if(tg){ tg.classList.remove('pri'); tg.innerHTML = '\u2611 เลือกหลาย Order'; }
     ['mbCount','mbRun','mbAll','mbNone'].forEach(function(id){
@@ -12127,6 +12232,7 @@ function setMode(on){
     var e = q(id); if(e) e.style.display = on ? '' : 'none';
   });
   if(!on){
+    restoreSort();                                /* v97: คืนการเรียงก่อนเข้าโหมดรวม */
     /* v1.5: ออกจากโหมด → กลับไปแสดง Order แรกที่ติ๊กไว้ (ตัวที่ยังค้างอยู่)
        จะได้เห็นแถบไฮไลท์บนแถวนั้น ไม่ใช่ว่างเปล่าให้งง */
     var back = MBOM.seq[0] || null;
@@ -12271,6 +12377,7 @@ function run(){
     MBOM.ax = ax; MBOM.fit = fit;
     var fin = function(){
       MBOM.busy = false; paintCount();
+      sortForMerge();                             /* v97 */
       msg('✓ รวมแล้ว ' + oids.length + ' Order · ' + ax.length + ' ชิ้น · ' + fit.length + ' รายการ'
         + (skipped.length ? ' (ข้าม ' + skipped.length + ')' : ''));
       try{ renderAX(); }catch(e){}
@@ -12285,6 +12392,25 @@ function run(){
     fin();
   }
   next();
+}
+
+/* ══ v97: รวม BOM เสร็จ → เรียงตาม Item Id Set ให้เลย (ในแต่ละ Item เรียงต่อด้วย PartID)
+   ไม่ต้องกดหัวคอลัมน์เอง · จำการเรียงเดิมไว้ คืนให้ตอนออกจากโหมดรวม
+   ระหว่างอยู่ในโหมดรวม กดเรียงคอลัมน์อื่นได้ตามปกติ (กดรวม BOM ใหม่จะกลับมาเรียง Item Id Set) */
+function sortForMerge(){
+  try{
+    if(!MBOM.prevSort) MBOM.prevSort = [axSortCol, axSortDir];
+    axSortCol = 'Item Id Set'; axSortDir = 1;
+    window.__axSorted = true;
+  }catch(e){}
+}
+function restoreSort(){
+  try{
+    if(MBOM.prevSort){
+      axSortCol = MBOM.prevSort[0] || 'PartID'; axSortDir = MBOM.prevSort[1] || 1;
+      MBOM.prevSort = null;
+    }
+  }catch(e){}
 }
 
 /* แถบหัวบอกว่ากำลังดูรวมกี่ Order */
@@ -12963,7 +13089,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '96', D = '23/09/2026';
+  var V = '97', D = '23/09/2026';
   window.SAWNC_VERSION = V;
   window.SAWNC_BUILD   = D;
 
