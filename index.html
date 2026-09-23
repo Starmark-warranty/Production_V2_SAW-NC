@@ -11555,7 +11555,7 @@ function validate(rows){
    ไฟล์ที่ Excel บันทึกแบบ "CSV (Comma delimited)" บนเครื่องภาษาไทย เป็นรหัส Windows-874 (TIS-620) ไม่ใช่ UTF-8
    เดิมอ่านเป็น UTF-8 อย่างเดียว → ภาษาไทยเพี้ยนเป็น ���
    ใหม่: อ่านเป็นไบต์ ลอง UTF-8 แบบเข้มก่อน (ไฟล์ UTF-8 จริงจะผ่านเสมอ) ไม่ผ่าน = ใช้ Windows-874
-   หมายเหตุ: ตัวอักษรที่ Windows-874 ไม่มี (เช่น ·) Excel แปลงเป็น ? ไปแล้วตั้งแต่บันทึก — กู้คืนไม่ได้ */
+   หมายเหตุ: ตัวอักษรที่ Windows-874 ไม่มี Excel แปลงเป็น ? ตั้งแต่บันทึก · v101 คืนตัว · ให้ (? ที่มีเว้นวรรคหน้าหลัง) */
 function decodeCsv(buf){
   var u8 = new Uint8Array(buf);
   if(u8.length >= 2 && ((u8[0] === 0xFF && u8[1] === 0xFE) || (u8[0] === 0xFE && u8[1] === 0xFF))){
@@ -11563,7 +11563,15 @@ function decodeCsv(buf){
   }
   try{ return new TextDecoder('utf-8', { fatal:true }).decode(u8); }      /* ตัด BOM ให้เอง */
   catch(e){
-    try{ var s = new TextDecoder('windows-874').decode(u8); try{ console.log('[Import BOM] ไฟล์เป็นรหัส Windows-874 (ภาษาไทยจาก Excel) — แปลงให้แล้ว'); }catch(x){} return s; }
+    try{
+      var s = new TextDecoder('windows-874').decode(u8);
+      /* v101: Windows-874 ไม่มีตัว · → Excel เขียนเป็น ? ตอนบันทึก (เช่น "Adj Shelf 1 · กระจก" → "Adj Shelf 1 ? กระจก")
+         ? ที่มีเว้นวรรคหน้าหลัง ในไฟล์แบบนี้คือ · ที่หายไป → ใส่คืน (ไฟล์ UTF-8 ไม่แตะ) */
+      var nFix = 0;
+      s = s.replace(/ \? /g, function(){ nFix++; return ' \u00b7 '; });
+      try{ console.log('[Import BOM] ไฟล์เป็นรหัส Windows-874 (ภาษาไทยจาก Excel) — แปลงให้แล้ว' + (nFix ? ' · คืนตัว · ' + nFix + ' จุด' : '')); }catch(x){}
+      return s;
+    }
     catch(e2){ return new TextDecoder('utf-8').decode(u8); }
   }
 }
@@ -13106,7 +13114,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '100', D = '23/09/2026';
+  var V = '101', D = '23/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
