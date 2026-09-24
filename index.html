@@ -9660,11 +9660,13 @@ function injectNCSettings(win, tries){
          + '    เติมเฉพาะรหัสที่ยังว่าง · ที่ตั้งเองไว้แล้ว (เช่น X ขวาง) จะไม่ถูกทับ\n'
          + 'ขนาดบอร์ดไม่ถูกแตะ · รหัสที่ไม่พบชื่อยังแจ้งเตือนเหมือนเดิม';
   nb.innerHTML = ncNameLabel(autoNameOn());
-  nb.onclick = function(ev){
-    try{ ev.stopPropagation(); }catch(e){}
-    var next=!autoNameOn(); autoNameSet(next);
-    nb.innerHTML=ncNameLabel(next); paintPanel();
-  };
+  /* v117: ตัวจัดการต้องเป็นของหน้าต่าง SAW/NC เอง (เขียนเป็น onclick ในปุ่ม)
+     เดิมผูกฟังก์ชันของหน้าหลักไว้ → รีเฟรชหน้าหลัก (เช่น อัปเดตเวอร์ชัน) ขณะหน้าต่าง SAW/NC ยังเปิด
+     เบราว์เซอร์จะไม่รันฟังก์ชันของหน้าเก่าอีก → กดแล้วไม่มีอะไรเกิดขึ้น แถมเมนูปิดเอง */
+  nb.setAttribute('onclick', "event.stopPropagation();var k='" + LS_AUTONAME + "',on=true;try{on=localStorage.getItem(k)!=='0';}catch(e){}on=!on;"
+    + "try{localStorage.setItem(k,on?'1':'0');}catch(e){}"
+    + "this.innerHTML='&#129302; เติมชื่อไม้ + ลายอัตโนมัติ: <b>'+(on?'เปิด':'ปิด')+'</b>';"
+    + "try{if(window.opener&&window.opener.SAWB_settingsChanged)window.opener.SAWB_settingsChanged();}catch(e){}");
   var head1 = menu.querySelector('.ncp-dd-head');
   if(head1 && head1.nextSibling) menu.insertBefore(nb, head1.nextSibling);
   else menu.insertBefore(nb, menu.firstChild);
@@ -9675,11 +9677,10 @@ function injectNCSettings(win, tries){
   b.title='เปิด = แต่ละ Order ที่ส่งจาก Production V2 ได้ตัวอักษรชั้นวางของตัวเอง (A, B, C…)\n'
         + 'ปิด = ให้โปรแกรมนี้จัดตัวอักษรเองแบบเดิม';
   b.innerHTML = ncSplitLabel(splitOn());
-  b.onclick = function(ev){
-    try{ ev.stopPropagation(); }catch(e){}
-    var next=!splitOn(); splitSet(next);
-    b.innerHTML=ncSplitLabel(next); syncUI();
-  };
+  b.setAttribute('onclick', "event.stopPropagation();var k='" + LS_SPLIT + "',on=true;try{on=localStorage.getItem(k)!=='0';}catch(e){}on=!on;"   /* v117 */
+    + "try{localStorage.setItem(k,on?'1':'0');}catch(e){}"
+    + "this.innerHTML='&#128260; แยก ShelfNo ตาม Order: <b>'+(on?'เปิด':'ปิด')+'</b>';"
+    + "try{if(window.opener&&window.opener.SAWB_settingsChanged)window.opener.SAWB_settingsChanged();}catch(e){}");
   anchor.parentNode.insertBefore(b, anchor.nextSibling);
 
   /* 3) ยุบรายการที่ใช้นาน ๆ ครั้ง ไว้ใต้ "เครื่องมือเพิ่มเติม" */
@@ -9701,12 +9702,10 @@ function injectNCSettings(win, tries){
       };
       tgl.innerHTML=lbl(false);
       tgl.title='นำเข้าไม้จาก Excel (ลาย/ขนาดบอร์ด) · โหมด Shelf · รีเซ็ตบาร์โค้ด — ใช้นาน ๆ ครั้ง';
-      tgl.onclick=function(ev){
-        try{ ev.stopPropagation(); }catch(e){}
-        var open=(box.style.display==='none');
-        box.style.display = open?'':'none';
-        tgl.innerHTML=lbl(open);
-      };
+      /* v117: เปิด/ปิดด้วยโค้ดของหน้าต่าง SAW/NC เอง — รีเฟรชหน้าหลักแล้วยังกดได้ */
+      tgl.setAttribute('onclick', "event.stopPropagation();var b=document.getElementById('sawncExtra');if(!b)return;"
+        + "var o=(b.style.display==='none');b.style.display=o?'':'none';"
+        + "this.innerHTML=(o?'&#9662;':'&#8943;')+' เครื่องมือเพิ่มเติม <span style=\"font-weight:400;color:#cbd5e1\">(" + nodes.length + ")</span>';");
       menu.appendChild(tgl); menu.appendChild(box);
       nodes.forEach(function(el){ box.appendChild(el); });   /* ย้ายของเดิม handler ติดไปด้วย */
     }
@@ -10806,6 +10805,7 @@ else setTimeout(init,600);
 })();
 
 window.SAWB_open=function(){ try{ switchMainTab('saw'); }catch(e){} };
+window.SAWB_settingsChanged=function(){ try{ syncUI(); }catch(e){} try{ paintPanel(); }catch(e){} };   /* v117: สวิตช์ในเมนูหน้าต่าง SAW/NC เปลี่ยน → แถบซ้าย/แผงกลางอัปเดต */
 window.SAWB_busy=function(){ return !!SAWB.busy; };   /* v111 */
 window.SAWB_send=function(oids){
   if(Array.isArray(oids)){ SAWB.seq=oids.slice(); }
@@ -13574,7 +13574,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '116', D = '24/09/2026';
+  var V = '117', D = '24/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
