@@ -12816,6 +12816,12 @@ function run(){
     });
   }
   function done(){
+    /* v116: แถวไม้ (BOM ไม้) ไม่เอาจากตอนสลับ Order (โหลดไม่ทัน อาจเป็นของ Order ก่อนหน้า)
+       อ่านของแต่ละ Order จากฐานข้อมูลแทน แล้วติดชื่อ Order ให้ */
+    fit = fit.filter(function(r){ return r._type !== 'BOM ไม้'; });
+    return mbLoadWood(oids).then(function(w){ fit = fit.concat(w); }, function(){}).then(done2);
+  }
+  function done2(){
     MBOM.ax = ax; MBOM.fit = fit;
     var fin = function(){
       MBOM.busy = false; paintCount();
@@ -12835,6 +12841,38 @@ function run(){
   }
   next();
 }
+
+/* ══ v116: แถวไม้ของแต่ละ Order ในโหมดรวม (จาก bomline_wood:<order>) ══════════════ */
+function mbLoadWood(oids){
+  var d = null; try{ d = (typeof db !== 'undefined') ? db : null; }catch(e){}
+  if(!d || typeof window.BLF_woodRows !== 'function' || !oids || !oids.length) return Promise.resolve([]);
+  return Promise.resolve(d.from('app_settings').select('key,value').in('key', oids.map(function(o){ return 'bomline_wood:' + o; })))
+    .then(function(res){
+      var byKey = {}, out = [];
+      ((res && res.data) || []).forEach(function(x){ if(x && x.key) byKey[x.key] = x.value; });
+      oids.forEach(function(oid){
+        var v = byKey['bomline_wood:' + oid];
+        if(!v || !v.rows || !v.rows.length) return;
+        var ed = {}; try{ ed = (typeof bomEdits !== 'undefined' && bomEdits[oid]) || {}; }catch(e){}
+        window.BLF_woodRows(v.rows, ed).forEach(function(r){
+          r.__mbOrder = oid;
+          if(r._origKey) r._origKey = oid + '::' + r._origKey;
+          out.push(r);
+        });
+      });
+      return out;
+    })['catch'](function(e){ console.warn('[Multi-BOM] อ่านแถวไม้ไม่สำเร็จ:', (e && e.message) || e); return []; });
+}
+window.MBOM_refreshWood = function(){
+  if(!(MBOM.on && MBOM.fit.length)) return Promise.resolve(false);
+  var oids = [];
+  MBOM.ax.concat(MBOM.fit).forEach(function(r){ var o = r && r.__mbOrder; if(o && oids.indexOf(o) < 0) oids.push(o); });
+  return mbLoadWood(oids).then(function(w){
+    MBOM.fit = MBOM.fit.filter(function(r){ return r._type !== 'BOM ไม้'; }).concat(w);
+    try{ renderBOM(); }catch(e){}
+    return true;
+  });
+};
 
 /* ══ v97: รวม BOM เสร็จ → เรียงตาม Item Id Set ให้เลย (ในแต่ละ Item เรียงต่อด้วย PartID)
    ไม่ต้องกดหัวคอลัมน์เอง · จำการเรียงเดิมไว้ คืนให้ตอนออกจากโหมดรวม
@@ -13536,7 +13574,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '115', D = '24/09/2026';
+  var V = '116', D = '24/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -15916,7 +15954,9 @@ function apply(msg, quiet){
   /* v17.1a: เก็บลงฐานข้อมูลทันที — รีเฟรชหน้าแล้วแถวไม้ต้องยังอยู่ */
   try{
     var _oid = currentOrder;
-    if(_oid && !msg.__alloc){ STORE_OID = _oid; window.BLF_saveStore(_oid); }   /* v114: ปันเข้า Type → บันทึกตอนปันเสร็จ */
+    if(_oid && !msg.__alloc){ STORE_OID = _oid;
+      Promise.resolve(window.BLF_saveStore(_oid)).then(function(){ try{ if(window.MBOM_refreshWood) window.MBOM_refreshWood(); }catch(e){} });   /* v116 */
+    }   /* v114: ปันเข้า Type → บันทึกตอนปันเสร็จ */
   }catch(e){}
 
   /* ══ v17.41: ห้ามวาดตารางก่อนผู้ใช้ตัดสินใจ ══════════════════════════
@@ -16125,7 +16165,10 @@ function allocDistribute(msg){
     jobs.push((mine.length ? allocSaveFor(cur, mine, A.lot) : window.BLF_forgetStore(cur)).then(function(ok){ return { oid:cur, ok:ok !== false, self:true }; }));
   }
   try{ if(typeof renderBOM === 'function') renderBOM(); }catch(e){}
-  Promise.all(jobs).then(function(res){ allocDone(order, byOid, res, cur, A); });
+  Promise.all(jobs).then(function(res){
+    try{ if(window.MBOM_refreshWood) window.MBOM_refreshWood(); }catch(e){}   /* v116: โหมดรวม → ไม้ของแต่ละ Order อัปเดตทันที */
+    allocDone(order, byOid, res, cur, A);
+  });
 }
 function allocDone(order, byOid, res, cur, A){
   var old = document.getElementById('blfAllocDone'); if(old) try{ old.parentNode.removeChild(old); }catch(e){}
@@ -16204,7 +16247,13 @@ function receive(msg){
    จึงแก้ป้ายหลังตารางวาดเสร็จ — ไม่แตะโค้ดเดิม
    แถวที่ยังแปลงรหัสไม่ได้ ทาสีแดงไว้ให้เห็นชัด */
 function fixBadges(){
-  if(!STORE.length) return;
+  var _extra = [];   /* v116: แถวไม้ของ Order อื่นในโหมดรวม */
+  try{
+    var _mbs = window.MBOM_state ? window.MBOM_state() : null;
+    if(_mbs && _mbs.on && _mbs.fit > 0)             /* เฉพาะโหมดรวม — โหมดปกติใช้ STORE อย่างเดียว (ไม่ต้องคำนวณ BOM ซ้ำทุกครั้งที่ตารางขยับ) */
+      (window.buildBOMRows() || []).forEach(function(x){ if(x && x._type === 'BOM ไม้' && x._blRec && STORE.indexOf(x._blRec) < 0) _extra.push(x._blRec); });
+  }catch(e){}
+  if(!STORE.length && !_extra.length) return;
   var host = document.getElementById('contentBOM');
   if(!host) return;
   /* ══ v17.22: หาแถวไม้ให้เจอในโหมดแก้ไขด้วย ═══════════════════════════
@@ -16214,7 +16263,7 @@ function fixBadges(){
      ใหม่: ดูจาก data-rowkey ของช่องกรอกก่อน (ตรงและเชื่อถือได้ที่สุด)
            ไม่มีค่อยถอยไปอ่านข้อความ/ค่าที่พิมพ์อยู่ในช่อง                */
   var byCode = {}, bySrc = {};
-  STORE.forEach(function(r){
+  _extra.concat(STORE).forEach(function(r){
     byCode[String(r.code).trim().toUpperCase()] = r;
     if(r.src) bySrc[String(r.src).trim().toUpperCase()] = r;
   });
@@ -16506,21 +16555,10 @@ function addAskBtn(){
 }
 window.BLF_addAskBtn = addAskBtn;   /* เผื่อแถบถูกวาดใหม่ทีหลัง เรียกซ้ำได้ */
 
-function hook(){
-  if(typeof window.buildBOMRows !== 'function') return false;
-  if(window.__blfHooked) return true;
-  window.__blfHooked = true;
-  var orig = window.buildBOMRows;
-  window.buildBOMRows = function(){
-    var rows = orig.apply(this, arguments) || [];
-    if(!STORE.length) return rows;
-    /* ══ v17.1a: ต้องเอาค่าที่ผู้ใช้แก้มาทับเองตรงนี้ ══════════════════
-       ตัวจริงทำขั้นนี้ไปแล้วตอนที่แถวไม้ยังไม่ถูกเพิ่มเข้ามา
-       ถ้าไม่ทำซ้ำ แถวไม้จะไม่เคยได้ค่าที่แก้ = "แก้แล้วบันทึกไม่ได้" */
-    var eid = null, edMap = {};
-    try{ eid = currentOrder; edMap = (eid && bomEdits[eid]) || {}; }catch(e){}
-
-    STORE.forEach(function(r){
+function woodRowsOf(store, edMap){
+  var rows = [];
+  edMap = edMap || {};
+  (store || []).forEach(function(r){
       /* ══ v17.2c แก้บั๊ก: คีย์แถวต้องไม่เปลี่ยนตามรหัสที่แปลงได้ ═══════════
          เดิมใช้ 'Board:' + r.code  ซึ่ง r.code เปลี่ยนได้ทุกครั้งที่
          แปลงรหัสตามขนาดบอร์ด หรือผู้ใช้เลือกขนาดใหม่ในกล่อง P48/P68
@@ -16560,8 +16598,38 @@ function hook(){
         }
         if(ed.qty !== undefined){ row._qty = ed.qty; row.Qty = ed.qty; }
       }
+      row._blRec = r;   /* v116: ใช้ทาสีป้าย "BOM ไม้" ของแถวจาก Order อื่นในโหมดรวม */
       rows.push(row);
-    });
+  });
+  return rows;
+}
+/* v116: ให้โหมดรวมหลาย Order สร้างแถวไม้ของแต่ละ Order เองได้ (ติดชื่อ Order ถูกแถว) */
+window.BLF_woodRows = function(store, edMap){ return woodRowsOf(store, edMap); };
+
+function hook(){
+  if(typeof window.buildBOMRows !== 'function') return false;
+  if(window.__blfHooked) return true;
+  window.__blfHooked = true;
+  var orig = window.buildBOMRows;
+  window.buildBOMRows = function(){
+    var rows = orig.apply(this, arguments) || [];
+    /* ══ v116: โหมดรวมหลาย Order ═══════════════════════════════════════════
+       แถวไม้ของแต่ละ Order มาจากโมดูลรวมเอง (อ่านจากฐานข้อมูล ติดชื่อ Order)
+       เดิมต่อ STORE ของ Order ที่เปิดอยู่เพิ่มท้ายตารางอีกชุด → ไม้ซ้ำ 2 ชุด ชุดล่างไม่มีชื่อ Order
+       และระหว่างกำลังรวม STORE อาจยังเป็นของ Order ก่อนหน้า (โหลดไม่ทัน) → ไม้ติดผิด Order */
+    try{
+      if(window.MBOM_busy && window.MBOM_busy()) return rows;
+      var _mb = window.MBOM_state ? window.MBOM_state() : null;
+      if(_mb && _mb.on && _mb.fit > 0) return rows;
+    }catch(e){}
+    if(!STORE.length) return rows;
+    /* ══ v17.1a: ต้องเอาค่าที่ผู้ใช้แก้มาทับเองตรงนี้ ══════════════════
+       ตัวจริงทำขั้นนี้ไปแล้วตอนที่แถวไม้ยังไม่ถูกเพิ่มเข้ามา
+       ถ้าไม่ทำซ้ำ แถวไม้จะไม่เคยได้ค่าที่แก้ = "แก้แล้วบันทึกไม่ได้" */
+    var eid = null, edMap = {};
+    try{ eid = currentOrder; edMap = (eid && bomEdits[eid]) || {}; }catch(e){}
+
+    woodRowsOf(STORE, edMap).forEach(function(row){ rows.push(row); });
     /* ถ้าแถวไม้ถูกซ่อนไว้หมด ตารางจะดูเหมือน "ไม่มีไม้เข้ามาเลย"
        บอกไว้ใน Console ให้รู้ว่าเกิดอะไรขึ้น พร้อมวิธีเอากลับ */
     try{
