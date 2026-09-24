@@ -11865,6 +11865,10 @@ function importFile(file){
     var err = validate(rows);
     if(err){ alert('⚠ ไฟล์ไม่ตรงรูปแบบ BOM\n\n' + err); return; }
 
+    /* v112: ชื่อตั้งต้นต้องประกาศตรงนี้ (ระดับเดียวกับ proceed) — v109 ย้ายไปไว้ใน startSave()
+       ทำให้ proceed() อ้าง oid0 ไม่ได้ → บันทึกสำเร็จแล้วแต่ขึ้น "บันทึกลงฐานข้อมูลไม่สำเร็จ: oid0 is not defined" */
+    var oid0 = String(file.name).replace(/\.(csv|xlsx?|CSV|XLSX?)$/,'').trim() || 'IMPORT';
+
     /* v109: ขนาดตัดไม่ตรงขนาดสำเร็จ → เตือนก่อนบันทึก (ปุ่มหลัก = ไม่นำเข้า ไปแก้ไฟล์) */
     var dimIss = [];
     try{ dimIss = window.DIMCHK ? DIMCHK.check(rows) : []; }catch(e){ dimIss = []; }
@@ -11878,7 +11882,6 @@ function importFile(file){
     return;
 
     function startSave(){
-    var oid0 = String(file.name).replace(/\.(csv|xlsx?|CSV|XLSX?)$/,'').trim() || 'IMPORT';
 
     /* ══ v2.3 — ด่านกันเขียนทับ Order จริง ══════════════════════════════
        บั๊กเดิม: เช็คแค่ IMPB.store (= รายการ "Order นำเข้า" เท่านั้น)
@@ -13402,7 +13405,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '111', D = '24/09/2026';
+  var V = '112', D = '24/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
