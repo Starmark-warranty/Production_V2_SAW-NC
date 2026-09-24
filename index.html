@@ -9830,13 +9830,13 @@ function go(){
     var dimP = Promise.resolve(true);
     if(dimIss.length){
       prog(false);
-      status('busy','รอยืนยัน — ขนาดตัดไม่ตรงขนาดสำเร็จ…');
-      dimP = DIMCHK.ask({ list:dimIss, title:'ส่งเข้า SAW/NC: มีชิ้นขนาดตัดไม่ตรงกับขนาดสำเร็จ',
-        note:'ถ้าส่งต่อ ไฟล์ .saw จะสั่งเลื่อยตัดตามขนาด Cut ในข้อมูล (ไม่ใช่ขนาดจริง) · แก้ข้อมูลต้นทางแล้วนำเข้าใหม่ก่อน',
+      status('busy','รอยืนยัน — ' + DIMCHK.text(dimIss).head + '…');
+      dimP = DIMCHK.ask({ list:dimIss, title:'ส่งเข้า SAW/NC: ' + DIMCHK.text(dimIss).head,
+        note:'ถ้าส่งต่อ ไฟล์ .saw จะสั่งเลื่อยตัดตามขนาดในข้อมูล (ไม่ใช่ขนาดจริง) · แก้ข้อมูลต้นทางแล้วนำเข้าใหม่ก่อน',
         go:'ส่งทั้งที่รู้ว่าผิด', stop:'\u21a9 ไม่ส่ง กลับไปแก้ข้อมูล' });
     }
     return dimP.then(function(dimOk){
-    if(!dimOk){ SAWB.busy=false; paintCount(); status('err','\u2715 ไม่ได้ส่ง — ขนาดตัดไม่ตรงขนาดสำเร็จ ' + DIMCHK.text(dimIss).n + ' แผ่น'); return; }
+    if(!dimOk){ SAWB.busy=false; paintCount(); status('err','\u2715 ไม่ได้ส่ง — ' + DIMCHK.text(dimIss).head); return; }
 
     /* ✦ เติม ShelfNo แยกตัวอักษรตาม Order (ถ้าเปิดสวิตช์ไว้)
        โหมด Shelf = "ตั้งเอง" → เปิดหน้าต่างให้เลือกตัวอักษรเองก่อน */
@@ -10685,6 +10685,7 @@ else setTimeout(init,600);
 })();
 
 window.SAWB_open=function(){ try{ switchMainTab('saw'); }catch(e){} };
+window.SAWB_busy=function(){ return !!SAWB.busy; };   /* v111 */
 window.SAWB_send=function(oids){
   if(Array.isArray(oids)){ SAWB.seq=oids.slice(); }
   try{ switchMainTab('saw'); }catch(e){}
@@ -11868,8 +11869,8 @@ function importFile(file){
     var dimIss = [];
     try{ dimIss = window.DIMCHK ? DIMCHK.check(rows) : []; }catch(e){ dimIss = []; }
     if(dimIss.length){
-      DIMCHK.ask({ list:dimIss, title:'ไฟล์ ' + file.name + ' มีขนาดตัดไม่ตรงกับขนาดสำเร็จ',
-        note:'ถ้านำเข้าแล้วส่งเข้าเลื่อย จะตัดตามขนาด Cut ในไฟล์ (เคสจริง: Finish 1150 แต่ Cut 2400 → ชิ้นงานยาว 2400) · แนะนำให้แก้ไฟล์ต้นทางก่อน',
+      DIMCHK.ask({ list:dimIss, title:'ไฟล์ ' + file.name + ' มี' + DIMCHK.text(dimIss).head,
+        note:'ถ้านำเข้าแล้วส่งเข้าเลื่อย จะตัดตามขนาดในไฟล์ (เคสจริง: ขนาดสำเร็จยาว 1150 แต่ขนาดตัด 2400 → ชิ้นงานยาว 2400) · แนะนำให้แก้ไฟล์ต้นทางก่อน',
         go:'นำเข้าทั้งที่รู้ว่าผิด', stop:'\u21a9 ไม่นำเข้า ไปแก้ไฟล์ก่อน' }).then(function(ok){ if(ok) startSave(); });
       return;
     }
@@ -11903,6 +11904,7 @@ function importFile(file){
     }   /* ปิด startSave() — v109 */
 
     function proceed(oid){
+    if(dimIss.length){ try{ DIMCHK.seen(oid); }catch(e){} }   /* v111: เพิ่งกดยืนยันตอนนำเข้า ไม่ต้องเด้งซ้ำตอนเปิด */
     var sets = {}, mats = {}, prods = {};
     rows.forEach(function(r){
       if(r['Item Id Set']) sets[r['Item Id Set']] = 1;
@@ -12839,6 +12841,7 @@ window.MBOM_run  = function(oids){
   run();
 };
 window.MBOM_state = function(){ return {on:MBOM.on, blank:MBOM.blank, sel:MBOM.seq.slice(), ax:MBOM.ax.length, fit:MBOM.fit.length}; };
+window.MBOM_busy = function(){ return !!MBOM.busy; };   /* v111: ให้ป๊อปอัปขนาดตัดผิดรอจนรวมเสร็จ */
 })();
 </script>
 
@@ -13399,7 +13402,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '110', D = '23/09/2026';
+  var V = '111', D = '24/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -18496,11 +18499,12 @@ function partGaps(){
 
 /* ══ v109: ตรวจขนาดตัด (Cut) / Prepare เทียบขนาดสำเร็จ (Finish) ═══════════════════════════════
    เคสจริง 23/09/2026 — Order นำเข้า "รพ.สารคาม_F10-12_กรุหัวเตียง": ไฟล์ต้นทางใส่ Panael_1 Finish 1000×1150
-   แต่ Cut 998×2400 (Prepare 1004×2406) · โปรแกรมส่ง Cut เข้าเลื่อยตามข้อมูล → ชิ้นงานถูกตัดยาว 2400 จริง 48 แผ่น
+   แต่ Cut 998×2400 (Prepare 1004×2406) · โปรแกรมส่ง Cut เข้าเลื่อยตามข้อมูล → ชิ้นงานถูกตัดยาว 2400 จริง 48 ชิ้น
    ข้อมูลจริงทั้งหมดในฐานข้อมูล (IMOS ~15,000 · BoardForge ~3,700 · นำเข้า ~1,300 แถว) Cut ต่างจาก Finish ไม่เกิน 4.6 มม.
    Prepare ต่างไม่เกิน 6 มม. → Cut ต่างเกิน 10 มม. / Prepare ต่างเกิน 20 มม. (ใหญ่กว่าหรือเล็กกว่า) ถือว่าข้อมูลผิดแน่นอน
-   Prepare เผื่อไว้กว้างกว่า เพราะค่าเผื่อแต่งขอบอาจปรับได้ในอนาคต (ไม่อยากให้เตือนงานที่ถูก) · ข้อมูลผิดจริงมักต่างเป็นร้อยมิล (สลับกว้าง/ยาวได้ ไม่นับว่าผิด)
-   ตรวจ 3 จุด: ตอนนำเข้าไฟล์ · ป้ายในตาราง BOM ไม้ · ก่อนส่งเข้า SAW/NC */
+   Prepare เผื่อไว้กว้างกว่า เพราะค่าเผื่อแต่งขอบอาจปรับได้ในอนาคต (ไม่อยากให้เตือนงานที่ถูก) · ข้อมูลผิดจริงมักต่างเป็นร้อยมิล
+   ตรวจ 3 จุด: ตอนนำเข้าไฟล์ · เปิด Order (ป๊อปอัป + ป้ายในแถบข้อมูล Order) · ก่อนส่งเข้า SAW/NC
+   v111: สรุปเป็น "รายการ" (ชิ้นงานแต่ละแบบ + จำนวนชิ้นของแบบนั้น) ไม่รวมยอดทุกแบบเป็นเลขเดียว (96 ทำให้เข้าใจผิดว่าชิ้นเดียวกันนับซ้ำ) */
 (function(){
   var TOL_CUT = 10, TOL_PREP = 20;
   function num(v){ var n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isFinite(n) ? n : NaN; }
@@ -18531,20 +18535,29 @@ function partGaps(){
     return out;
   }
   function f1(v){ return (isFinite(v) && v > 0) ? String(Math.round(v * 10) / 10) : '-'; }
+  function pad(s, n){ s = String(s); while(s.length < n) s += ' '; return s; }
+  function sz(w, l){ return pad(f1(w), 6) + ' × ' + pad(f1(l), 6); }
+  /* ข้อความรายการ: 1 รายการ = ชิ้นงาน 1 แบบ (PartID) พร้อมจำนวนชิ้นของแบบนั้น */
   function text(list, max){
     max = max || 10;
-    var n = 0; list.forEach(function(g){ n += g.n; });
-    var lines = list.slice(0, max).map(function(g){
-      return '• ' + g.pid + (g.name ? '  ' + g.name : '') + '   ×' + g.n + ' แผ่น'
-        + (g.ord ? '   [' + g.ord + ']' : (g.set ? '   [' + g.set + ']' : ''))
-        + '\n      Finish ' + f1(g.fw) + ' × ' + f1(g.fl)
-        + '   ·   Cut ' + f1(g.cw) + ' × ' + f1(g.cl) + (g.badC ? '  ⛔' : '')
-        + ((isFinite(g.pw) && g.pw > 0) ? ('   ·   Prepare ' + f1(g.pw) + ' × ' + f1(g.pl) + (g.badP ? '  ⛔' : '')) : '');
+    var lines = [];
+    list.slice(0, max).forEach(function(g, i){
+      lines.push((i + 1) + ') ' + (g.name || g.pid) + (g.name && g.pid ? '  (' + g.pid + ')' : '') + '  —  ' + g.n + ' ชิ้น'
+        + (g.ord ? '   [Order ' + g.ord + ']' : ''));
+      lines.push('     ขนาดสำเร็จ (Finish)  ' + sz(g.fw, g.fl));
+      if(isFinite(g.cw) && g.cw > 0) lines.push('     ขนาดตัด (Cut)       ' + sz(g.cw, g.cl) + (g.badC ? '  ⛔ ผิด' : '  ✓'));
+      if(isFinite(g.pw) && g.pw > 0) lines.push('     Prepare             ' + sz(g.pw, g.pl) + (g.badP ? '  ⛔ ผิด' : '  ✓'));
+      if(i < Math.min(list.length, max) - 1) lines.push('');
     });
-    if(list.length > max) lines.push('… และอีก ' + (list.length - max) + ' แบบ');
-    return { n:n, kinds:list.length, body:lines.join('\n') };
+    if(list.length > max) lines.push('', '… และอีก ' + (list.length - max) + ' รายการ');
+    var n = 0; list.forEach(function(g){ n += g.n; });
+    return { items:list.length, pieces:n, n:n, kinds:list.length, body:lines.join('\n'),
+             head:'ขนาดผิด ' + list.length + ' รายการ' };
   }
-  /* กล่องเตือน: ปุ่มหลัก (สีแดงทึบ) = ไม่ทำต่อ · ปุ่มรอง = ทำต่อทั้งที่รู้ · Esc = ไม่ทำต่อ · คลิกนอกกล่องไม่ปิด */
+  function crit(){ return 'เกณฑ์ (เทียบกับขนาดสำเร็จ): ขนาดตัดต่างเกิน ' + TOL_CUT + ' มม. หรือ Prepare ต่างเกิน ' + TOL_PREP
+                        + ' มม. — ใหญ่กว่าหรือเล็กกว่าก็นับ · งานปกติต่างกันไม่เกิน 6 มม.'; }
+  /* กล่องเตือน: ปุ่มหลัก (สีแดงทึบ) = ไม่ทำต่อ · ปุ่มรอง = ทำต่อทั้งที่รู้ · Esc = ไม่ทำต่อ · คลิกนอกกล่องไม่ปิด
+     o.info = true → กล่องแจ้งอย่างเดียว ปุ่มเดียว "รับทราบ" */
   function ask(o){
     return new Promise(function(res){
       var old = document.getElementById('dimAsk'); if(old) try{ old.parentNode.removeChild(old); }catch(e){}
@@ -18554,23 +18567,24 @@ function partGaps(){
       ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:2147483600;display:flex;'
         + "align-items:center;justify-content:center;padding:18px;font-family:-apple-system,'Sarabun',system-ui,sans-serif";
       var esc = function(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
-      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:760px;width:100%;max-height:88vh;display:flex;'
+      var btns = o.info
+        ? '<button id="dimStop" style="padding:9px 26px;border-radius:8px;border:none;background:#b91c1c;color:#fff;font-size:13px;'
+          + 'font-weight:800;cursor:pointer;font-family:inherit">' + esc(o.stop || 'รับทราบ') + '</button>'
+        : '<button id="dimGo" style="padding:9px 15px;border-radius:8px;border:1px solid #fca5a5;background:#fff;color:#b91c1c;'
+          + 'font-size:12.5px;cursor:pointer;font-family:inherit">' + esc(o.go) + '</button>'
+          + '<button id="dimStop" style="padding:9px 20px;border-radius:8px;border:none;background:#b91c1c;color:#fff;font-size:13px;'
+          + 'font-weight:800;cursor:pointer;font-family:inherit">' + esc(o.stop) + '</button>';
+      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:88vh;display:flex;'
         + 'flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.45)">'
         + '<div style="padding:14px 20px;background:#fef2f2;border-bottom:1px solid #fecaca;border-radius:14px 14px 0 0">'
-        +   '<div style="font-size:15px;font-weight:800;color:#b91c1c">⛔ ' + esc(o.title) + '</div>'
-        +   '<div style="font-size:12px;color:#64748b;margin-top:4px">เทียบกับขนาดสำเร็จ (Finish): Cut ต่างเกิน ' + TOL_CUT + ' มม. หรือ Prepare ต่างเกิน ' + TOL_PREP
-        +   ' มม. (ใหญ่กว่าหรือเล็กกว่าก็นับ) — ปกติต่างกันไม่เกิน 6 มม. · พบ ' + t.n + ' แผ่น (' + t.kinds + ' แบบ)</div></div>'
-        + '<div style="padding:12px 20px;overflow:auto;flex:1;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.65;'
+        +   '<div style="font-size:16px;font-weight:800;color:#b91c1c">⛔ ' + esc(o.title) + '</div>'
+        +   '<div style="font-size:12px;color:#64748b;margin-top:4px">' + esc(crit()) + '</div></div>'
+        + '<div id="dimBody" style="padding:14px 20px;overflow:auto;flex:1;font-family:Menlo,Consolas,monospace;font-size:12.5px;line-height:1.7;'
         +   'white-space:pre-wrap;color:#334155">' + esc(t.body) + '</div>'
         + '<div style="padding:10px 20px;font-size:12px;color:#7c2d12;background:#fff7ed;border-top:1px solid #fed7aa">'
-        +   esc(o.note || 'เลื่อยจะตัดตามขนาด Cut ในข้อมูล — ตรวจกับผู้ออกแบบ แล้วแก้ข้อมูลก่อน') + '</div>'
+        +   esc(o.note || 'เลื่อยจะตัดตามขนาดในข้อมูล — ตรวจกับผู้ออกแบบ แล้วแก้ข้อมูลก่อน') + '</div>'
         + '<div style="padding:12px 18px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;gap:9px;justify-content:flex-end;'
-        +   'border-radius:0 0 14px 14px">'
-        +   '<button id="dimGo" style="padding:9px 15px;border-radius:8px;border:1px solid #fca5a5;background:#fff;color:#b91c1c;'
-        +     'font-size:12.5px;cursor:pointer;font-family:inherit">' + esc(o.go) + '</button>'
-        +   '<button id="dimStop" style="padding:9px 20px;border-radius:8px;border:none;background:#b91c1c;color:#fff;font-size:13px;'
-        +     'font-weight:800;cursor:pointer;font-family:inherit">' + esc(o.stop) + '</button>'
-        + '</div></div>';
+        +   'border-radius:0 0 14px 14px">' + btns + '</div></div>';
       document.body.appendChild(ov);
       var done = false;
       function close(v){
@@ -18581,32 +18595,44 @@ function partGaps(){
       }
       function key(e){ if(e.key === 'Escape'){ e.preventDefault(); close(false); } }
       document.addEventListener('keydown', key, true);
-      ov.querySelector('#dimGo').onclick = function(){ close(true); };
+      var g = ov.querySelector('#dimGo'); if(g) g.onclick = function(){ close(true); };
       ov.querySelector('#dimStop').onclick = function(){ close(false); };
       try{ ov.querySelector('#dimStop').focus(); }catch(e){}
     });
   }
-  window.DIMCHK = { check:check, text:text, ask:ask, TOL_CUT:TOL_CUT, TOL_PREP:TOL_PREP };
+  /* เปิด Order ที่มีขนาดผิด → ป๊อปอัปแจ้งครั้งเดียวต่อ Order ต่อการเปิดโปรแกรม (ป้ายในแถบข้อมูลยังอยู่ กดดูซ้ำได้) */
+  var seen = {};
+  function seenMark(k){ if(k) seen[k] = 1; }
+  function show(list, title){
+    return ask({ info:true, list:list, title:title || ('Order นี้มี' + text(list).head),
+      note:'ถ้าส่งเข้า SAW/NC เลื่อยจะตัดตามขนาดในข้อมูล (ไม่ใช่ขนาดจริง) — ตรวจกับผู้ออกแบบ แก้ไฟล์ต้นทาง แล้วนำเข้าใหม่',
+      stop:'รับทราบ' });
+  }
+  window.DIMCHK = { check:check, text:text, ask:ask, show:show, seen:seenMark, isSeen:function(k){ return !!seen[k]; },
+                    crit:crit, TOL_CUT:TOL_CUT, TOL_PREP:TOL_PREP };
 })();
 
-/* v109: ป้ายแดงในตาราง BOM ไม้ — มีชิ้นขนาดตัดไม่ตรงขนาดสำเร็จ · กดดูรายชิ้นได้ */
+/* v109/v111: ป้ายแดงในแถบข้อมูล Order (ข้าง Board / Edge / Fitting) — เดิมอยู่ใต้ "แสดง N ชิ้น" แล้วทับตัวเลข
+   + ป๊อปอัปแจ้งตอนเปิด Order ที่มีขนาดผิด (รอให้เปิดนิ่งก่อน · ไม่เด้งระหว่างรวม BOM / ส่ง SAW/NC) */
+var _dimT = null;
+function _dimKey(rows){
+  var o = []; (rows || []).forEach(function(r){ var m = r && r.__mbOrder; if(m && o.indexOf(m) < 0) o.push(m); });
+  if(o.length > 1) return 'merge:' + o.join('+');
+  try{ return String(currentOrder || ''); }catch(e){ return ''; }
+}
 function paintDimBadge(){
-  var host = document.getElementById('cntAX');
-  if(!host || !host.parentNode || !window.DIMCHK) return false;
+  if(!window.DIMCHK) return false;
+  var bar = document.querySelector('#ibar .bst');
   var b = document.getElementById('__axDim');
   if(!b){
     b = document.createElement('span');
     b.id = '__axDim';
-    b.style.cssText = 'margin-left:8px;font-size:11px;font-weight:800;padding:2px 9px;border-radius:10px;white-space:nowrap;'
-      + 'background:#dc2626;color:#fff;cursor:pointer';
-    b.onclick = function(){
-      var L = b.__list || []; if(!L.length) return;
-      var t = DIMCHK.text(L, 30);
-      alert('⛔ ขนาดตัดไม่ตรงกับขนาดสำเร็จ ' + t.n + ' แผ่น (' + t.kinds + ' แบบ)\n\n' + t.body
-        + '\n\nเกณฑ์เทียบกับ Finish: Cut ต่างเกิน ' + DIMCHK.TOL_CUT + ' มม. หรือ Prepare ต่างเกิน ' + DIMCHK.TOL_PREP + ' มม. (ใหญ่กว่าหรือเล็กกว่า)\nถ้าส่งเข้าเลื่อย จะตัดตามขนาดในข้อมูล (ไม่ใช่ขนาดจริง)\nแก้ข้อมูลต้นทาง แล้วนำเข้าใหม่ก่อนส่ง SAW/NC');
-    };
-    host.parentNode.appendChild(b);
+    b.style.cssText = 'margin-left:12px;font-size:11px;font-weight:800;padding:2px 10px;border-radius:10px;white-space:nowrap;'
+      + 'background:#dc2626;color:#fff;cursor:pointer;display:none';
+    b.onclick = function(){ var L = b.__list || []; if(L.length) DIMCHK.show(L); };
   }
+  if(bar && b.parentNode !== bar) bar.appendChild(b);
+  if(!b.parentNode) return false;
   var rows = [];
   try{ rows = (typeof buildAXRows === 'function') ? (buildAXRows() || []) : []; }catch(e){ rows = []; }
   var L = DIMCHK.check(rows);
@@ -18614,8 +18640,27 @@ function paintDimBadge(){
   if(!L.length){ b.style.display = 'none'; return true; }
   var t = DIMCHK.text(L, 8);
   b.style.display = '';
-  b.textContent = '⛔ ขนาดตัดไม่ตรง ' + t.n + ' แผ่น';
-  b.title = 'เทียบกับขนาดสำเร็จ (Finish): Cut ต่างเกิน ' + DIMCHK.TOL_CUT + ' มม. หรือ Prepare ต่างเกิน ' + DIMCHK.TOL_PREP + ' มม. — กดดูรายชิ้น\n\n' + t.body;
+  /* ไม่เกิน 2 รายการ → บอกชื่อชิ้น + จำนวนชิ้นบนป้ายเลย (เช่น Panael_1 ×48 · Panael_2 ×48) · มากกว่านั้น → บอกจำนวนรายการ */
+  b.textContent = '⛔ ' + (L.length <= 2
+    ? ('ขนาดผิด: ' + L.map(function(g){ return (g.name || g.pid) + ' ×' + g.n; }).join(' · '))
+    : t.head);
+  b.title = DIMCHK.crit() + '\nกดเพื่อดูรายการ\n\n' + t.body;
+  /* ป๊อปอัป: Order นี้ยังไม่เคยแจ้ง · เปิดนิ่ง 0.7 วิ · ไม่มีกล่องอื่นเปิดอยู่ · ไม่ได้กำลังรวม BOM / ส่ง SAW/NC */
+  var key = _dimKey(rows);
+  if(key && !DIMCHK.isSeen(key)){
+    clearTimeout(_dimT);
+    _dimT = setTimeout(function(){
+      try{
+        if(document.getElementById('dimAsk')) return;
+        if((window.MBOM_busy && MBOM_busy()) || (window.SAWB_busy && SAWB_busy())) return;
+        var rows2 = (typeof buildAXRows === 'function') ? (buildAXRows() || []) : [];
+        if(_dimKey(rows2) !== key || DIMCHK.isSeen(key)) return;
+        var L2 = DIMCHK.check(rows2); if(!L2.length) return;
+        DIMCHK.seen(key);
+        DIMCHK.show(L2);
+      }catch(e){}
+    }, 700);
+  }
   return true;
 }
 
