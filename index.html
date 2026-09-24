@@ -4592,7 +4592,7 @@ function renderBOM() {
         + ' style="background:var(--accent-glow);border:1px solid rgba(0,122,255,0.2);border-radius:4px;padding:1px 5px;font-size:11px;color:var(--accent);cursor:pointer;white-space:nowrap;line-height:1.4">⊕</button>';
       var delBtn   = '<button class="bom-del-btn" onclick="bomDeleteRow(\''+rowKey+'\')" title="ลบแถวนี้">✕</button>';
 
-      tbody += '<tr style="'+rowBg+rowHide+'">'
+      tbody += '<tr data-mbo="'+esc(r.__mbOrder || '')+'" style="'+rowBg+rowHide+'">'   /* v115: บอก Order ของแถวเอง (โหมดรวม) */
         + '<td>'+typeBadge+'</td>'
         + '<td>'+codeInput+'</td>'
         + '<td>'+nameEl+'</td>'
@@ -4623,7 +4623,7 @@ function renderBOM() {
       var editBadge = (!isManual && (isCodeChanged||isQtyChanged))
         ? ' <span style="font-size:9px;background:rgba(255,204,0,0.2);color:#996800;border:1px solid rgba(240,168,0,0.3);border-radius:4px;padding:1px 5px;font-weight:600">✎</span>' : '';
       var _k = _bomRowKey(r), _on = !!_selMap[_k];
-      tbody += '<tr style="'+rowBg+(_on ? 'background:rgba(124,58,237,0.07);' : '')+'">'
+      tbody += '<tr data-mbo="'+esc(r.__mbOrder || '')+'" style="'+rowBg+(_on ? 'background:rgba(124,58,237,0.07);' : '')+'">'   /* v115 */
         + '<td style="text-align:center"><input type="checkbox" class="bomSel" data-k="'+esc(_k)+'"'+(_on ? ' checked' : '')+' onclick="bomSelToggle(this)" style="cursor:pointer;width:15px;height:15px"></td>'
         + '<td>'+typeBadge+editBadge+'</td>'
         + '<td>'+codeDisp+'</td>'
@@ -12939,13 +12939,17 @@ function patchFitTable(){
   th.style.cssText = 'font-size:10px;white-space:nowrap';
   hr.insertBefore(th, hr.children[1] || null);
 
+  /* v115: อ่าน Order จากแถวเอง (data-mbo) — เดิมจับคู่ตามลำดับแถวกับ MBOM.fit
+     พอค้นหา/กรอง/ซ่อนแถว ลำดับเลื่อน → ป้าย Order ผิดแถว (ค้น FITCP00012 เจอ SHOE + WD1 แต่ขึ้น SHOE ทั้งคู่) */
   var body = tbl.querySelectorAll('tbody tr');
   var idx = 0;
   Array.prototype.forEach.call(body, function(tr){
     if(tr.children.length < 2) return;
-    var r = MBOM.fit[idx++];
+    var mo = tr.getAttribute('data-mbo');
+    var r = (mo !== null) ? { __mbOrder:mo } : MBOM.fit[idx];
+    idx++;
     var td = document.createElement('td');
-    td.innerHTML = r ? '<span class="mbtag">' + esc(r.__mbOrder || '') + '</span>' : '';
+    td.innerHTML = (r && r.__mbOrder) ? '<span class="mbtag">' + esc(r.__mbOrder || '') + '</span>' : '';
     td.style.cssText = 'font-size:10px;white-space:nowrap';
     tr.insertBefore(td, tr.children[1] || null);
   });
@@ -13532,7 +13536,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '114', D = '24/09/2026';
+  var V = '115', D = '24/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
