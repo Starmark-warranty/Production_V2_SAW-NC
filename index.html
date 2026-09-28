@@ -14175,7 +14175,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '120', D = '28/09/2026';
+  var V = '121', D = '28/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -21291,7 +21291,7 @@ window.XC_state = function(){
            ทำเฉพาะเมื่อมีเครื่อง Windows 7 ใช้งาน (ป้าย _changes/_sxl/need-plus.json)
        สำเนาใช้เวลาเดิมในชื่อ เนื้อหาเหมือนต้นฉบับทุกไบต์ · เก็บ 3 รุ่นต่อกลุ่มต่อแบบชื่อ (เหมือนเดิม)
      • เครื่องช่วยแปลงเขียน _changes/_sxl/relay.json ทุก 1 นาที · เครื่อง Windows 7 ไม่เห็นไฟล์นี้เปลี่ยนเกิน 5 นาที
-       → ขึ้นป้ายเตือนมุมซ้ายล่าง (ข้อมูลที่เครื่องอื่นบันทึกอาจยังไม่ขึ้นที่เครื่องนี้)
+       → ขึ้นป้ายเตือน (ข้อมูลที่เครื่องอื่นบันทึกอาจยังไม่ขึ้นที่เครื่องนี้) · v121: ป้ายอยู่ในแถบบนถัดจากปุ่มไฟล์กลาง (dock_module)
      ══════════════════════════════════════════════════════════════════════ -->
 <style>
 #w7Pill{position:fixed;left:256px;bottom:62px;z-index:8990;display:none;align-items:center;gap:7px;max-width:360px;box-sizing:border-box;
@@ -21387,12 +21387,12 @@ async function relayPass(){
 var W = { since:0, marked:0, lastText:null, seen:false, lastChange:0, warn:false };
 var PILL = null;
 function pill(on){
-  if(!on){ if(PILL) PILL.classList.remove('on'); return; }
+  if(!on){ if(PILL && PILL.classList.contains('on')){ PILL.classList.remove('on'); try{ if(window.SXL_dock) window.SXL_dock(); }catch(e){} } return; }
   if(!PILL || !document.body.contains(PILL)){
     PILL = document.createElement('div');
     PILL.id = 'w7Pill';
-    PILL.innerHTML = '<span class="w7-dot"></span><span>Windows 7: ยังไม่พบเครื่องช่วยแปลงไฟล์ — ข้อมูลจากเครื่องอื่นอาจยังไม่ขึ้น</span>';
-    PILL.title = 'กดเพื่ออ่านรายละเอียด';
+    PILL.innerHTML = '<span class="w7-dot"></span><span><span class="w7-a">Windows 7: </span><span class="w7-m">ยังไม่พบเครื่องช่วยแปลงไฟล์</span><span class="w7-s">Win7</span><span class="w7-b"> — ข้อมูลจากเครื่องอื่นอาจยังไม่ขึ้น</span></span>';
+    PILL.title = 'Windows 7: ยังไม่พบเครื่องช่วยแปลงไฟล์ — ข้อมูลจากเครื่องอื่นอาจยังไม่ขึ้น · กดเพื่ออ่านรายละเอียด';
     PILL.addEventListener('click', function(){
       alert('Chrome บนเครื่องนี้ (Windows 7) เปิดไฟล์ที่ชื่อมีเครื่องหมาย ~ ไม่ได้\n\n'
         + 'เครื่องนี้บันทึกได้ตามปกติ แต่ของที่ StarNexus และเครื่อง Windows 10/11 บันทึก จะขึ้นที่เครื่องนี้ได้'
@@ -21402,6 +21402,7 @@ function pill(on){
     document.body.appendChild(PILL);
   }
   PILL.classList.add('on');
+  try{ if(window.SXL_dock) window.SXL_dock(); }catch(e){}
 }
 async function w7Pass(){
   if(!SXL.dir) return;
@@ -21571,6 +21572,156 @@ sxlSync = async function(force, why){
   }
 };
 window.SXL_loadState = function(){ return JOB ? { why: JOB.why, label: JOB.label, pct: Math.floor(PCT), i: JOB.i, n: JOB.n } : null; };
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v121 — ปุ่ม "ไฟล์กลาง · n/5 ตาราง" เป็นแท็บตายตัวที่มุมซ้ายบน (ในแถบบน ถัดจากจุดสามสี)
+     เดิมลอยอยู่ล่างซ้าย (left 256px) ทับตาราง/แถบเลื่อน ลากย้ายไม่ได้
+     • ย้ายปุ่มเดิม (#sxLocalTop — ตัวเดียวกัน กดแล้วเปิดหน้าไฟล์กลางเหมือนเดิม สีส้มเมื่อตารางหลักขาด) เข้าไปในแถบบน
+       แถบบนเป็น flex — ชื่อโปรแกรมที่อยู่กลางจะหลบให้เอง ไม่ทับกัน
+     • ป้ายเตือน Windows 7 (ถ้ามี) อยู่ถัดจากแท็บไฟล์กลาง ไม่ลอยทับตารางเช่นกัน
+     • ที่ในแถบบนไม่พอ (จอแคบ) → ย่อข้อความทีละขั้น: ซ่อนคำว่า "ตาราง" → ป้าย Win7 สั้นลง → เหลือแค่ตัวเลข
+       ข้อความเต็มยังอยู่ในปุ่ม (textContent เดิมทุกตัวอักษร) และในคำอธิบายตอนชี้เมาส์
+     • ถ้าปุ่ม "ตั้งค่า ⇄ ไฟล์" (ลอย · ลากย้ายได้) ถูกวางทับตรงนั้น → แท็บไฟล์กลางขยับไปต่อข้างขวาของปุ่มนั้นเอง
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+.tb > #sxLocalTop{position:static !important;left:auto !important;top:auto !important;right:auto !important;bottom:auto !important;
+  flex-shrink:0;margin:0;padding:4px 11px !important;border-radius:8px !important;
+  font:600 12px/18px -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif !important;white-space:nowrap;
+  box-shadow:0 1px 2px rgba(0,0,0,.18) !important;z-index:auto !important;transition:filter .13s}
+.tb > #sxLocalTop:hover{filter:brightness(1.15)}
+.tb.sxl-dock::before{margin-right:42px}
+.tb > #w7Pill{position:static !important;flex-shrink:0;max-width:none;box-shadow:none;padding:3px 10px;border-radius:8px;
+  white-space:nowrap;font-size:11.5px;line-height:18px}
+.tb > #w7Pill .w7-b{display:none}
+#w7Pill .w7-s{display:none}
+.tb.sxl-f1 > #sxLocalTop .sxl-x,.tb.sxl-f1 > #sxLocalTop .sxl-d{display:none}
+.tb.sxl-f2 > #w7Pill .w7-a{display:none}
+.tb.sxl-f3 > #w7Pill .w7-m{display:none}
+.tb.sxl-f3 > #w7Pill .w7-s{display:inline}
+.tb.sxl-f4 > #sxLocalTop .sxl-p{display:none}
+.tb.sxl-f5 > #w7Pill .w7-s{display:none}
+.tb.sxl-f5 > #w7Pill{padding:3px 7px}
+</style>
+<script>
+(function(){
+'use strict';
+if(typeof SXL === 'undefined' || typeof sxlRender !== 'function' || SXL.__v121dock) return;
+SXL.__v121dock = true;
+
+var MAXLV = 5, LV = 0;
+function chip(){ return document.getElementById('sxLocalTop'); }
+function bar(){ return document.querySelector('.tb'); }
+function pill(){ return document.getElementById('w7Pill'); }
+function title(tb){ for(var c = tb.firstElementChild; c; c = c.nextElementSibling) if(c.classList.contains('tt')) return c; return null; }
+function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]; }); }
+
+/* ข้อความในแท็บ: แบ่งเป็นช่วง ๆ ไว้ซ่อนตอนที่ไม่พอ — textContent เหมือนเดิมทุกตัวอักษร (sxlRender เขียนใหม่ทุกครั้ง) */
+function dress(){
+  var b = chip(); if(!b) return;
+  var t = b.textContent || '';
+  if(b.__sxlT === t && b.firstElementChild) return;
+  var m = /^(ไฟล์กลาง)( ·)( )(\d+\/\d+)( ตาราง)?([\s\S]*)$/.exec(t);
+  b.innerHTML = !m ? esc(t)
+    : '<span class="sxl-p">' + m[1] + '<span class="sxl-d">' + m[2] + '</span>' + m[3] + '</span>' + m[4]
+      + (m[5] ? '<span class="sxl-x">' + m[5] + '</span>' : '') + esc(m[6]);
+  b.__sxlT = t;
+  b.title = t + '\nไฟล์กลาง (ที่เก็บข้อมูล) — อ่านครบกี่ตาราง · กดเพื่อเลือกโฟลเดอร์ Server / เชื่อมตำแหน่งที่จำไว้ / อ่านไฟล์ล่าสุด';
+}
+
+/* ชื่อโปรแกรมตรงกลางยังอยู่บรรทัดเดียวและไม่ล้นกรอบไหม */
+function fits(tt){
+  var r = tt.getBoundingClientRect();
+  if(!r.width) return true;
+  var lo = Infinity, hi = -Infinity, bad = false;
+  function add(q){
+    if(!q.width && !q.height) return;
+    var cy = q.top + q.height / 2;
+    if(cy < lo) lo = cy;
+    if(cy > hi) hi = cy;
+    if(q.left < r.left - 1 || q.right > r.right + 1) bad = true;
+  }
+  for(var n = tt.firstChild; n; n = n.nextSibling){
+    var rs = null;
+    if(n.nodeType === 3){
+      if(!/\S/.test(n.nodeValue)) continue;
+      var rg = document.createRange(); rg.selectNodeContents(n); rs = rg.getClientRects();
+    }else if(n.nodeType === 1){
+      var cs = getComputedStyle(n);
+      if(cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') continue;
+      rs = n.getClientRects();
+    }
+    if(rs) for(var i = 0; i < rs.length; i++) add(rs[i]);
+  }
+  return !bad && (hi === -Infinity || hi - lo <= 10);
+}
+function setLv(tb, n){
+  for(var k = 1; k <= MAXLV; k++){ var on = k <= n; if(tb.classList.contains('sxl-f' + k) !== on) tb.classList.toggle('sxl-f' + k, on); }
+  LV = n;
+}
+/* ย่อข้อความทีละขั้นจนชื่อโปรแกรมพอดี (ลองจากเต็มก่อนทุกครั้ง — จอกว้างขึ้นก็กลับเป็นข้อความเต็ม) */
+function fit(){
+  var tb = bar(), b = chip();
+  if(!tb || !b || b.parentNode !== tb) return;
+  var tt = title(tb);
+  if(!tt){ setLv(tb, 0); return; }
+  for(var n = 0; n <= MAXLV; n++){ setLv(tb, n); if(fits(tt)) return; }
+}
+/* ปุ่ม "ตั้งค่า ⇄ ไฟล์" ทับแท็บอยู่ → ขยับแท็บไปต่อข้างขวา */
+function place(){
+  var b = chip(); if(!b || b.parentNode !== bar()) return false;
+  var st = document.getElementById('__stSetBtn'), want = 0;
+  if(st){
+    var old = b.style.marginLeft;
+    b.style.marginLeft = '0px';
+    var r = st.getBoundingClientRect(), c = b.getBoundingClientRect();
+    if(r.width && r.bottom > c.top && r.top < c.bottom && r.right > c.left - 4 && r.left < c.right + 4) want = Math.ceil(r.right + 8 - c.left);
+    b.style.marginLeft = old;
+  }
+  var v = want > 0 ? want + 'px' : '0px';
+  if(b.style.marginLeft === v) return false;
+  b.style.marginLeft = v;
+  return true;
+}
+function dock(){
+  var b = chip(), tb = bar();
+  if(!b || !tb) return false;
+  if(b.parentNode !== tb) tb.insertBefore(b, tb.firstChild);        /* แท็บแรกของแถบบน (ถัดจากจุดสามสี) */
+  if(!tb.classList.contains('sxl-dock')) tb.classList.add('sxl-dock');
+  var p = pill();
+  if(p && b.nextSibling !== p) tb.insertBefore(p, b.nextSibling);    /* ป้าย Windows 7 ต่อท้ายแท็บ */
+  dress();
+  place();
+  fit();
+  if(place()) fit();
+  return true;
+}
+window.SXL_dock = function(){ try{ return dock(); }catch(e){ return false; } };
+window.SXL_dockState = function(){
+  var b = chip(), tb = bar(), p = pill(), tt = tb && title(tb);
+  function R(e){ if(!e) return null; var r = e.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), r: Math.round(r.right), b: Math.round(r.bottom) }; }
+  return { docked: !!(b && tb && b.parentNode === tb), level: LV, chip: R(b), pill: p && p.classList.contains('on') ? R(p) : null,
+    pillIn: !!(p && tb && p.parentNode === tb), tt: R(tt), fits: tt ? fits(tt) : null, shift: b ? b.style.marginLeft : '',
+    text: b ? b.innerText : '', full: b ? b.textContent : '' };
+};
+
+/* sxlRender เขียนข้อความใหม่ทุกครั้ง → จัดที่/แต่งข้อความตามทุกครั้ง */
+var orig = sxlRender;
+sxlRender = function(){
+  var r = orig.apply(this, arguments);
+  try{ dock(); }catch(e){}
+  return r;
+};
+(function wait(n){
+  if(window.SXL_dock()) return;
+  if(n < 200) setTimeout(function(){ wait(n + 1); }, 100);
+})(0);
+var rq = 0;
+function later(){ if(rq) return; rq = requestAnimationFrame(function(){ rq = 0; window.SXL_dock(); }); }
+window.addEventListener('resize', later);
+document.addEventListener('mouseup', function(){ setTimeout(later, 30); }, true);    /* ลากปุ่มตั้งค่าเสร็จ */
+document.addEventListener('touchend', function(){ setTimeout(later, 30); }, true);
+setInterval(function(){ if(!document.hidden) window.SXL_dock(); }, 2000);          /* ข้อความในแถบบนเปลี่ยน / ปุ่มตั้งค่าเกิดทีหลัง */
 })();
 </script>
 
