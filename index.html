@@ -9161,6 +9161,11 @@ function sxlParseCSV(text,rowBase){
   i+=(c===13&&text.charCodeAt(i+1)===10)?2:1;if(keep(row))rows.push(row);row=[]}
  if(row.length&&keep(row))rows.push(row);
  return rows}
+/* v120: นับไบต์ที่อ่านแล้ว — หน้าต่างสถานะการโหลดใช้แสดงเปอร์เซ็นต์ (SXL.onBytes ตั้งไว้เฉพาะตอนโหลดรอบใหญ่) */
+function sxlCountBytes(t,size){var n=0,y=Date.now();return new TransformStream({transform:function(c,ctl){n+=c.byteLength||0;ctl.enqueue(c);if(!SXL.onBytes)return;
+ try{SXL.onBytes(t,n,size)}catch(e){}
+ /* ข้อมูลในเครื่องอ่านเร็วจนตัวแยก CSV ทำงานรวดเดียว จอค้าง — พักให้จอวาดทุก ~80 ms (เฉพาะตอนมีหน้าต่างสถานะ) */
+ if(Date.now()-y>80){y=Date.now();return new Promise(function(r){setTimeout(r,0)})}}})}
 async function sxlReadTable(T,file){
  var cols=null,rows=[],keys=(T.key&&T.uniq!==false)?new Set():null,num=T.num||[],rowNo=1,buf='',first=true;
  var take=function(raw){raw.forEach(function(r){
@@ -9172,7 +9177,7 @@ async function sxlReadTable(T,file){
   if(keys){var k=o[T.key];if(k==null||keys.has(String(k)))throw Error(T.key+' ว่างหรือซ้ำที่แถว '+rowNo);keys.add(String(k))}
   rows.push(o)})};
  /* อ่านเป็นก้อน ตัดที่ขึ้นบรรทัดใหม่ตัวสุดท้ายที่ไม่อยู่ในเครื่องหมายคำพูด (ไล่ต่อจากจุดเดิม ไม่สแกนซ้ำ) */
- var rd=file.stream().pipeThrough(new TextDecoderStream()).getReader(),pos=0,inQ=false,last=-1;
+ var rd=file.stream().pipeThrough(sxlCountBytes(T.t,file.size)).pipeThrough(new TextDecoderStream()).getReader(),pos=0,inQ=false,last=-1;
  for(;;){var x=await rd.read();if(x.done)break;buf+=x.value;
   if(first){buf=buf.replace(/^\uFEFF/,'');first=false}
   for(var n=buf.length;pos<n;pos++){var c=buf.charCodeAt(pos);if(c===34)inQ=!inQ;else if(c===10&&!inQ)last=pos}
@@ -9298,7 +9303,22 @@ function sxlBucketOf(T,r){var b=(T.w&&T.w.bucket)||'key';
  return 'k:'+String(r[T.key])}
 function sxlBf(bucket){var s=bucket.slice(2).replace(/[^A-Za-z0-9._\-฀-๿]+/g,'_').slice(0,80)||'_';return s+'~'+sxlH8(bucket)}
 function sxlTs(){return ('00000000'+Date.now().toString(36)).slice(-9)+'-'+(Math.random().toString(36)+'0000').slice(2,6)}
-var SXL_VER_RE=/^(.+~[0-9a-f]{8})@([0-9a-z]{9}-[0-9a-z]{4})\.json$/;
+var SXL_VER_RE=/^(.+)([~+])([0-9a-f]{8})@([0-9a-z]{9}-[0-9a-z]{4})\.json$/;
+/* v120: ชื่อไฟล์ใน _changes มี 2 แบบ — "กลุ่ม~แฮช@เวลา.json" (เดิม) · "กลุ่ม+แฮช@เวลา.json" (Chrome บน Windows 7 = รุ่น 109 ไม่ยอมให้ชื่อมี ~)
+   กุญแจในหน่วยความจำใช้แบบ ~ เสมอ (= sxlBf) · รุ่นไหนใหม่กว่าดูจากเวลาในชื่อ (สองแบบชื่อเวลาเดียวกัน = ไฟล์เดียวกัน) */
+function sxlVer(n){var m=SXL_VER_RE.exec(n);return m?{key:m[1]+'~'+m[3],ts:m[4],plus:m[2]==='+'}:null}
+function sxlTsOf(n){n=String(n);var i=n.lastIndexOf('@');return i<0?'':n.slice(i+1,i+15)}
+function sxlIsPlus(n){return /\+[0-9a-f]{8}(@|$)/.test(String(n))}
+function sxlAsPlus(n){return String(n).replace(/~([0-9a-f]{8})(@|$)/,'+$1$2')}
+function sxlAsTilde(n){return String(n).replace(/\+([0-9a-f]{8})(@|$)/,'~$1$2')}
+/* เวลาในชื่อไฟล์ต้องใหม่กว่ารุ่นที่เอามาแก้เสมอ — ถ้านาฬิกาเครื่องนี้ช้ากว่าเครื่องที่บันทึกรุ่นก่อน (หรือบันทึกซ้ำในมิลลิวินาทีเดียวกัน)
+   ไฟล์ใหม่จะดูเก่ากว่าแล้วไม่ถูกใช้ → ขยับเวลาในชื่อให้เลยรุ่นก่อน 1 มิลลิวินาที */
+function sxlTsAfter(prev){var t=sxlTs();if(prev&&t<=prev){var ms=parseInt(prev.slice(0,9),36)+1;t=('00000000'+ms.toString(36)).slice(-9)+t.slice(9)}return t}
+/* เบราว์เซอร์นี้ยอมให้ชื่อไฟล์มี ~ ไหม — ถามชื่อที่ไม่มีอยู่จริง: ชื่อใช้ได้ = NotFoundError · ชื่อต้องห้าม = TypeError */
+async function sxlPlusProbe(){if(SXL.plus!=null||!SXL.dir)return !!SXL.plus;
+ try{await SXL.dir.getFileHandle('sxl~probe.json');SXL.plus=false}
+ catch(e){if(e&&e.name==='TypeError')SXL.plus=true;else if(e&&e.name==='NotFoundError')SXL.plus=false}   /* อย่างอื่น (เช่นสิทธิ์) = ยังไม่รู้ ถามใหม่รอบหน้า */
+ return !!SXL.plus}
 function sxlIsJ(T,c){return (T.json||[]).indexOf(c)>=0||(T.jsonish||[]).indexOf(c)>=0}
 function sxlStrip(r){if(!r)return null;var o={};for(var k in r)if(k.indexOf('__')!==0)o[k]=r[k];return o}
 /* ค่าจากโปรแกรม → แถวในหน่วยความจำ (คอลัมน์ JSON เก็บเป็นข้อความ เหมือนที่อ่านจาก CSV) */
@@ -9327,13 +9347,15 @@ function sxlRebuild(T,S){
 async function sxlScanOver(T,S,only){
  var d=await sxlOverDir(T.t,false);if(!d)return false;
  var latest={},all={};
- for await(var ent of d.entries()){if(ent[1].kind!=='file')continue;var m=SXL_VER_RE.exec(ent[0]);if(!m)continue;
-  (all[m[1]]=all[m[1]]||[]).push(ent[0]);if(!latest[m[1]]||ent[0]>latest[m[1]])latest[m[1]]=ent[0]}
- S.names=all;var ch=false;
- for(var bf in latest){if(only&&!only.has(bf))continue;var cur=S.over.get(bf);if(cur&&cur.name>=latest[bf])continue;
-  try{var f=await (await d.getFileHandle(latest[bf])).getFile(),o=JSON.parse(await f.text());
-   S.over.set(bf,{bucket:o.bucket,name:latest[bf],at:o.at||'',by:o.by||'',rows:(o.rows||[]).map(function(x){return sxlFileToRaw(T,x)})});ch=true}
-  catch(e){console.warn('[ไฟล์กลาง] อ่าน',T.t,latest[bf],'ไม่ได้ — รอบหน้าลองใหม่',e&&e.message)}}
+ for await(var ent of d.entries()){if(ent[1].kind!=='file')continue;var v=sxlVer(ent[0]);if(!v)continue;
+  (all[v.key]=all[v.key]||[]).push(ent[0]);var L=latest[v.key];
+  if(!L||v.ts>L.ts||(v.ts===L.ts&&L.plus&&!v.plus))latest[v.key]={name:ent[0],ts:v.ts,plus:v.plus}}
+ S.names=all;var ch=false,todo=[],done=0;
+ for(var bf in latest){if(only&&!only.has(bf))continue;var cur=S.over.get(bf),L=latest[bf];if(cur&&sxlTsOf(cur.name)>=L.ts)continue;todo.push(bf)}
+ for(var bf of todo){var L=latest[bf];if(SXL.onOver){try{SXL.onOver(T.t,++done,todo.length)}catch(e){}}
+  try{var f=await (await d.getFileHandle(L.name)).getFile(),o=JSON.parse(await f.text());
+   S.over.set(bf,{bucket:o.bucket,name:L.name,at:o.at||'',by:o.by||'',rows:(o.rows||[]).map(function(x){return sxlFileToRaw(T,x)})});ch=true}
+  catch(e){console.warn('[ไฟล์กลาง] อ่าน',T.t,L.name,'ไม่ได้ — รอบหน้าลองใหม่',e&&e.message)}}
  if(ch)sxlRebuild(T,S);return ch}
 function sxlE(m,code,status){return {data:null,error:{message:m,code:code||'SXL'},count:null,status:status||400}}
 async function sxlWrite(st){
@@ -9367,16 +9389,21 @@ async function sxlWriteIn(T,S,st){
   var cur=new Map();byB.forEach(function(_,b){cur.set(b,[])});
   S.rows.forEach(function(r){var b=sxlBucketOf(T,r);var a=cur.get(b);if(a)a.push(r)});
   var dir=await sxlOverDir(T.t,true),made=[];
+  await sxlPlusProbe();
   for(var ent of byB){var b=ent[0],x=ent[1];
    var snap=cur.get(b).filter(function(r){var k=String(r[K]);return !x.del.has(k)&&!x.put.has(k)});x.put.forEach(function(r){snap.push(r)});
-   var bf=sxlBf(b),name=bf+'@'+sxlTs()+'.json';
+   var bf=sxlBf(b),o0=S.over.get(bf),ts=sxlTsAfter(o0?sxlTsOf(o0.name):''),name=(SXL.plus?sxlAsPlus(bf):bf)+'@'+ts+'.json';
    var body=JSON.stringify({v:1,table:T.t,bucket:b,at:now,by:SXL.machine,rows:snap.map(function(r){return sxlRawToFile(T,r)})});
-   var fh=await dir.getFileHandle(name,{create:true}),w=await fh.createWritable();await w.write(body);await w.close();
+   var fh;try{fh=await dir.getFileHandle(name,{create:true})}
+   catch(e){if(SXL.plus||!(e&&e.name==='TypeError'))throw e;SXL.plus=true;name=sxlAsPlus(bf)+'@'+ts+'.json';fh=await dir.getFileHandle(name,{create:true})}
+   var w=await fh.createWritable();await w.write(body);await w.close();
    S.over.set(bf,{bucket:b,name:name,at:now,by:SXL.machine,rows:snap});made.push([bf,name])}
   sxlRebuild(T,S);S.nW=(S.nW||0)+changes.size;
   /* เก็บ 3 รุ่นล่าสุดต่อกลุ่ม ที่เหลือลบ (ลบไม่ได้ก็ไม่เป็นไร) */
-  made.forEach(function(p){var ns=((S.names&&S.names[p[0]])||[]).concat([p[1]]).sort();S.names=S.names||{};S.names[p[0]]=ns.slice(-3);
-   ns.slice(0,-3).forEach(function(n){try{dir.removeEntry(n).catch(function(){})}catch(e){}})});
+  made.forEach(function(p){var all=((S.names&&S.names[p[0]])||[]).concat([p[1]]),keep=[];
+   [false,true].forEach(function(pl){var ns=all.filter(function(n){return sxlIsPlus(n)===pl}).sort(function(a,c){var x=sxlTsOf(a),y=sxlTsOf(c);return x<y?-1:x>y?1:0});
+    keep=keep.concat(ns.slice(-3));ns.slice(0,-3).forEach(function(n){try{dir.removeEntry(n).catch(function(){})}catch(e){}})});
+   S.names=S.names||{};S.names[p[0]]=keep});
   if(T.t===SXL.cfg.settingsTable&&SXL.cfg.settingsKey)SXL.settingsRaw=sxlRawOf(T.t,SXL.cfg.settingsKey);
   setTimeout(sxlRender,0);
   var out=[];changes.forEach(function(c){if(c.nw)out.push(c.nw)});
@@ -14148,7 +14175,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '119', D = '25/09/2026';
+  var V = '120', D = '28/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -21251,6 +21278,299 @@ window.XC_state = function(){
   return { tab: TAB, pend: PEND ? { oid: PEND.oid, mode: PEND.mode, what: Object.keys(PEND.what) } : null, marked: Object.keys(XC), why: why,
            cover: why === 'modal' ? COVER : '', dirty: dirty };
 };
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v120 — เครื่อง Windows 7 ใช้ไฟล์กลางได้ (Chrome บน Windows 7 อัปเดตได้ถึงรุ่น 109)
+     Chrome 109 ไม่ยอมให้ชื่อไฟล์มี "~" → บันทึกลงโฟลเดอร์ Server ไม่ได้ ("Name is not allowed.")
+     และมองไม่เห็นไฟล์ใน _changes ที่ชื่อมี ~ (ที่ StarNexus / เครื่องอื่นบันทึก)
+     • แกนไฟล์กลาง (head): เครื่องที่รับ ~ ไม่ได้บันทึกเป็นชื่อแบบ "+" แทน · อ่านได้ทั้งสองแบบ · รุ่นล่าสุดดูจากเวลาในชื่อ
+     • โมดูลนี้: เครื่องที่ Chrome รับ ~ ได้ (Windows 10/11) ช่วยทำสำเนาข้ามแบบชื่อ ทุก 10 วินาที
+         - ไฟล์ + ที่เครื่อง Windows 7 บันทึก → สำเนาชื่อ ~ (StarNexus / Production รุ่นเก่าอ่านได้)
+         - ไฟล์ ~ รุ่นล่าสุด (StarNexus / เครื่องอื่น / ของที่บันทึกไว้ก่อน) → สำเนาชื่อ + (เครื่อง Windows 7 อ่านได้)
+           ทำเฉพาะเมื่อมีเครื่อง Windows 7 ใช้งาน (ป้าย _changes/_sxl/need-plus.json)
+       สำเนาใช้เวลาเดิมในชื่อ เนื้อหาเหมือนต้นฉบับทุกไบต์ · เก็บ 3 รุ่นต่อกลุ่มต่อแบบชื่อ (เหมือนเดิม)
+     • เครื่องช่วยแปลงเขียน _changes/_sxl/relay.json ทุก 1 นาที · เครื่อง Windows 7 ไม่เห็นไฟล์นี้เปลี่ยนเกิน 5 นาที
+       → ขึ้นป้ายเตือนมุมซ้ายล่าง (ข้อมูลที่เครื่องอื่นบันทึกอาจยังไม่ขึ้นที่เครื่องนี้)
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+#w7Pill{position:fixed;left:256px;bottom:62px;z-index:8990;display:none;align-items:center;gap:7px;max-width:360px;box-sizing:border-box;
+  background:#fffbeb;color:#92400e;border:1px solid #f59e0b;border-radius:10px;padding:6px 11px;cursor:pointer;
+  font:600 11.5px/1.45 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;box-shadow:0 6px 16px rgba(0,0,0,.15)}
+#w7Pill.on{display:flex}
+#w7Pill .w7-dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;flex-shrink:0}
+</style>
+<script>
+(function(){
+'use strict';
+if(typeof SXL === 'undefined' || typeof sxlPlusProbe !== 'function' || SXL.__v120) return;
+SXL.__v120 = true;
+
+var DAY = 86400000;
+async function metaDir(create){
+  if(!SXL.dir) return null;
+  try{ var c = await SXL.dir.getDirectoryHandle('_changes', { create: !!create }); return await c.getDirectoryHandle('_sxl', { create: !!create }); }
+  catch(e){ return null; }
+}
+async function readMeta(name){
+  var d = await metaDir(false); if(!d) return null;
+  try{ return await (await (await d.getFileHandle(name)).getFile()).text(); }catch(e){ return null; }
+}
+async function writeMeta(name, obj){
+  var d = await metaDir(true); if(!d) return false;
+  var fh = await d.getFileHandle(name, { create: true }), w = await fh.createWritable();
+  await w.write(JSON.stringify(obj)); await w.close();
+  return true;
+}
+function atOf(txt){ try{ var t = Date.parse(JSON.parse(txt).at); return isNaN(t) ? 0 : t; }catch(e){ return 0; } }
+function byTs(a, b){ var x = sxlTsOf(a), y = sxlTsOf(b); return x < y ? -1 : x > y ? 1 : 0; }
+function tables(){
+  return ((SXL.cfg && SXL.cfg.tables) || []).filter(function(T){ try{ return sxlLoadable(T) && !(T.w && T.w.deny); }catch(e){ return false; } });
+}
+
+/* ── เครื่องช่วยแปลง (Chrome รับ ~ ได้) ───────────────────────────────── */
+var R = { busy:false, last:0, needAt:0, need:false, beatAt:0, copied:0, err:'' };
+async function needPlus(){
+  if(Date.now() - R.needAt < 60000) return R.need;
+  R.needAt = Date.now();
+  var txt = await readMeta('need-plus.json'), at = txt == null ? 0 : atOf(txt);
+  R.need = txt != null && (!at || Date.now() - at < 30 * DAY);         /* เครื่อง Windows 7 ไม่มาเกิน 30 วัน → เลิกทำสำเนา */
+  return R.need;
+}
+async function relayPass(){
+  if(R.busy || !SXL.dir || SXL.busy || SXL.locked) return;
+  R.busy = true;
+  try{
+    if(await sxlPlusProbe()) return;                                   /* เครื่องนี้รับ ~ ไม่ได้ = ไม่ใช่เครื่องช่วยแปลง */
+    if(!(await needPlus())) return;                                    /* ไม่มีเครื่อง Windows 7 → ไม่มีไฟล์ + ให้แปลง */
+    if(!(await sxlCanWrite())) return;
+    var n = 0, MAX = 60;                                               /* ทำสำเนาไม่เกินรอบละ 60 ไฟล์ (โฟลเดอร์ในเครือข่ายช้า) ที่เหลือทำรอบหน้า */
+    outer:
+    for(var T of tables()){
+      var d = await sxlOverDir(T.t, false); if(!d) continue;
+      var g = {};
+      for await(var ent of d.entries()){
+        if(ent[1].kind !== 'file') continue;
+        var v = sxlVer(ent[0]); if(!v) continue;
+        var x = g[v.key] || (g[v.key] = { t:[], p:[] });
+        (v.plus ? x.p : x.t).push(ent[0]);
+      }
+      for(var k in g){
+        if(SXL.locked || n >= MAX) break outer;                        /* ให้การบันทึกของผู้ใช้ไปก่อน · ที่เหลือทำรอบหน้า */
+        var y = g[k]; y.t.sort(byTs); y.p.sort(byTs);
+        var lt = y.t[y.t.length - 1] || null, lp = y.p[y.p.length - 1] || null;
+        var tT = lt ? sxlTsOf(lt) : '', tP = lp ? sxlTsOf(lp) : '', src = null, dst = null;
+        if(tP > tT){ src = lp; dst = sxlAsTilde(lp); }                 /* Windows 7 บันทึก → ให้ StarNexus / รุ่นเก่าเห็น */
+        else if(tT > tP){ src = lt; dst = sxlAsPlus(lt); }             /* ของล่าสุดชื่อ ~ → ให้ Windows 7 เห็น */
+        if(!src) continue;
+        try{
+          var text = await (await (await d.getFileHandle(src)).getFile()).text();
+          var fh = await d.getFileHandle(dst, { create: true }), w = await fh.createWritable();
+          await w.write(text); await w.close();
+          n++;
+          var list = sxlIsPlus(dst) ? y.p : y.t;
+          list.push(dst); list.sort(byTs);
+          list.slice(0, -3).forEach(function(o){ try{ d.removeEntry(o).catch(function(){}); }catch(e){} });
+        }catch(e){ R.err = (e && e.message) || String(e); }
+      }
+    }
+    R.copied += n;
+    if(Date.now() - R.beatAt > 60000){
+      R.beatAt = Date.now();
+      try{ await writeMeta('relay.json', { v:1, at: new Date().toISOString(), by: SXL.machine }); }catch(e){}
+    }
+  }catch(e){ R.err = (e && e.message) || String(e); }
+  finally{ R.busy = false; R.last = Date.now(); }
+}
+
+/* ── เครื่อง Windows 7 (Chrome รับ ~ ไม่ได้) ─────────────────────────── */
+var W = { since:0, marked:0, lastText:null, seen:false, lastChange:0, warn:false };
+var PILL = null;
+function pill(on){
+  if(!on){ if(PILL) PILL.classList.remove('on'); return; }
+  if(!PILL || !document.body.contains(PILL)){
+    PILL = document.createElement('div');
+    PILL.id = 'w7Pill';
+    PILL.innerHTML = '<span class="w7-dot"></span><span>Windows 7: ยังไม่พบเครื่องช่วยแปลงไฟล์ — ข้อมูลจากเครื่องอื่นอาจยังไม่ขึ้น</span>';
+    PILL.title = 'กดเพื่ออ่านรายละเอียด';
+    PILL.addEventListener('click', function(){
+      alert('Chrome บนเครื่องนี้ (Windows 7) เปิดไฟล์ที่ชื่อมีเครื่องหมาย ~ ไม่ได้\n\n'
+        + 'เครื่องนี้บันทึกได้ตามปกติ แต่ของที่ StarNexus และเครื่อง Windows 10/11 บันทึก จะขึ้นที่เครื่องนี้ได้'
+        + 'ก็ต่อเมื่อมีเครื่อง Windows 10/11 เปิด Production (VERSION 120 ขึ้นไป) ค้างไว้อย่างน้อย 1 เครื่อง\n\n'
+        + 'ตอนนี้ยังไม่พบเครื่องช่วยแปลงไฟล์ — ข้อมูลบนจอเครื่องนี้อาจไม่ใช่ล่าสุด ระวังการแก้ Order ที่เครื่องอื่นเพิ่งแก้');
+    });
+    document.body.appendChild(PILL);
+  }
+  PILL.classList.add('on');
+}
+async function w7Pass(){
+  if(!SXL.dir) return;
+  if(!(await sxlPlusProbe())){ pill(false); return; }                  /* เครื่องนี้รับ ~ ได้ */
+  var now = Date.now();
+  if(!W.since) W.since = now;
+  /* ฝากป้ายให้เครื่องช่วยแปลงรู้ว่ามีเครื่อง Windows 7 ใช้งาน (เขียนใหม่วันละครั้ง) */
+  if(now - W.marked > DAY && (await sxlCanWrite())){
+    try{
+      var old = await readMeta('need-plus.json');
+      if(old == null || now - atOf(old) > DAY) await writeMeta('need-plus.json', { v:1, at: new Date().toISOString(), by: SXL.machine, ua: navigator.userAgent });
+      W.marked = now;
+    }catch(e){}
+  }
+  /* เครื่องช่วยแปลงเขียน relay.json ทุก 1 นาที — ดูว่าไฟล์เปลี่ยนไหม (ไม่เทียบนาฬิกาข้ามเครื่อง) */
+  var txt = await readMeta('relay.json');
+  if(!W.seen){ W.seen = true; W.lastText = txt; }
+  else if(txt !== W.lastText){ W.lastText = txt; W.lastChange = now; }
+  var active = W.lastChange && now - W.lastChange < 5 * 60000;
+  W.warn = !active && now - W.since >= 5 * 60000;
+  pill(W.warn);
+}
+/* ตรวจทุก 2 วินาที ทำจริงห่างกันอย่างน้อย 10 วินาที — รอบตรวจไฟล์ของไฟล์กลางก็ 10 วินาที ถ้าตั้งตรงกันจะชนกันทุกรอบ (ไฟล์กลางกำลังอ่าน → ข้าม) */
+setInterval(function(){ if(Date.now() - R.last >= 10000) relayPass().catch(function(){}); }, 2000);
+setInterval(function(){ w7Pass().catch(function(){}); }, 30000);
+
+/* ดูสถานะในคอนโซลเวลาตรวจปัญหา: W7_state() */
+window.W7_state = function(){
+  return { plus: SXL.plus, relay: { need: R.need, copied: R.copied, last: R.last, err: R.err },
+           win7: { warn: W.warn, lastChange: W.lastChange, since: W.since } };
+};
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v120 — หน้าต่างสถานะการโหลดไฟล์กลาง
+     เลือกโฟลเดอร์ Server / เชื่อมตำแหน่งที่จำไว้ (รวมที่เชื่อมเองตอนเปิดโปรแกรม) / อ่านไฟล์ล่าสุด
+     → ขึ้นหน้าต่าง "กำลังโหลดไฟล์กลาง": ไฟล์ที่กำลังอ่าน · ขนาด · ลำดับ (1/5) · แถบเปอร์เซ็นต์
+     → โหลดเสร็จปิดเอง · ถ้าเป็นการเลือกโฟลเดอร์/เชื่อมตำแหน่ง และตารางหลักพร้อมครบ ปิดหน้าไฟล์กลางให้ด้วย (ไปหน้า Order)
+       (ตารางไหนอ่านไม่ได้ หน้าไฟล์กลางยังเปิดค้างให้เห็นว่าเป็นตารางไหน)
+     ห่อ sxlSync / sxlLoadFile / sxlApply (ไม่แก้การทำงานเดิม) · เปอร์เซ็นต์: อ่านไฟล์ 0–88 · ของที่บันทึกไว้ใน _changes 88–97 · เตรียมข้อมูล 97–100
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+#sxlLoadOv{position:fixed;inset:0;z-index:1000001;display:none;align-items:center;justify-content:center;
+  background:rgba(8,12,20,.55);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
+  font:14px/1.5 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#sxlLoadOv.on{display:flex}
+#sxlLoadOv .sl-card{width:min(300px,calc(100vw - 32px));box-sizing:border-box;background:#1f2430;color:#e5e7eb;border-radius:14px;
+  padding:18px 22px 14px;box-shadow:0 22px 60px rgba(0,0,0,.5)}
+#sxlLoadOv .sl-head{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;color:#fff}
+#sxlLoadOv .sl-spin{width:16px;height:16px;border-radius:50%;border:2.5px solid rgba(147,197,253,.28);border-top-color:#93c5fd;
+  box-sizing:border-box;animation:sxlSpin .8s linear infinite;flex-shrink:0}
+@keyframes sxlSpin{to{transform:rotate(360deg)}}
+#sxlLoadOv .sl-line{margin:10px 0 9px;font-size:12.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sxlLoadOv .sl-bar{height:6px;border-radius:4px;background:#3a4150;overflow:hidden}
+#sxlLoadOv .sl-fill{height:100%;width:0;border-radius:4px;background:#5b8def;transition:width .2s}
+#sxlLoadOv .sl-pct{margin-top:6px;text-align:right;font-size:11.5px;color:#94a3b8}
+</style>
+<script>
+(function(){
+'use strict';
+if(typeof SXL === 'undefined' || typeof sxlSync !== 'function' || typeof sxlLoadFile !== 'function' || SXL.__v120load) return;
+SXL.__v120load = true;
+
+var JOB = null, OV = null, LAST = 0, PCT = 0;
+function mb(n){ n = +n || 0; return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+function frame(){ return new Promise(function(r){ setTimeout(r, 0); }); }
+function ov(){
+  if(OV && document.body.contains(OV)) return OV;
+  OV = document.createElement('div');
+  OV.id = 'sxlLoadOv';
+  OV.setAttribute('role', 'status');
+  OV.innerHTML = '<div class="sl-card"><div class="sl-head"><span class="sl-spin"></span><span>กำลังโหลดไฟล์กลาง</span></div>'
+    + '<div class="sl-line">กำลังเตรียม…</div><div class="sl-bar"><div class="sl-fill"></div></div><div class="sl-pct">0%</div></div>';
+  document.body.appendChild(OV);
+  return OV;
+}
+function paint(force){
+  if(!JOB || !JOB.shown) return;
+  var now = Date.now();
+  if(!force && now - LAST < 120) return;                     /* อัปเดตจอไม่ถี่เกิน */
+  LAST = now;
+  var o = ov();
+  o.querySelector('.sl-line').textContent = JOB.label;
+  o.querySelector('.sl-fill').style.width = PCT.toFixed(1) + '%';
+  o.querySelector('.sl-pct').textContent = Math.floor(PCT) + '%';
+}
+function set(label, pct, force){
+  if(!JOB) return;
+  if(label) JOB.label = label;
+  if(pct != null && pct > PCT) PCT = Math.min(100, pct);   /* เดินหน้าอย่างเดียว */
+  paint(force);
+}
+function show(){ if(!JOB) return; JOB.shown = true; ov().classList.add('on'); paint(true); }
+function hasSource(){
+  if(SXL.dir) return true;
+  try{ return SXL.cfg.tables.some(function(T){ return SXL.s[T.t] && SXL.s[T.t].handle; }); }catch(e){ return false; }
+}
+/* ไฟล์ที่จะอ่านรอบนี้ (จำนวน + ขนาดรวม) — ตามกติกาเดียวกับ sxlSync */
+async function plan(){
+  var inDir = {}, n = 0, total = 0;
+  if(SXL.dir){ try{ inDir = await sxlScanDir(SXL.dir); }catch(e){} }
+  for(var T of SXL.cfg.tables){
+    if(!sxlLoadable(T)) continue;
+    var S = SXL.s[T.t], f = null;
+    if(S.src === 'file' && S.handle){ try{ f = await S.handle.getFile(); }catch(e){} }
+    else if(S.src !== 'once' && inDir[T.t]) f = inDir[T.t].f;
+    if(f){ n++; total += f.size || 0; }
+  }
+  return { n: n, total: total };
+}
+function coreReady(){
+  try{ return SXL.cfg.tables.filter(function(T){ return T.core && sxlLoadable(T); }).every(function(T){ return SXL.s[T.t].ready; }); }catch(e){ return false; }
+}
+
+/* อ่านไฟล์ทีละไฟล์ */
+var origLoad = sxlLoadFile;
+sxlLoadFile = async function(t, file){
+  if(JOB && file){
+    JOB.i++; JOB.cur = file.size || 0;
+    set('อ่าน ' + file.name + ' · ' + mb(file.size) + ' (' + Math.min(JOB.i, Math.max(JOB.n, JOB.i)) + '/' + Math.max(JOB.n, JOB.i) + ')',
+        JOB.total ? JOB.before / JOB.total * 88 : null, true);
+    await frame();
+  }
+  try{ return await origLoad.apply(this, arguments); }
+  finally{ if(JOB && file){ JOB.before += file.size || 0; if(JOB.total) set(null, JOB.before / JOB.total * 88); } }
+};
+/* เตรียมข้อมูลในโปรแกรม (รายการ Order · กฎ · Mapping ...) */
+var origApply = sxlApply;
+sxlApply = async function(){
+  if(JOB){ set('กำลังเตรียมข้อมูลในโปรแกรม…', 97, true); await frame(); }
+  return origApply.apply(this, arguments);
+};
+/* รอบใหญ่: เลือกโฟลเดอร์ · เชื่อมตำแหน่งที่จำไว้ · อ่านไฟล์ล่าสุด */
+var origSync = sxlSync;
+sxlSync = async function(force, why){
+  if(JOB || !(why === 'pick' || why === 'restore' || why === 'check') || !hasSource()) return origSync.apply(this, arguments);
+  var job = JOB = { why: why, n: 0, total: 0, i: 0, before: 0, cur: 0, label: 'กำลังเตรียม…', shown: false, tbl: 0 };
+  PCT = 0;
+  var timer = setTimeout(show, 250);                          /* โหลดเร็วมาก (ไม่ถึง 0.25 วินาที) ไม่ต้องขึ้น */
+  try{ var p = await plan(); job.n = p.n; job.total = p.total; }catch(e){}
+  var tables = SXL.cfg.tables.filter(sxlLoadable).map(function(T){ return T.t; });
+  SXL.onBytes = function(t, n, size){
+    if(JOB !== job || !job.total) return;
+    set(null, (job.before + Math.min(n, size || n)) / job.total * 88);
+  };
+  SXL.onOver = function(t, i, n){
+    if(JOB !== job || !SXL.busy || !n) return;
+    var k = Math.max(0, tables.indexOf(t));
+    set('อ่านของที่บันทึกไว้ · ' + t + ' (' + i + '/' + n + ')', 88 + 9 * (k + i / n) / Math.max(1, tables.length));
+  };
+  var ok = false;
+  try{
+    var r = await origSync.apply(this, arguments);
+    ok = true;
+    return r;
+  }finally{
+    clearTimeout(timer);
+    SXL.onBytes = null; SXL.onOver = null;
+    if(job.shown){ set('โหลดเสร็จแล้ว', 100, true); }
+    JOB = null;
+    setTimeout(function(){ if(!JOB && OV) OV.classList.remove('on'); }, job.shown ? 350 : 0);
+    /* เลือกโฟลเดอร์ / เชื่อมตำแหน่งสำเร็จ ตารางหลักพร้อมครบ → ปิดหน้าไฟล์กลาง ไปหน้า Order */
+    if(ok && why !== 'check' && coreReady()){
+      var pn = document.getElementById('sxLocalPanel');
+      if(pn && pn.style.display !== 'none') setTimeout(function(){ pn.style.display = 'none'; }, job.shown ? 350 : 0);
+    }
+  }
+};
+window.SXL_loadState = function(){ return JOB ? { why: JOB.why, label: JOB.label, pct: Math.floor(PCT), i: JOB.i, n: JOB.n } : null; };
 })();
 </script>
 
