@@ -14175,7 +14175,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '121', D = '28/09/2026';
+  var V = '122', D = '28/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -21722,6 +21722,250 @@ window.addEventListener('resize', later);
 document.addEventListener('mouseup', function(){ setTimeout(later, 30); }, true);    /* ลากปุ่มตั้งค่าเสร็จ */
 document.addEventListener('touchend', function(){ setTimeout(later, 30); }, true);
 setInterval(function(){ if(!document.hidden) window.SXL_dock(); }, 2000);          /* ข้อความในแถบบนเปลี่ยน / ปุ่มตั้งค่าเกิดทีหลัง */
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v122 — ปุ่ม "📥 Excel" ในหน้าต่างเช็คว่าต้นทางแก้อะไร (RevGuard)
+       • "⚠️ BOM ของ Order นี้ถูกแก้จากต้นทาง" (รับข้อมูลใหม่ — ทับ / ไม่ทับ — เอาข้อมูลเดิมกลับมา)
+       • "⚠️ Order นี้มีไฟล์ใหม่เข้ามา" (ทับ… / ไม่ทับ — ใช้ของเดิม)
+     ออกไฟล์ Excel ของ "ส่วนที่เปลี่ยน" ระหว่างของเดิมกับของใหม่
+       แผ่น 1  BOM Fitting        — โครงสร้างเดียวกับปุ่ม Export BOM Fitting ทุกอย่าง
+                                    ItemId | Qty | Warehouse | FittingType · Qty = ส่วนต่าง (ใหม่ − เดิม) บวก = ต้องเพิ่ม ลบ = ต้องลด
+                                    คิดแบบเดียวกับ Export BOM Fitting: รหัส AX (ผ่าน Mapping / Fitting Global) · ขอบเป็นเมตร (+1)
+                                    · ขอบเพิ่มจาก FrontStyle · คูณจำนวนชุด · ตัด 00000000 · รวมรหัสซ้ำ
+                                    คิดจากข้อมูลต้นทางล้วน — ค่าที่แก้/ซ่อน/เพิ่มเองในแท็บ BOM Fitting ไม่นับ (ตรงกับรายการในหน้าต่าง)
+                                    แถว BOM ไม้จากใบสั่งตัดไม่นับ (ต้องจัดวางใหม่ถึงจะรู้จำนวนแผ่น)
+       แผ่น 2  รายละเอียด Fitting — ชื่อสินค้า · ประเภท · หน่วย · จำนวนเดิม · จำนวนใหม่ · ส่วนต่าง · สถานะ · รหัสต้นทาง (IMOS)
+       แผ่น 3  ชิ้นไม้ที่เปลี่ยน    — ตู้/ชิ้นที่เพิ่ม · หาย · แก้ (ช่องที่เปลี่ยน เดิม → ใหม่) เหมือนแท็บ BOM ไม้ในหน้าต่าง
+     ไม่แก้โมดูล RevGuard — เติมปุ่มเมื่อหน้าต่างเปิด (#orvOv) แล้วอ่านข้อมูลเดิม/ใหม่เอง
+       ต้นทางแก้   : เดิม = ภาพถ่าย BOM (order_base_data) · ใหม่ = ข้อมูลที่เปิดอยู่
+       ไฟล์ใหม่    : เดิม = ข้อมูลที่เปิดอยู่ · ใหม่ = ฉบับรอตัดสินใจ (order_rev_data)
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+if(window.__v122orvx) return;
+window.__v122orvx = true;
+
+var DUMMY = '\u0000orvx';                  /* เลข Order ที่ไม่มีจริง — ไม่มีค่าที่แก้เอง/ของเพิ่มเอง/จำนวนชุด */
+function D(){ try{ return (typeof db !== 'undefined' && db) ? db : null; }catch(e){ return null; } }
+function r2(n){ return Math.round((Number(n) || 0) * 100) / 100; }
+
+async function getSetting(key){
+  var d = D(); if(!d) return null;
+  try{ var r = await d.from('app_settings').select('value').eq('key', key).single(); return (r && r.data) ? r.data.value : null; }
+  catch(e){ return null; }
+}
+async function orderData(oid){
+  try{ if(window.currentOrder === oid && window.currentData) return window.currentData; }catch(e){}
+  var d = D(); if(!d) return null;
+  try{ var r = await d.from('imos_orders').select('data').eq('order_id', oid).single(); return (r && r.data) ? r.data.data : null; }
+  catch(e){ return null; }
+}
+/* ของเดิม / ของใหม่ ตามชนิดหน้าต่าง */
+async function loadPair(oid, kind){
+  if(kind === 'base'){
+    var pack = await getSetting('order_base_data:' + oid);
+    return { oldD: pack && pack.data, newD: await orderData(oid), oldLbl:'ภาพถ่าย BOM ครั้งก่อน', newLbl:'ข้อมูลใหม่จากต้นทาง' };
+  }
+  var rev = await getSetting('order_rev_data:' + oid);
+  return { oldD: await orderData(oid), newD: rev && rev.parsed, oldLbl:'ข้อมูลเดิมในโปรแกรม', newLbl:'ไฟล์ใหม่ที่รอตัดสินใจ' };
+}
+
+/* แถว BOM Fitting ของข้อมูลชุดหนึ่ง — ใช้ buildBOMRows ตัวเดียวกับปุ่ม Export BOM Fitting
+   สลับ currentData ชั่วคราว (ทำรวดเดียวไม่มี await — ไม่มีโค้ดอื่นแทรกได้) · currentOrder เป็นเลขที่ไม่มีจริง
+   → ไม่มีค่าที่แก้เอง/ของเพิ่มเอง/Frame · แถว BOM ไม้ (จากใบสั่งตัด) ตัดทิ้ง */
+function rowsOf(data){
+  if(!data || !Array.isArray(data.groups)) return [];
+  var sd = window.currentData, so = window.currentOrder, rows = [];
+  try{
+    window.currentData = data; window.currentOrder = DUMMY;
+    rows = (typeof window.buildBOMRows === 'function' ? window.buildBOMRows() : buildBOMRows()) || [];
+  }finally{
+    window.currentData = sd; window.currentOrder = so;
+  }
+  return rows.filter(function(r){ return r && r._type !== 'BOM ไม้' && !r._hidden; });
+}
+/* รหัสต้นทาง (ที่หน้าต่างแสดง) ของแต่ละ ItemId — Fitting: ARTICLE_ID/NAME → Mapping · ขอบ: รหัสขอบเดิม */
+function srcMap(data){
+  var m = {};
+  function add(id, c){ if(!id || !c) return; (m[id] = m[id] || []).indexOf(c) < 0 && m[id].push(c); }
+  try{
+    getFittingAgg(data).forEach(function(r){
+      var conid = String(r.NAME || '').trim(), key = String(r.ARTICLE_ID || '').trim() || conid;
+      var pre = !!fgLookup(conid), oid = pre ? conid : ((typeof mapping !== 'undefined' && mapping[conid]) || '');
+      add(oid || conid, key);
+    });
+  }catch(e){}
+  return m;
+}
+function agg(rows, sets, src){
+  var by = {}, order = [];
+  rows.forEach(function(r){
+    var id = String(r.ItemId || '').trim();
+    if(!id || /^0+$/.test(id)) return;                                  /* เหมือน Export BOM Fitting: ตัด 00000000 */
+    var q = typeof r.Qty === 'number' ? r.Qty : (parseFloat(r.Qty) || 0);
+    if(sets > 1) q = r2(q * sets);                                      /* จำนวนชุด (v90) — คิดทีละแถวแบบเดียวกัน */
+    var b = by[id];
+    if(!b){ b = by[id] = { id:id, qty:0, wh:r.Warehouse == null ? '' : String(r.Warehouse), ft:r.FittingType == null ? '' : String(r.FittingType),
+                           name:r._name || '', type:r._type || '', unit:r._unit || '', src:[] }; order.push(id); }
+    b.qty += q;
+    if(!b.name && r._name) b.name = r._name;
+    var k = String(r._origKey || ''), c = '';
+    if(r._type === 'Edge' || r._type === 'ขอบเพิ่ม') c = k.slice(k.indexOf(':') + 1);
+    if(c && b.src.indexOf(c) < 0) b.src.push(c);
+  });
+  order.forEach(function(id){ var b = by[id]; b.qty = r2(b.qty); (src[id] || []).forEach(function(c){ if(b.src.indexOf(c) < 0) b.src.push(c); }); });
+  return { by:by, order:order };
+}
+function typeLbl(t){ return t === 'Edge' ? 'ขอบ' : t === 'ขอบเพิ่ม' ? 'ขอบเพิ่ม (FrontStyle)' : t === 'Fitting' ? 'Fitting' : (t || ''); }
+
+/* จำนวนชุดของ Order (v90) — Order ที่ยังไม่เคยเปิดในรอบนี้ อ่านจาก bom_edits:<oid> */
+async function setsOf(oid){
+  try{ if(typeof bomEdits !== 'undefined' && bomEdits[oid]) return bomSetsOf(oid); }catch(e){}
+  var v = await getSetting('bom_edits:' + oid), n = v ? parseInt(v._sets, 10) : 1;
+  return (n >= 1 && isFinite(n)) ? n : 1;
+}
+/* ส่วนต่าง BOM Fitting ของ Order หนึ่ง: ใหม่ − เดิม ต่อ ItemId */
+function calc(oid, oldD, newD, sets){
+  if(!(sets >= 1)){ try{ sets = bomSetsOf(oid); }catch(e){ sets = 1; } }
+  var A = agg(rowsOf(oldD), sets, srcMap(oldD)), B = agg(rowsOf(newD), sets, srcMap(newD));
+  var out = [];
+  function push(id, a, b){
+    var o = a ? a.qty : 0, n = b ? b.qty : 0, dq = r2(n - o);
+    if(!dq) return;
+    var x = b || a;
+    out.push({ ItemId:id, Qty:dq, Warehouse:x.wh, FittingType:x.ft, name:(b && b.name) || (a && a.name) || '', type:x.type, unit:x.unit,
+               old:o, 'new':n, st: !a || !o ? 'เพิ่มใหม่' : !b || !n ? 'หายไป' : dq > 0 ? 'เพิ่มจำนวน' : 'ลดจำนวน',
+               src:((b && b.src) || []).concat(((a && a.src) || []).filter(function(c){ return !b || b.src.indexOf(c) < 0; })) });
+  }
+  B.order.forEach(function(id){ push(id, A.by[id], B.by[id]); });
+  A.order.forEach(function(id){ if(!B.by[id]) push(id, A.by[id], null); });
+  return { rows:out, sets:sets, nOld:A.order.length, nNew:B.order.length };
+}
+window.ORVX_calc = calc;
+
+/* ── ไลบรารี Excel (ตัวเดียวกับปุ่ม Export อื่น — โหลดจาก cdnjs ตอนใช้ครั้งแรก) ── */
+var xlsxP = null;
+function needXlsx(){
+  if(window.XLSX && XLSX.utils) return Promise.resolve(true);
+  if(xlsxP) return xlsxP;
+  xlsxP = new Promise(function(res){
+    var done = false, fin = function(){ if(!done){ done = true; res(!!(window.XLSX && XLSX.utils)); } };
+    try{
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = fin; s.onerror = fin;
+      document.head.appendChild(s);
+    }catch(e){ fin(); }
+    setTimeout(fin, 20000);
+  }).then(function(ok){ if(!ok) xlsxP = null; return ok; });
+  return xlsxP;
+}
+
+var BOM_COLS_X = ['ItemId', 'Qty', 'Warehouse', 'FittingType'];     /* = BOM_COLS ของ Export BOM Fitting */
+function book(oid, pair, C, W){
+  var X = window.XLSX, wb = X.utils.book_new();
+
+  /* แผ่น 1 — เหมือน exportBOMExcel ทุกอย่าง (หัวตาราง · Qty เป็นตัวเลข · อื่นเป็นข้อความ · ความกว้างคอลัมน์ · ชื่อแผ่น) */
+  var ws = {};
+  BOM_COLS_X.forEach(function(col, ci){ ws[X.utils.encode_cell({ r:0, c:ci })] = { t:'s', v:col }; });
+  C.rows.forEach(function(r, ri){
+    BOM_COLS_X.forEach(function(col, ci){
+      var v = r[col], addr = X.utils.encode_cell({ r:ri + 1, c:ci });
+      ws[addr] = col === 'Qty' ? { t:'n', v: typeof v === 'number' ? v : (parseFloat(v) || 0) } : { t:'s', v: v == null ? '' : String(v) };
+    });
+  });
+  ws['!ref'] = X.utils.encode_range({ s:{ r:0, c:0 }, e:{ r:C.rows.length, c:BOM_COLS_X.length - 1 } });
+  ws['!cols'] = [{ wch:18 }, { wch:10 }, { wch:14 }, { wch:14 }];
+  X.utils.book_append_sheet(wb, ws, 'BOM Fitting');
+
+  /* แผ่น 2 — รายละเอียด */
+  var a2 = [['ItemId', 'ชื่อสินค้า', 'ประเภท', 'หน่วย', 'จำนวนเดิม', 'จำนวนใหม่', 'ส่วนต่าง', 'สถานะ', 'รหัสต้นทาง (IMOS)']];
+  C.rows.forEach(function(r){ a2.push([r.ItemId, r.name, typeLbl(r.type), r.unit, r.old, r['new'], r.Qty, r.st, r.src.join(', ')]); });
+  if(!C.rows.length) a2.push(['BOM Fitting ไม่มีอะไรเปลี่ยน']);
+  a2.push([]);
+  a2.push(['Order', oid]);
+  a2.push(['เทียบ', pair.oldLbl + ' → ' + pair.newLbl]);
+  a2.push(['ส่วนต่าง', 'ใหม่ − เดิม · บวก = ต้องเพิ่ม · ลบ = ต้องลด (แผ่น BOM Fitting ช่อง Qty = ส่วนต่างนี้)']);
+  a2.push(['คิดแบบ', 'เดียวกับปุ่ม Export BOM Fitting — รหัส AX · ขอบเป็นเมตร (+1) · ขอบเพิ่มจาก FrontStyle' + (C.sets > 1 ? ' · คูณจำนวนชุด ' + C.sets : '') + ' · ตัด 00000000 · รวมรหัสซ้ำ']);
+  a2.push(['ไม่รวม', 'ค่าที่แก้ / ซ่อน / เพิ่มเองในแท็บ BOM Fitting (ส่วนต่างนี้คิดจากข้อมูลต้นทางล้วน) · แถว BOM ไม้จากใบสั่งตัด (ต้องจัดวางใหม่ถึงจะรู้จำนวนแผ่น) — ชิ้นไม้ที่เปลี่ยนดูแผ่น "ชิ้นไม้ที่เปลี่ยน"']);
+  a2.push(['ออกเมื่อ', new Date().toLocaleString('th-TH')]);
+  var ws2 = X.utils.aoa_to_sheet(a2);
+  ws2['!cols'] = [{ wch:24 }, { wch:44 }, { wch:18 }, { wch:8 }, { wch:11 }, { wch:11 }, { wch:10 }, { wch:12 }, { wch:36 }];
+  X.utils.book_append_sheet(wb, ws2, 'รายละเอียด Fitting');
+
+  /* แผ่น 3 — ชิ้นไม้ (เหมือนแท็บ BOM ไม้ ในหน้าต่าง) */
+  var a3 = [['สถานะ', 'ตู้', 'PartID', 'ชื่อชิ้น', 'ขนาด (ก×ย×หนา)', 'ช่องที่เปลี่ยน (เดิม → ใหม่)']];
+  var df = (W && W.diff) || {}, w = df.wood || { add:[], del:[], chg:[] }, g = df.grp || { add:[], del:[] };
+  (g.add || []).forEach(function(n){ a3.push(['ตู้เพิ่ม', n, '', '', '', '']); });
+  (g.del || []).forEach(function(n){ a3.push(['ตู้หาย', n, '', '', '', '']); });
+  (w.chg || []).forEach(function(r){ a3.push(['แก้', r.g, r.id || '', r.nm || '', '', (r.fl || []).map(function(f){ return f[0] + ': ' + (f[1] || '—') + ' → ' + (f[2] || '—'); }).join(' · ')]); });
+  (w.add || []).forEach(function(r){ a3.push(['เพิ่ม', r.g, r.id || '', r.nm || '', r.sz || '', '']); });
+  (w.del || []).forEach(function(r){ a3.push(['หาย', r.g, r.id || '', r.nm || '', r.sz || '', '']); });
+  var c = (W && W.counts) || {};
+  if(a3.length === 1) a3.push(['BOM ไม้ ไม่มีอะไรเปลี่ยน']);
+  if(df.trunc) a3.push([], ['รายการเยอะมาก — แสดงหมวดละ 200 รายการแรก · ครบทั้งหมด: เพิ่ม ' + (c.woodAdd || 0) + ' · หาย ' + (c.woodDel || 0) + ' · แก้ ' + (c.woodChg || 0)]);
+  var ws3 = X.utils.aoa_to_sheet(a3);
+  ws3['!cols'] = [{ wch:9 }, { wch:28 }, { wch:12 }, { wch:30 }, { wch:18 }, { wch:90 }];
+  X.utils.book_append_sheet(wb, ws3, 'ชิ้นไม้ที่เปลี่ยน');
+  return wb;
+}
+function fileName(oid){ return 'export_fitting_change_' + (oid || 'export') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx'; }
+
+/* ── กดปุ่ม ── */
+async function run(ov, btn){
+  var ORV = window.__ORV || {}, oid = ORV.open;
+  var msg = function(t){ var m = ov.querySelector('#orvMsg'); if(m) m.textContent = t || ''; };
+  if(!oid || oid === '__queue') return;
+  var kind = ov.querySelector('[data-a="take"]') ? 'base' : 'rev';
+  try{
+    var mb = typeof window.MBOM_state === 'function' ? window.MBOM_state() : null;
+    if((mb && mb.on && (mb.fit || mb.blank)) || (typeof window.MBOM_busy === 'function' && window.MBOM_busy())){
+      msg('ออก Excel ไม่ได้ตอนอยู่โหมดรวมหลาย Order — ออกจากโหมดรวมก่อนแล้วกดใหม่'); return;
+    }
+  }catch(e){}
+  btn.disabled = true; msg('กำลังเตรียม Excel…');
+  try{
+    var pair = await loadPair(oid, kind);
+    if(!pair.oldD || !pair.newD) throw new Error('ไม่พบ' + (!pair.oldD ? pair.oldLbl : pair.newLbl) + 'ของ Order นี้');
+    var C = calc(oid, pair.oldD, pair.newD, await setsOf(oid));
+    var W = null; try{ W = window.ORV_makeDiff ? window.ORV_makeDiff(pair.oldD, pair.newD) : null; }catch(e){ W = null; }
+    if(!(await needXlsx())) throw new Error('โหลดตัวสร้างไฟล์ Excel ไม่ได้ (ต้องต่อเน็ต)');
+    if(!document.body.contains(ov)) return;                         /* ปิดหน้าต่างไประหว่างรอ */
+    var fn = fileName(oid);
+    window.XLSX.writeFile(book(oid, pair, C, W), fn);
+    var up = C.rows.filter(function(r){ return r.Qty > 0; }).length, dn = C.rows.length - up;
+    var wc = (W && W.counts) || {}, nw = (wc.woodAdd || 0) + (wc.woodDel || 0) + (wc.woodChg || 0) + (wc.grpAdd || 0) + (wc.grpDel || 0);
+    msg('📥 ออก Excel แล้ว: ' + fn + ' · BOM Fitting เปลี่ยน ' + C.rows.length + ' รหัส' + (C.rows.length ? ' (เพิ่ม ' + up + ' · ลด ' + dn + ')' : '') + ' · ชิ้นไม้ ' + nw + ' รายการ');
+    window.__orvxLast = { oid:oid, kind:kind, file:fn, rows:C.rows.length, up:up, down:dn, wood:nw, sets:C.sets };
+  }catch(e){
+    msg('ออก Excel ไม่สำเร็จ: ' + ((e && e.message) || e));
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+/* ── ใส่ปุ่มเมื่อหน้าต่างเปิด (หน้าต่างสรุปหลาย Order ไม่มีแท็บ — ไม่ใส่) ── */
+function mount(ov){
+  if(!ov || ov.__orvx) return;
+  var copy = ov.querySelector('.orv-tabs #orvCopy');
+  if(!copy) return;
+  ov.__orvx = true;
+  var b = document.createElement('button');
+  b.className = 'orv-tab'; b.id = 'orvXlsx'; b.type = 'button';
+  b.textContent = '📥 Excel';
+  b.title = 'ออกรายการที่เปลี่ยนเป็นไฟล์ Excel — แผ่นแรกโครงสร้างเดียวกับ Export BOM Fitting (ItemId · Qty · Warehouse · FittingType) · Qty = ส่วนต่าง ใหม่ − เดิม';
+  b.addEventListener('click', function(){ if(!b.disabled) run(ov, b); });
+  copy.parentNode.insertBefore(b, copy);
+}
+function scan(){ var ov = document.getElementById('orvOv'); if(ov) mount(ov); }
+function start(){
+  if(!document.body){ return setTimeout(start, 50); }
+  new MutationObserver(scan).observe(document.body, { childList:true });
+  scan();
+}
+start();
 })();
 </script>
 
