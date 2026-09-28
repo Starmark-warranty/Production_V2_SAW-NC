@@ -9120,6 +9120,563 @@ function renderExtraFitList() {
   <div id="orderLoadingId" class="order-loading-id"></div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════════════
+     ทดลองไฟล์กลาง (Local CSV) · โมดูลแยก — แทรกก่อนโมดูลเสริมทุกตัว
+     เพิ่มเข้ามาล้วน ไม่แก้โค้ดเดิมของ Production V2 สักไบต์ (กฎเหล็ก) · ห่อทับฟังก์ชัน global เท่านั้น
+     อ่าน imos_orders / imos_mapping / fitting_global / app_settings / part_index จาก CSV ในโฟลเดอร์ Server
+     ที่เดียวกับ StarNexus · บันทึกลง <Server>/_changes/<ตาราง>/ (ไม่แก้ไฟล์ CSV เดิม)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ═══════════ ไฟล์กลาง (Local CSV) · แกนกลางใช้ร่วม StarNexus + Production ═══════════
+   ไม่เชื่อม Supabase · อ่านตารางจาก CSV ที่ส่งออกจาก Supabase (ชื่อไฟล์ <ตาราง>_rows.csv) เป็นฐาน
+   ของที่บันทึกเขียนลง <Server>/_changes/<ตาราง>/ แล้ววางทับฐานตอนอ่าน (ดูหัวข้อ เขียนกลับไฟล์กลาง)
+   SXL_DB หน้าตาเหมือน supabase-js: from().select/eq/neq/like/ilike/in/is/gt/gte/lt/lte/not/or/order/limit/range/single/maybeSingle
+   รองรับ select แบบ alias:คอลัมน์->>คีย์ · count/head · insert/upsert/update/delete · fetch ตรงไป /rest/v1 ถูกส่งเข้าตัวเดียวกัน
+   จำโฟลเดอร์/ไฟล์ไว้ใน IndexedDB ชื่อเดียวกันทั้งสองโปรแกรม เปิดจากเครื่องเดียวกันจึงใช้โฟลเดอร์ Server ที่เดียวกัน */
+var SXL={cfg:null,s:{},dir:null,dirErr:'',busy:false,settingsPending:false,settingsApplied:false,settingsRaw:null,notes:{},bootDone:false,_bootCb:[],
+ lockP:Promise.resolve(),locked:0,extChanged:new Set(),canWrite:false,
+ machine:(function(){try{var k='sxlocal:machine',v=localStorage.getItem(k);if(!v){v=Math.random().toString(36).slice(2,8);localStorage.setItem(k,v)}return v}catch(e){return 'x'}})()};
+function sxlCfg(t){return SXL.cfg&&SXL.cfg.tables.find(function(T){return T.t===t})}
+function sxlInit(cfg){SXL.cfg=cfg;
+ cfg.tables=cfg.tables.map(function(T){var X=Object.assign({},SXL_SCHEMA[T.t]||{},T);if(!X.w)X.w={bucket:'key'};return X});
+ cfg.tables.forEach(function(T){SXL.s[T.t]={ready:false,base:[],rows:[],cols:[],over:new Map(),names:{},idx:null,name:'',sig:null,size:0,mod:0,src:'',handle:null,err:'',bad:0,ver:0,sort:new Map(),nW:0}})}
+function sxlLoadable(T){return T.load!==false&&!T.lazy}
+function sxlBooted(){if(SXL.bootDone)return;SXL.bootDone=true;SXL._bootCb.splice(0).forEach(function(f){try{f()}catch(e){console.error(e)}})}
+function sxlWhenBooted(){return new Promise(function(r){if(SXL.bootDone)r();else SXL._bootCb.push(r);setTimeout(r,25000)})}
+
+/* ---------- CSV (อ่านทีละก้อน ไฟล์ใหญ่ไม่ต้องเป็นสตริงก้อนเดียว) ---------- */
+function sxlParseCSV(text,rowBase){
+ var rows=[],n=text.length,row=[],i=0,at=function(){return ' (ราวแถว '+((rowBase||0)+rows.length+1)+')'};
+ var keep=function(r){return r.length>1||r[0]!==''};
+ while(i<n){var val,c=text.charCodeAt(i);
+  if(c===34){var j=i+1,parts=[];
+   for(;;){var k=text.indexOf('"',j);if(k<0)throw Error('CSV ยังปิดเครื่องหมายคำพูดไม่ครบ'+at());
+    parts.push(text.slice(j,k));if(text.charCodeAt(k+1)===34){parts.push('"');j=k+2;continue}i=k+1;break}
+   val=parts.length===1?parts[0]:parts.join('');c=text.charCodeAt(i);
+   if(i<n&&c!==44&&c!==10&&c!==13)throw Error('CSV มีข้อความหลังเครื่องหมายปิดคำพูด'+at());
+  }else{var k2=i;for(;k2<n;k2++){var d=text.charCodeAt(k2);if(d===44||d===10||d===13)break;if(d===34)throw Error('CSV มีเครื่องหมายคำพูดผิดตำแหน่ง'+at())}
+   val=text.slice(i,k2);i=k2;c=text.charCodeAt(i)}
+  row.push(val);if(i>=n)break;
+  if(c===44){i++;if(i>=n)row.push('');continue}
+  i+=(c===13&&text.charCodeAt(i+1)===10)?2:1;if(keep(row))rows.push(row);row=[]}
+ if(row.length&&keep(row))rows.push(row);
+ return rows}
+async function sxlReadTable(T,file){
+ var cols=null,rows=[],keys=(T.key&&T.uniq!==false)?new Set():null,num=T.num||[],rowNo=1,buf='',first=true;
+ var take=function(raw){raw.forEach(function(r){
+  if(!cols){cols=r.map(function(x){return x.trim()});
+   T.need.forEach(function(h){if(cols.indexOf(h)<0)throw Error('ขาดคอลัมน์ '+h+' — ส่งออกทุกคอลัมน์จากตาราง '+T.t)});
+   if(new Set(cols).size!==cols.length)throw Error('ชื่อคอลัมน์ซ้ำ');return}
+  rowNo++;if(r.length!==cols.length)throw Error('แถว '+rowNo+' มีจำนวนคอลัมน์ไม่ตรงหัวตาราง ('+r.length+' แทน '+cols.length+')');
+  var o={};for(var j=0;j<cols.length;j++){var h=cols[j],v=r[j];if(v==='')v=null;else if(num.indexOf(h)>=0&&v.trim()!==''&&isFinite(+v))v=+v;o[h]=v}
+  if(keys){var k=o[T.key];if(k==null||keys.has(String(k)))throw Error(T.key+' ว่างหรือซ้ำที่แถว '+rowNo);keys.add(String(k))}
+  rows.push(o)})};
+ /* อ่านเป็นก้อน ตัดที่ขึ้นบรรทัดใหม่ตัวสุดท้ายที่ไม่อยู่ในเครื่องหมายคำพูด (ไล่ต่อจากจุดเดิม ไม่สแกนซ้ำ) */
+ var rd=file.stream().pipeThrough(new TextDecoderStream()).getReader(),pos=0,inQ=false,last=-1;
+ for(;;){var x=await rd.read();if(x.done)break;buf+=x.value;
+  if(first){buf=buf.replace(/^\uFEFF/,'');first=false}
+  for(var n=buf.length;pos<n;pos++){var c=buf.charCodeAt(pos);if(c===34)inQ=!inQ;else if(c===10&&!inQ)last=pos}
+  if(buf.length<(1<<20)||last<0)continue;                         // สะสมให้ได้ ~1 ล้านตัวอักษรก่อนค่อยตัด
+  take(sxlParseCSV(buf.slice(0,last+1),rowNo));buf=buf.slice(last+1);pos-=last+1;last=-1}
+ if(buf)take(sxlParseCSV(buf,rowNo));
+ if(!cols)throw Error('ไฟล์ CSV ว่าง');
+ return {rows:rows,cols:cols}}
+
+/* ---------- ตัวถามข้อมูลแบบ supabase-js ---------- */
+function sxlLikeRe(p,ci){var s=String(p==null?'':p).replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/%/g,'[\\s\\S]*').replace(/_/g,'[\\s\\S]');return new RegExp('^'+s+'$',ci?'i':'')}
+/* เทียบเป็นตัวเลขเฉพาะเมื่อฝั่งใดฝั่งหนึ่งเป็นตัวเลขจริง (คอลัมน์ num) — คอลัมน์ข้อความเทียบแบบข้อความเสมอ ลำดับจึงคงที่ แบ่งหน้าไม่หล่น */
+function sxlCmp(a,b){if(typeof a==='number'||typeof b==='number'){var x=+a,y=+b;if(isFinite(x)&&isFinite(y))return x-y}
+ if(typeof a!=='string')a=JSON.stringify(a);if(typeof b!=='string')b=JSON.stringify(b);return a<b?-1:a>b?1:0}
+function sxlOp(c,op,v){
+ var g=sxlGetter(c);
+ switch(op){
+  case 'eq':return function(r){var x=g(r);return x!=null&&(typeof x==='number'?x===+v:String(x)===String(v))};
+  case 'neq':return function(r){var x=g(r);return x!=null&&!(typeof x==='number'?x===+v:String(x)===String(v))};
+  case 'like':case 'ilike':{var re=sxlLikeRe(v,op==='ilike');return function(r){var x=g(r);return x!=null&&re.test(String(x))}}
+  case 'in':{var a=Array.isArray(v)?v:String(v).replace(/^\(|\)$/g,'').split(',').map(function(x){return x.trim().replace(/^"|"$/g,'')});var s=new Set(a.map(String));return function(r){var x=g(r);return x!=null&&s.has(String(x))}}
+  case 'is':return (v===null||String(v).toLowerCase()==='null')?function(r){return g(r)==null}:function(r){return String(g(r)).toLowerCase()===String(v).toLowerCase()};
+  case 'gt':return function(r){var x=g(r);return x!=null&&sxlCmp(x,v)>0};
+  case 'gte':return function(r){var x=g(r);return x!=null&&sxlCmp(x,v)>=0};
+  case 'lt':return function(r){var x=g(r);return x!=null&&sxlCmp(x,v)<0};
+  case 'lte':return function(r){var x=g(r);return x!=null&&sxlCmp(x,v)<=0};
+ }
+ throw Error('รุ่นทดลองยังไม่รองรับตัวกรอง '+op)}
+function sxlOr(expr){
+ var parts=[],d=0,cur='';String(expr).split('').forEach(function(ch){if(ch==='(')d++;if(ch===')')d--;if(ch===','&&!d){parts.push(cur);cur='';return}cur+=ch});if(cur)parts.push(cur);
+ return parts.map(function(p){var m=p.trim().match(/^([^.]+)\.(not\.)?([a-z]+)\.([\s\S]*)$/);if(!m)throw Error('อ่านเงื่อนไข or ไม่ออก: '+p);
+  var v=m[4];if(m[3]==='like'||m[3]==='ilike')v=v.replace(/\*/g,'%');var f=sxlOp(m[1],m[3],v);return m[2]?function(r){return !f(r)}:f})}
+/* คอลัมน์ธรรมดา หรือ data->>key / data->a->>b (อ่านจาก JSON · จำค่าที่แกะแล้วต่อแถว) */
+var SXL_TBL=null;   // ตารางของคำขอที่กำลังทำงาน (ใช้แกะ JSON)
+function sxlPath(spec){var m=String(spec).trim().match(/^([A-Za-z0-9_]+)((?:->>?[A-Za-z0-9_]+)*)$/);if(!m)throw Error('อ่านคอลัมน์ไม่ออก: '+spec);
+ var steps=[],re=/(->>?)([A-Za-z0-9_]+)/g,x;while((x=re.exec(m[2])))steps.push({txt:x[1]==='->>',k:x[2]});return {col:m[1],steps:steps}}
+function sxlJsonCell(r,col){var T=SXL_TBL,v=r[col];if(v==null||!T)return v;
+ if((T.json||[]).indexOf(col)>=0||(T.jsonish||[]).indexOf(col)>=0){if(typeof v!=='string')return v;try{return JSON.parse(v)}catch(e){return (T.jsonish||[]).indexOf(col)>=0?v:null}}return v}
+function sxlGetter(spec){var p=sxlPath(spec);if(!p.steps.length)return function(r){return r[p.col]};
+ var key='\u0001'+spec;
+ return function(r){var c=r.__px||(r.__px={});if(key in c)return c[key];
+  var v=sxlJsonCell(r,p.col);if(typeof v==='string'){try{v=JSON.parse(v)}catch(e){v=null}}
+  for(var i=0;i<p.steps.length&&v!=null;i++){v=(typeof v==='object')?v[p.steps[i].k]:undefined;if(v===undefined)v=null}
+  var last=p.steps[p.steps.length-1];
+  if(last.txt&&v!=null&&typeof v!=='string')v=(typeof v==='object')?JSON.stringify(v):String(v);
+  if(v!=null&&typeof v==='object')return v&&JSON.parse(JSON.stringify(v));   // ได้วัตถุ → ให้ของใหม่ทุกครั้ง ไม่จำ
+  c[key]=v;return v}}
+function sxlQuery(table){
+ var st={table:table,op:'select',cols:null,f:[],ord:[],lim:null,from:0,mode:'many',head:false,count:null,err:null,keys:null};
+ var TK=(sxlCfg(table)||{}).key;
+ var q={};
+ var add=function(fn){try{st.f.push(fn())}catch(e){st.err=e.message}return q};
+ q.select=function(cols,opt){if(st.op==='select'){st.cols=cols||'*';if(opt&&opt.head)st.head=true;if(opt&&opt.count)st.count=opt.count}else st.ret=cols||'*';return q};
+ ['eq','neq','like','ilike','in','is','gt','gte','lt','lte'].forEach(function(op){q[op]=function(c,v){
+  if(c===TK&&(op==='eq'||op==='in'))st.keys=(op==='eq'?[v]:(Array.isArray(v)?v:[])).map(String);   // ตารางอ่านทีละรหัส
+  return add(function(){return sxlOp(c,op,v)})}});
+ q.not=function(c,op,v){return add(function(){var f=sxlOp(c,op,v);return function(r){return !f(r)}})};
+ q.or=function(expr){return add(function(){var fs=sxlOr(expr);return function(r){return fs.some(function(f){return f(r)})}})};
+ q.filter=function(c,op,v){return add(function(){return sxlOp(c,op,v)})};
+ q.match=function(o){Object.keys(o||{}).forEach(function(k){q.eq(k,o[k])});return q};
+ q.order=function(c,o){st.ord.push({c:c,asc:!(o&&o.ascending===false),nf:(o&&typeof o.nullsFirst==='boolean')?o.nullsFirst:!(o&&o.ascending===false)?false:true});return q};
+ q.limit=function(n){st.lim=n;return q};q.range=function(a,b){st.from=a;st.lim=b-a+1;return q};
+ q.single=function(){st.mode='single';return q};q.maybeSingle=function(){st.mode='maybe';return q};
+ q.abortSignal=function(){return q};q.returns=function(){return q};q.throwOnError=function(){st.throwErr=true;return q};
+ ['insert','upsert','update','delete'].forEach(function(w){q[w]=function(d){st.op='write';st.wkind=w;st.wdata=d;return q}});
+ q.then=function(ok,no){return Promise.resolve().then(function(){return sxlExec(st)}).then(function(r){if(st.throwErr&&r.error)throw r.error;return r}).then(ok,no)};
+ q['catch']=function(no){return q.then(null,no)};
+ q['finally']=function(fn){return q.then(function(v){fn&&fn();return v},function(e){fn&&fn();throw e})};
+ return q}
+function sxlSorted(S,T,ord){var key=JSON.stringify(ord);var hit=S.sort.get(key);if(hit)return hit;
+ SXL_TBL=T;var gs=ord.map(function(o){return sxlGetter(o.c)});
+ var arr=S.rows.map(function(r,i){return {r:r,i:i,k:gs.map(function(g){return g(r)})}});
+ arr.sort(function(a,b){for(var j=0;j<ord.length;j++){var x=a.k[j],y=b.k[j],o=ord[j];
+   if(x==null||y==null){if(x==null&&y==null)continue;return (x==null)===o.nf?-1:1}
+   var d=sxlCmp(x,y);if(d)return o.asc?d:-d}return a.i-b.i});
+ var out=arr.map(function(a){return a.r});if(S.sort.size>12)S.sort.clear();S.sort.set(key,out);return out}
+function sxlExec(st){if(st.op==='write')return sxlWrite(st);var T=sxlCfg(st.table);if(T&&T.lazy)return sxlLazyRead(st);return sxlRun(st)}
+function sxlProject(T,S,rows,cols){SXL_TBL=T;var star=!cols||String(cols).trim()==='*';
+ var specs=star?S.cols.map(function(c){return {as:c,c:c}}):String(cols).split(',').map(function(x){x=x.trim();var m=x.match(/^([A-Za-z0-9_]+):(.+)$/);
+  if(m)return {as:m[1],c:m[2].trim()};var p=sxlPath(x);return {as:p.steps.length?p.steps[p.steps.length-1].k:p.col,c:x}}).filter(function(s){return s.c});
+ if(star){var seen=new Set(S.cols);rows.forEach(function(r){for(var c in r)if(c.indexOf('__')!==0&&!seen.has(c)){seen.add(c);specs.push({as:c,c:c})}})}
+ var gets=specs.map(function(s){var p=sxlPath(s.c);return p.steps.length?sxlGetter(s.c):function(r){return sxlJsonCell(r,s.c)}});
+ return rows.map(function(r){var o={};specs.forEach(function(s,k){var v=gets[k](r);o[s.as]=v===undefined?null:v});return o})}
+function sxlShape(st,out,count,status){
+ if(st.mode==='single'){if(out.length!==1)return {data:null,error:{message:out.length?'ได้มากกว่า 1 แถว':'ไม่พบแถวที่ตรงเงื่อนไข',code:'PGRST116'},count:count,status:406};return {data:out[0],error:null,count:count,status:status||200}}
+ if(st.mode==='maybe'){if(out.length>1)return {data:null,error:{message:'ได้มากกว่า 1 แถว',code:'PGRST116'},count:count,status:406};return {data:out[0]||null,error:null,count:count,status:status||200}}
+ return {data:out,error:null,count:st.count?count:null,status:status||200}}
+function sxlOrdCmp(T,ord){var gs=ord.map(function(o){return sxlGetter(o.c)});return function(a,b){for(var j=0;j<ord.length;j++){var x=gs[j](a),y=gs[j](b),o=ord[j];
+ if(x==null||y==null){if(x==null&&y==null)continue;return (x==null)===o.nf?-1:1}var d=sxlCmp(x,y);if(d)return o.asc?d:-d}return 0}}
+function sxlRun(st,only){
+ var E=function(m){return {data:null,error:{message:m},count:null,status:400}};
+ if(st.err)return E(st.err);
+ var T=sxlCfg(st.table),S=SXL.s[st.table];
+ if(!T)return E('รุ่นทดลองยังไม่เชื่อมตาราง '+st.table);
+ if(!only&&T.load===false)return E('ตาราง '+st.table+' ไม่ได้อ่านเข้ามาในโปรแกรมนี้ (บันทึกได้อย่างเดียว)');
+ if(!only&&!S.ready)return E('ยังไม่ได้เลือกไฟล์ '+st.table+' ที่ปุ่ม “ไฟล์กลาง”');
+ SXL_TBL=T;
+ try{
+  var src=only||S.rows,base=st.ord.length?(only?src.slice().sort(sxlOrdCmp(T,st.ord)):sxlSorted(S,T,st.ord)):src,need=(st.count||st.mode!=='many')?Infinity:(st.lim==null?Infinity:st.from+st.lim),hit=[];
+  SXL_TBL=T;
+  for(var i=0;i<base.length&&hit.length<need;i++){var r=base[i],ok=true;for(var j=0;j<st.f.length;j++)if(!st.f[j](r)){ok=false;break}if(ok)hit.push(r)}
+  var count=hit.length,rows=hit;
+  if(st.from)rows=rows.slice(st.from);if(st.lim!=null)rows=rows.slice(0,st.lim);
+  if(st.head)return {data:null,error:null,count:count,status:200};
+  return sxlShape(st,sxlProject(T,S,rows,st.cols),count)
+ }catch(e){return E(e.message||String(e))}}
+var SXL_DB={from:sxlQuery,
+ rpc:function(n){var r={data:null,error:{message:'รุ่นทดลองไม่รองรับคำสั่ง '+n}};var p=Promise.resolve(r);return {then:p.then.bind(p),'catch':p['catch'].bind(p)}},
+ auth:{getSession:async function(){return {data:{session:{access_token:'sxlocal',user:{id:'local-trial'}}},error:null}},getUser:async function(){return {data:{user:null},error:null}},signOut:async function(){return {error:null}},
+  signInWithPassword:async function(){return {data:null,error:{message:'รุ่นทดลองไม่ใช้บัญชี'}}},updateUser:async function(){return {data:null,error:{message:'รุ่นทดลองไม่ใช้บัญชี'}}}}};
+
+/* ═══════════ เขียนกลับไฟล์กลาง ═══════════
+   ไม่แก้ไฟล์ CSV เดิม · ของที่บันทึกเขียนเป็นไฟล์ JSON เล็ก ๆ ใน <Server>/_changes/<ตาราง>/
+   ตอนอ่าน: CSV เป็นฐาน แล้วเอาไฟล์ใน _changes มาวางทับ (ไฟล์ใหม่กว่าชนะ)
+   แบ่งไฟล์เป็น "กลุ่ม" ตามตาราง: ทีละแถว (ค่าตั้งต้น) · part_index ทีละออเดอร์ · imos_mapping 16 กลุ่ม
+   ทุกการบันทึก = ไฟล์ใหม่หนึ่งไฟล์ต่อกลุ่ม ชื่อมีเวลาอยู่ในตัว ไม่เขียนทับไฟล์ที่คนอื่นกำลังอ่าน · เก็บ 3 รุ่นล่าสุดต่อกลุ่ม
+   สองเครื่องบันทึกพร้อมกัน เสียได้อย่างมากแค่กลุ่มที่ชนกัน ไม่ใช่ทั้งตาราง */
+function sxlHash(s){var h=0x811c9dc5;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)}return h>>>0}
+function sxlH8(s){return ('0000000'+sxlHash(s).toString(16)).slice(-8)}
+function sxlBucketOf(T,r){var b=(T.w&&T.w.bucket)||'key';
+ if(b.indexOf('col:')===0){var v=r[b.slice(4)];return 'c:'+(v==null?'':String(v))}
+ if(b.indexOf('hash:')===0)return 'h:'+(sxlHash(String(r[T.key]))%(+b.slice(5)));
+ return 'k:'+String(r[T.key])}
+function sxlBf(bucket){var s=bucket.slice(2).replace(/[^A-Za-z0-9._\-฀-๿]+/g,'_').slice(0,80)||'_';return s+'~'+sxlH8(bucket)}
+function sxlTs(){return ('00000000'+Date.now().toString(36)).slice(-9)+'-'+(Math.random().toString(36)+'0000').slice(2,6)}
+var SXL_VER_RE=/^(.+~[0-9a-f]{8})@([0-9a-z]{9}-[0-9a-z]{4})\.json$/;
+function sxlIsJ(T,c){return (T.json||[]).indexOf(c)>=0||(T.jsonish||[]).indexOf(c)>=0}
+function sxlStrip(r){if(!r)return null;var o={};for(var k in r)if(k.indexOf('__')!==0)o[k]=r[k];return o}
+/* ค่าจากโปรแกรม → แถวในหน่วยความจำ (คอลัมน์ JSON เก็บเป็นข้อความ เหมือนที่อ่านจาก CSV) */
+function sxlToRaw(T,o){var r={};Object.keys(o||{}).forEach(function(c){if(c.indexOf('__')===0)return;var v=o[c];if(v===undefined)return;
+ if(sxlIsJ(T,c))v=(v==null)?null:JSON.stringify(v);else if(v instanceof Date)v=v.toISOString();else if(v!=null&&typeof v==='object')v=JSON.stringify(v);
+ if(v!=null&&(T.num||[]).indexOf(c)>=0&&typeof v!=='number'&&String(v).trim()!==''&&isFinite(+v))v=+v;r[c]=v});return r}
+function sxlRawToFile(T,r){var o={};Object.keys(r).forEach(function(c){if(c.indexOf('__')===0)return;var v=r[c];
+ if(v!=null&&typeof v==='string'&&sxlIsJ(T,c)){try{v=JSON.parse(v)}catch(e){}}o[c]=v});return o}
+function sxlFileToRaw(T,o){var r={};Object.keys(o||{}).forEach(function(c){var v=o[c];if(sxlIsJ(T,c))v=(v==null)?null:JSON.stringify(v);r[c]=v});return r}
+function sxlIdx(T,S){if(!S.idx){S.idx=new Map();S.rows.forEach(function(r){S.idx.set(String(r[T.key]),r)})}return S.idx}
+function sxlLocked(fn){var run=SXL.lockP.then(async function(){SXL.locked++;try{return await fn()}finally{SXL.locked--}});SXL.lockP=run.catch(function(){});return run}
+async function sxlOverDir(t,create){if(!SXL.dir)return null;
+ try{var r=await SXL.dir.getDirectoryHandle('_changes',{create:!!create});return await r.getDirectoryHandle(t,{create:!!create})}
+ catch(e){if(e&&(e.name==='NotFoundError'||e.name==='TypeMismatchError')&&!create)return null;throw e}}
+async function sxlCanWrite(){if(!SXL.dir)return false;try{SXL.canWrite=(await SXL.dir.queryPermission({mode:'readwrite'}))==='granted'}catch(e){SXL.canWrite=false}return SXL.canWrite}
+/* แถวรวม = ฐาน (CSV) ที่กลุ่มไม่ถูกแทน + แถวในไฟล์ _changes รุ่นล่าสุดของแต่ละกลุ่ม */
+function sxlRebuild(T,S){
+ if(!S.over.size){S.rows=S.base||[]}
+ else{var ents=Array.from(S.over.values()).sort(function(a,b){var x=a.name.split('@')[1]||'',y=b.name.split('@')[1]||'';return x<y?-1:x>y?1:0});
+  var ob=new Set(),orow=new Map();ents.forEach(function(e){ob.add(e.bucket);e.rows.forEach(function(r){orow.set(String(r[T.key]),r)})});
+  var out=[];(S.base||[]).forEach(function(r){if(!ob.has(sxlBucketOf(T,r))&&!orow.has(String(r[T.key])))out.push(r)});
+  orow.forEach(function(r){out.push(r)});S.rows=out;
+  var cs=new Set(S.cols||[]);ents.forEach(function(e){e.rows.forEach(function(r){for(var c in r)if(c.indexOf('__')!==0)cs.add(c)})});S.cols=Array.from(cs)}
+ S.idx=null;S.ver++;S.sort=new Map()}
+/* อ่านไฟล์ใน _changes ที่ใหม่กว่าที่มีอยู่ · only = อ่านเฉพาะบางกลุ่ม · คืน true ถ้ามีอะไรเปลี่ยน */
+async function sxlScanOver(T,S,only){
+ var d=await sxlOverDir(T.t,false);if(!d)return false;
+ var latest={},all={};
+ for await(var ent of d.entries()){if(ent[1].kind!=='file')continue;var m=SXL_VER_RE.exec(ent[0]);if(!m)continue;
+  (all[m[1]]=all[m[1]]||[]).push(ent[0]);if(!latest[m[1]]||ent[0]>latest[m[1]])latest[m[1]]=ent[0]}
+ S.names=all;var ch=false;
+ for(var bf in latest){if(only&&!only.has(bf))continue;var cur=S.over.get(bf);if(cur&&cur.name>=latest[bf])continue;
+  try{var f=await (await d.getFileHandle(latest[bf])).getFile(),o=JSON.parse(await f.text());
+   S.over.set(bf,{bucket:o.bucket,name:latest[bf],at:o.at||'',by:o.by||'',rows:(o.rows||[]).map(function(x){return sxlFileToRaw(T,x)})});ch=true}
+  catch(e){console.warn('[ไฟล์กลาง] อ่าน',T.t,latest[bf],'ไม่ได้ — รอบหน้าลองใหม่',e&&e.message)}}
+ if(ch)sxlRebuild(T,S);return ch}
+function sxlE(m,code,status){return {data:null,error:{message:m,code:code||'SXL'},count:null,status:status||400}}
+async function sxlWrite(st){
+ var T=sxlCfg(st.table),S=SXL.s[st.table];
+ if(!T)return sxlE('รุ่นทดลองยังไม่เชื่อมตาราง '+st.table);
+ if(st.err)return sxlE(st.err);
+ if(T.w&&T.w.deny)return sxlE(T.w.deny,'SXL_DENY',403);
+ if(!SXL.dir)return sxlE('ยังบันทึกไม่ได้ — ต้องเลือกโฟลเดอร์ Server ที่ปุ่ม “ไฟล์กลาง” ก่อน','SXL_NODIR',403);
+ if(!await sxlCanWrite())return sxlE('ยังไม่ได้อนุญาตให้บันทึกลงโฟลเดอร์ Server — กดปุ่ม “ไฟล์กลาง” → “เชื่อมตำแหน่งที่จำไว้” แล้วเลือกอนุญาตให้แก้ไข','SXL_NOPERM',403);
+ if(T.load!==false&&!T.lazy&&!S.ready)return sxlE('ยังไม่ได้อ่านไฟล์ '+T.t+' — บันทึกไม่ได้จนกว่าจะอ่านข้อมูลเดิมครบ','SXL_NOBASE',409);
+ return sxlLocked(async function(){try{return await sxlWriteIn(T,S,st)}catch(e){console.error('[ไฟล์กลาง] บันทึก',T.t,e);return sxlE('บันทึกลงโฟลเดอร์ Server ไม่สำเร็จ: '+(e&&e.message||e),'SXL_IO',500)}})}
+async function sxlWriteIn(T,S,st){
+  var now=new Date().toISOString(),K=T.key,kind=st.wkind;
+  var arr=(kind==='insert'||kind==='upsert')?(Array.isArray(st.wdata)?st.wdata:[st.wdata]).map(function(p){var e=sxlToRaw(T,p);if(T.w&&T.w.autoId&&e[K]==null)e[K]=Date.now()*1000+Math.floor(Math.random()*1000);return e}):null;
+  if(arr&&arr.some(function(e){return e[K]==null}))return sxlE('ต้องมีคอลัมน์ '+K+' ทุกแถว (ตาราง '+T.t+')');
+  if(T.lazy)return sxlLazyWrite(T,S,st,arr,now);
+  /* อ่านของล่าสุดจากดิสก์ก่อน จะได้ต่อจากที่เครื่องอื่นเพิ่งบันทึก · เพิ่มทีละแถวอ่านเฉพาะกลุ่มนั้น */
+  var only=null;if(arr&&((T.w&&T.w.bucket)||'key')==='key'){only=new Set();arr.forEach(function(e){only.add(sxlBf(sxlBucketOf(T,e)))})}
+  if(await sxlScanOver(T,S,only))SXL.extChanged.add(T.t);
+  var idx=sxlIdx(T,S),changes=new Map();
+  if(arr){for(var i=0;i<arr.length;i++){var e=arr[i],k=String(e[K]),prev=changes.get(k),old=prev?prev.nw:(idx.get(k)||null);
+    if(kind==='insert'&&old)return sxlE('duplicate key value violates unique constraint ('+T.t+'.'+K+' = '+k+')','23505',409);
+    var nw=Object.assign(sxlStrip(old)||{},e);if(!old&&nw.created_at==null&&S.cols.indexOf('created_at')>=0)nw.created_at=now;
+    changes.set(k,{old:prev?prev.old:old,nw:nw})}}
+  else{SXL_TBL=T;var hit=S.rows.filter(function(r){return st.f.every(function(f){return f(r)})});
+   var patch=kind==='update'?sxlToRaw(T,st.wdata||{}):null;
+   hit.forEach(function(r){changes.set(String(r[K]),{old:r,nw:patch?Object.assign(sxlStrip(r),patch):null})})}
+  if(!changes.size)return {data:st.ret?[]:null,error:null,count:0,status:200};
+  var byB=new Map(),g=function(b){var x=byB.get(b);if(!x){x={del:new Set(),put:new Map()};byB.set(b,x)}return x};
+  changes.forEach(function(c,k){if(c.old)g(sxlBucketOf(T,c.old)).del.add(k);if(c.nw)g(sxlBucketOf(T,c.nw)).put.set(k,c.nw)});
+  var cur=new Map();byB.forEach(function(_,b){cur.set(b,[])});
+  S.rows.forEach(function(r){var b=sxlBucketOf(T,r);var a=cur.get(b);if(a)a.push(r)});
+  var dir=await sxlOverDir(T.t,true),made=[];
+  for(var ent of byB){var b=ent[0],x=ent[1];
+   var snap=cur.get(b).filter(function(r){var k=String(r[K]);return !x.del.has(k)&&!x.put.has(k)});x.put.forEach(function(r){snap.push(r)});
+   var bf=sxlBf(b),name=bf+'@'+sxlTs()+'.json';
+   var body=JSON.stringify({v:1,table:T.t,bucket:b,at:now,by:SXL.machine,rows:snap.map(function(r){return sxlRawToFile(T,r)})});
+   var fh=await dir.getFileHandle(name,{create:true}),w=await fh.createWritable();await w.write(body);await w.close();
+   S.over.set(bf,{bucket:b,name:name,at:now,by:SXL.machine,rows:snap});made.push([bf,name])}
+  sxlRebuild(T,S);S.nW=(S.nW||0)+changes.size;
+  /* เก็บ 3 รุ่นล่าสุดต่อกลุ่ม ที่เหลือลบ (ลบไม่ได้ก็ไม่เป็นไร) */
+  made.forEach(function(p){var ns=((S.names&&S.names[p[0]])||[]).concat([p[1]]).sort();S.names=S.names||{};S.names[p[0]]=ns.slice(-3);
+   ns.slice(0,-3).forEach(function(n){try{dir.removeEntry(n).catch(function(){})}catch(e){}})});
+  if(T.t===SXL.cfg.settingsTable&&SXL.cfg.settingsKey)SXL.settingsRaw=sxlRawOf(T.t,SXL.cfg.settingsKey);
+  setTimeout(sxlRender,0);
+  var out=[];changes.forEach(function(c){if(c.nw)out.push(c.nw)});
+  return st.ret?sxlShape(st,sxlProject(T,S,out,st.ret),out.length,201):{data:null,error:null,count:null,status:201}}
+/* ตารางที่อ่านทีละรหัส (furnitech_share): หนึ่งไฟล์ต่อหนึ่งแถว ชื่อคงที่ ไม่โหลดทั้งตาราง */
+async function sxlLazyWrite(T,S,st,arr,now){
+ if(!arr)return sxlE('ตาราง '+T.t+' เพิ่มแถวได้อย่างเดียว');
+ var dir=await sxlOverDir(T.t,true);
+ for(var i=0;i<arr.length;i++){var e=arr[i],name=sxlBf('k:'+e[T.key])+'.json';
+  if(st.wkind==='insert'){var ex=true;try{await dir.getFileHandle(name)}catch(_){ex=false}
+   if(ex)return sxlE('duplicate key value violates unique constraint ('+T.t+'.'+T.key+' = '+e[T.key]+')','23505',409)}
+  if(e.created_at==null)e.created_at=now;
+  var fh=await dir.getFileHandle(name,{create:true}),w=await fh.createWritable();
+  await w.write(JSON.stringify({v:1,table:T.t,bucket:'k:'+e[T.key],at:now,by:SXL.machine,rows:[sxlRawToFile(T,e)]}));await w.close()}
+ S.nW=(S.nW||0)+arr.length;setTimeout(sxlRender,0);
+ return st.ret?sxlShape(st,sxlProject(T,S,arr,st.ret),arr.length,201):{data:null,error:null,count:null,status:201}}
+async function sxlLazyRead(st){try{return await sxlLazyReadIn(st)}catch(e){return sxlE('อ่านโฟลเดอร์ Server ไม่สำเร็จ: '+(e&&e.message||e),'SXL_IO',500)}}
+async function sxlLazyReadIn(st){
+ var T=sxlCfg(st.table),S=SXL.s[st.table];
+ if(st.err)return sxlE(st.err);
+ if(!st.keys)return sxlE('ตาราง '+T.t+' อ่านได้ทีละรหัส (ต้องระบุ '+T.key+')');
+ if(!SXL.dir)return sxlE('ยังไม่ได้เลือกโฟลเดอร์ Server ที่ปุ่ม “ไฟล์กลาง”','SXL_NODIR',403);
+ var dir=await sxlOverDir(T.t,false),rows=[];
+ if(dir)for(var k of st.keys){try{var f=await (await dir.getFileHandle(sxlBf('k:'+k)+'.json')).getFile(),o=JSON.parse(await f.text());
+  (o.rows||[]).forEach(function(x){rows.push(sxlFileToRaw(T,x))})}catch(e){}}
+ return sxlRun(st,rows)}
+function sxlRawOf(t,k){var T=sxlCfg(t),S=SXL.s[t];if(!T||!S||!S.ready)return null;var r=sxlIdx(T,S).get(String(k));if(!r)return null;var v=r[(T.jsonish||T.json||['value'])[0]];return v==null?null:String(v)}
+/* รอจนมีโฟลเดอร์ (เช่น เปิดลิงก์ตู้ก่อนจะอนุญาตโฟลเดอร์) */
+function sxlWaitDir(why){return new Promise(function(res,rej){if(SXL.dir)return res();
+ try{sxLocalSettings();sxlStatus(why,true)}catch(e){}
+ var t0=Date.now(),iv=setInterval(function(){if(SXL.dir){clearInterval(iv);res()}else if(Date.now()-t0>600000){clearInterval(iv);rej(Error('ยังไม่ได้เลือกโฟลเดอร์ Server'))}},300)})}
+
+/* ---------- จำตำแหน่งไฟล์ (IndexedDB ชื่อเดียวกันทั้งสองโปรแกรม) ---------- */
+function sxlIdb(fn){return new Promise(function(res,rej){var r=indexedDB.open('starnexus-local-xml-v1',1);r.onupgradeneeded=function(){r.result.createObjectStore('config')};r.onerror=function(){rej(r.error)};
+ r.onsuccess=function(){var db=r.result;try{fn(db,res,rej)}catch(e){db.close();rej(e)}}})}
+function sxlIdbGet(k){return sxlIdb(function(db,res,rej){var q=db.transaction('config').objectStore('config').get(k);q.onsuccess=function(){db.close();res(q.result)};q.onerror=function(){db.close();rej(q.error)}})}
+function sxlIdbPut(k,v){return sxlIdb(function(db,res,rej){var tx=db.transaction('config','readwrite');if(v==null)tx.objectStore('config').delete(k);else tx.objectStore('config').put(v,k);tx.oncomplete=function(){db.close();res()};tx.onerror=function(){db.close();rej(tx.error)}})}
+
+/* ---------- Excel (.xlsx/.xlsm) — อ่านตรงจากไฟล์ ไม่ต้องแปลงเป็น CSV ----------
+   ใช้กับตารางที่ตั้ง xlsx ไว้ (fitting_global) · เช่น FittingGlobal_RefreshOnly.xlsm ที่ดึงจาก AX (ECORESPRODUCT)
+   แตก zip เอง (DecompressionStream) · อ่านชีตทีละก้อน · หาชีตที่มีหัวคอลัมน์ตรงเอง */
+function sxlIsXlsx(name){return /\.xls[xm]$/i.test(String(name||''))}
+function sxlUnzipIndex(buf){
+ var dv=new DataView(buf),n=buf.byteLength,eo=-1;
+ for(var i=n-22;i>=Math.max(0,n-65557);i--){if(dv.getUint32(i,true)===0x06054b50){eo=i;break}}
+ if(eo<0)throw Error('ไม่ใช่ไฟล์ Excel (.xlsx/.xlsm) ที่อ่านได้ — ถ้า Excel กำลังบันทึกอยู่ รอสักครู่แล้วโปรแกรมจะอ่านใหม่เอง');
+ var cnt=dv.getUint16(eo+10,true),off=dv.getUint32(eo+16,true),td=new TextDecoder(),ents={};
+ for(var k=0;k<cnt;k++){if(dv.getUint32(off,true)!==0x02014b50)throw Error('โครงสร้างไฟล์ Excel เสีย');
+  var nl=dv.getUint16(off+28,true),xl=dv.getUint16(off+30,true),cl=dv.getUint16(off+32,true);
+  ents[td.decode(new Uint8Array(buf,off+46,nl))]={meth:dv.getUint16(off+10,true),csz:dv.getUint32(off+20,true),lho:dv.getUint32(off+42,true)};off+=46+nl+xl+cl}
+ return ents}
+function sxlZipStream(buf,e){var dv=new DataView(buf);if(dv.getUint32(e.lho,true)!==0x04034b50)throw Error('โครงสร้างไฟล์ Excel เสีย');
+ var st=e.lho+30+dv.getUint16(e.lho+26,true)+dv.getUint16(e.lho+28,true),s=new Blob([new Uint8Array(buf,st,e.csz)]).stream();
+ if(e.meth===8)s=s.pipeThrough(new DecompressionStream('deflate-raw'));else if(e.meth!==0)throw Error('ไฟล์ Excel บีบอัดแบบที่ยังไม่รองรับ');
+ return s.pipeThrough(new TextDecoderStream())}
+async function sxlZipText(buf,e){var r=sxlZipStream(buf,e).getReader(),out=[];for(;;){var x=await r.read();if(x.done)break;out.push(x.value)}return out.join('')}
+function sxlXmlDec(s){return s.indexOf('&')<0?s:s.replace(/&(lt|gt|amp|quot|apos|#x[0-9a-fA-F]+|#\d+);/g,function(m,g){return g==='lt'?'<':g==='gt'?'>':g==='amp'?'&':g==='quot'?'"':g==='apos'?"'":g[1]==='x'?String.fromCodePoint(parseInt(g.slice(2),16)):String.fromCodePoint(+g.slice(1))})}
+function sxlXmlText(inner){var s='',m,re=/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;inner=inner.replace(/<rPh\b[\s\S]*?<\/rPh>/g,'');while((m=re.exec(inner)))s+=m[1];return sxlXmlDec(s)}
+function sxlColIdx(ref){var n=0;for(var i=0;i<ref.length;i++){var c=ref.charCodeAt(i);if(c<65||c>90)break;n=n*26+(c-64)}return n-1}
+async function sxlReadXlsx(T,file){
+ var X=T.xlsx;if(!X)throw Error('ตาราง '+T.t+' ยังไม่รองรับไฟล์ Excel — ใช้ CSV');
+ var buf=await file.arrayBuffer(),ents=sxlUnzipIndex(buf),ss=[];
+ if(ents['xl/sharedStrings.xml']){var sx=await sxlZipText(buf,ents['xl/sharedStrings.xml']),m,re=/<si>([\s\S]*?)<\/si>|<si\/>/g;while((m=re.exec(sx)))ss.push(m[1]?sxlXmlText(m[1]):'');sx=null}
+ var sheets=Object.keys(ents).filter(function(n){return /^xl\/worksheets\/[^/]+\.xml$/.test(n)}).sort();
+ var cellRe=/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g,rowRe=/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g;
+ var val=function(attr,inner){if(inner==null)return null;var t=/\bt="([^"]*)"/.exec(attr),ty=t?t[1]:'';
+  if(ty==='inlineStr'){var is=/<is>([\s\S]*?)<\/is>/.exec(inner);return is?sxlXmlText(is[1]):null}
+  var v=/<v>([\s\S]*?)<\/v>/.exec(inner);if(!v)return null;
+  if(ty==='s')return ss[+v[1]];if(ty==='str'||ty==='e'||ty==='b')return sxlXmlDec(v[1]);return sxlXmlDec(v[1])};
+ var cols=Object.keys(X.cols),seen=new Set(),dup=0;
+ for(var sn of sheets){
+  var rd=sxlZipStream(buf,ents[sn]).getReader(),bufS='',hdr=null,pick=null,rows=[],skip=false;
+  var takeRow=function(inner){if(inner==null)return;var cells={},m2;cellRe.lastIndex=0;
+   while((m2=cellRe.exec(inner))){var r=/\br="([A-Z]+)\d+"/.exec(m2[1]);if(!r)continue;cells[sxlColIdx(r[1])]=val(m2[1],m2[2])}
+   if(!hdr){hdr=cells;var byName={};Object.keys(cells).forEach(function(i){byName[String(cells[i]||'').trim().toUpperCase()]=+i});
+    pick={};cols.forEach(function(c){var cand=X.cols[c];for(var j=0;j<cand.length;j++)if(byName[cand[j]]!=null){pick[c]=byName[cand[j]];break}});
+    if(X.need.some(function(c){return pick[c]==null}))skip=true;return}
+   var o={};cols.forEach(function(c){var v=pick[c]!=null?cells[pick[c]]:undefined;
+    if(v==null||v===''){v=(X.defaults&&X.defaults[c]!=null)?X.defaults[c]:null}else v=String(v).trim();
+    if(v!=null&&(T.num||[]).indexOf(c)>=0&&isFinite(+v))v=+v;o[c]=v});
+   var k=o[X.key];if(k==null||k==='')return;if(seen.has(k)){dup++;return}seen.add(k);rows.push(o)};
+  for(;;){var x=await rd.read();if(x.done)break;bufS+=x.value;var cut=bufS.lastIndexOf('</row>');if(cut<0)continue;cut+=6;
+   var seg=bufS.slice(0,cut);bufS=bufS.slice(cut);rowRe.lastIndex=0;var m3;while((m3=rowRe.exec(seg))&&!skip)takeRow(m3[1]);
+   if(skip){try{rd.cancel()}catch(e){}break}}
+  if(!skip&&bufS){rowRe.lastIndex=0;var m4;while((m4=rowRe.exec(bufS))&&!skip)takeRow(m4[1])}
+  if(skip||!hdr)continue;
+  var notes=[];cols.forEach(function(c){if(pick[c]==null&&X.defaults&&X.defaults[c]!=null)notes.push('ไฟล์นี้ไม่มีคอลัมน์ '+c+' — ใส่ '+X.defaults[c]+' ให้ทุกแถว')});
+  if(dup)notes.push('รหัสซ้ำ '+dup+' แถว ใช้แถวแรก');
+  return {rows:rows,cols:cols,note:(X.label?X.label+' · ':'')+notes.join(' · ')}}
+ throw Error('ไม่พบชีตที่มีคอลัมน์ '+X.need.map(function(c){return X.cols[c][0]}).join(', ')+' ในไฟล์ Excel นี้')}
+
+/* Fitting Global จากไฟล์ Excel ที่ดึงจาก AX: DISPLAYPRODUCTNUMBER → item_number · SEARCHNAME → product_name/search_name · RECID → recid
+   (ตรงกับที่ตาราง fitting_global บน Supabase เก็บไว้ ตรวจแล้ว 24/09/2026) · ไฟล์ไม่มีหน่วย → EA (ใน Supabase 99.8% เป็น EA) */
+var SXL_FG_XLSX={key:'item_number',need:['item_number','product_name'],label:'จาก Excel (AX)',
+ cols:{item_number:['ITEM_NUMBER','DISPLAYPRODUCTNUMBER','ITEMID'],product_name:['PRODUCT_NAME','NAME','SEARCHNAME'],unit:['UNIT','UNITID','UNIT_ID','BOMUNITID'],search_name:['SEARCH_NAME','SEARCHNAME'],recid:['RECID']},
+ defaults:{unit:'EA'}};
+/* โครงตารางกลาง — StarNexus กับ Production ใช้ชุดเดียวกัน ไฟล์ใน _changes จึงอ่านข้ามโปรแกรมได้ */
+var SXL_SCHEMA={
+ xml_history:{need:['id','order_no','xml_content'],key:'id',num:['id','cab_count'],w:{bucket:'key',autoId:true}},
+ furnitech_cabinets:{need:['id','data'],key:'id',json:['data'],num:['part_count']},
+ furnitech_parts:{need:['id','data'],key:'id',json:['data']},
+ app_settings:{need:['key','value'],key:'key',jsonish:['value']},
+ fitting_global:{need:['item_number','product_name'],key:'item_number',uniq:false,num:['recid'],xlsx:SXL_FG_XLSX,
+  w:{deny:'Fitting Global ในรุ่นทดลองมาจากไฟล์ Excel ของ AX — เพิ่ม/แก้รหัสที่ AX แล้วกด Refresh ในไฟล์ Excel'}},
+ imos_orders:{need:['order_id','data'],key:'order_id',json:['data']},
+ imos_mapping:{need:['conid'],key:'conid',w:{bucket:'hash:16'}},
+ part_index:{need:['barcode','order_id'],key:'barcode',num:['seq'],w:{bucket:'col:order_id'}},
+ furnitech_share:{need:['id','payload'],key:'id',json:['payload'],num:['n_boards','views'],lazy:true}
+};
+/* ---------- โหลดไฟล์เข้าตาราง ---------- */
+/* จับคู่ชื่อไฟล์กับตาราง: ชื่อไฟล์ขึ้นต้นด้วยชื่อตาราง เช่น imos_orders_rows.csv · imos_orders_rows (2).csv */
+var SXL_ALL=['xml_history','furnitech_cabinets','furnitech_parts','app_settings','fitting_global','imos_orders','imos_mapping','part_index','furnitech_share'];
+function sxlMatchName(name){var n=String(name||'').toLowerCase();if(n.indexOf('~$')===0)return null;
+ if(sxlIsXlsx(n)){var nb=n.replace(/\.xls[xm]$/,'').replace(/[^a-z0-9]/g,''),bx=null;   // Excel: FittingGlobal_RefreshOnly.xlsm → fitting_global
+  (SXL.cfg?SXL.cfg.tables:[]).forEach(function(T){if(T.xlsx&&nb.indexOf(T.t.replace(/_/g,''))===0)bx=T.t});return bx}
+ if(n.slice(-4)!=='.csv')return null;
+ var base=n.slice(0,-4).replace(/\s*\(\d+\)$/,'').trim(),best=null;
+ SXL_ALL.forEach(function(t){if(base===t||(base.indexOf(t)===0&&/^[_\s-]/.test(base.slice(t.length))))if(!best||t.length>best.length)best=t});
+ return best&&sxlCfg(best)?best:null}
+async function sxlLoadFile(t,file,src,handle,force){
+ var S=SXL.s[t],T=sxlCfg(t),sig=file.name+'|'+file.size+'|'+file.lastModified;
+ if(!force&&S.ready&&sig===S.sig){S.src=src;S.handle=handle||null;return false}
+ try{var r=sxlIsXlsx(file.name)?await sxlReadXlsx(T,file):await sxlReadTable(T,file);
+  Object.assign(S,{ready:true,base:r.rows,cols:r.cols,name:file.name,sig:sig,size:file.size,mod:file.lastModified,src:src,handle:handle||null,err:''});sxlRebuild(T,S);
+  SXL.notes[t]=r.note||'';if(T.check){try{SXL.notes[t]=T.check(r.rows)||SXL.notes[t]}catch(e){}}
+  return true}
+ catch(e){S.err=(e&&e.message||String(e))+(S.ready?' — ยังใช้ข้อมูลรอบก่อนอยู่':'');S.src=src;S.handle=handle||null;if(!S.ready)S.name=file.name;return false}}
+async function sxlScanDir(dir){var found={};
+ for await(var ent of dir.entries()){var name=ent[0],h=ent[1];if(h.kind!=='file')continue;var t=sxlMatchName(name);if(!t)continue;
+  var f=await h.getFile();if(!found[t]||f.lastModified>found[t].f.lastModified)found[t]={f:f,h:h}}
+ return found}
+/* อ่านรอบเดียวทุกแหล่ง: โฟลเดอร์ (จับคู่ตามชื่อ) + ไฟล์ที่เลือกแยกรายตาราง (ชนะโฟลเดอร์) */
+async function sxlSync(force,why){
+ var changed=await sxlLocked(async function(){var changed=new Set(),inDir={};SXL.busy=true;
+  try{
+   if(SXL.dir){try{inDir=await sxlScanDir(SXL.dir);SXL.dirErr=''}catch(e){SXL.dirErr='อ่านโฟลเดอร์ไม่ได้: '+e.message}}
+   for(var T of SXL.cfg.tables){if(!sxlLoadable(T))continue;var S=SXL.s[T.t];
+    if(S.src==='file'&&S.handle){try{if(await sxlLoadFile(T.t,await S.handle.getFile(),'file',S.handle,force))changed.add(T.t)}catch(e){S.err='อ่านไฟล์ไม่ได้: '+e.message}}
+    else if(S.src!=='once'){var m=inDir[T.t];if(m&&await sxlLoadFile(T.t,m.f,'dir',m.h,force))changed.add(T.t)}
+    /* ของที่บันทึกไว้ใน _changes (ของเครื่องนี้หรือเครื่องอื่น) */
+    if(SXL.dir&&S.ready){try{if(await sxlScanOver(T,S,null))changed.add(T.t);S.werr=''}catch(e){S.werr='อ่าน _changes ไม่ได้: '+e.message}}}
+   SXL.extChanged.forEach(function(t){changed.add(t)});SXL.extChanged.clear();
+  }finally{SXL.busy=false}
+  return changed});
+ if(changed.size)await sxlApply(changed,why);sxlRender();return changed}
+async function sxlApply(changed,why){
+ var st=SXL.cfg.settingsTable,sk=SXL.cfg.settingsKey,ch=new Set(changed);
+ if(st&&ch.has(st)){var raw=sk?sxlRawOf(st,sk):'*';
+  if(why==='poll'&&SXL.settingsApplied){ch.delete(st);if(raw!==SXL.settingsRaw){SXL.settingsPending=true;sxlNotify('ค่าตั้ง ('+(sk||st)+') ในไฟล์กลางเปลี่ยน — กด “อ่านไฟล์ล่าสุด” ที่ปุ่มไฟล์กลางเพื่อใช้ค่าใหม่')}}
+  else{SXL.settingsApplied=true;SXL.settingsPending=false;SXL.settingsRaw=raw}}
+ if(!ch.size)return;
+ await sxlWhenBooted();
+ var msgs=[];try{msgs=(await SXL.cfg.apply(ch,why))||[]}catch(e){console.error('sxlApply:',e);msgs=['ใช้ข้อมูลไม่สำเร็จ: '+(e&&e.message||e)]}
+ if(msgs.length)sxlStatus(msgs.join(' · '))}
+async function sxlRefresh(){if(SXL.locked)return;if(SXL.dir||SXL.cfg.tables.some(function(T){return SXL.s[T.t].handle}))await sxlSync(false,'poll')}
+function sxlToast(m){try{var el=document.createElement('div');el.textContent=m;el.style.cssText='position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:1000000;background:#172c40;color:#fff;padding:10px 16px;border-radius:9px;font:14px/1.5 system-ui,sans-serif;box-shadow:0 4px 18px #0004;max-width:min(560px,92vw)';document.body.append(el);setTimeout(function(){el.remove()},5000)}catch(e){}}
+function sxlNotify(m){try{(SXL.cfg.notify||sxlToast)(m)}catch(e){}sxlStatus(m)}
+
+/* ---------- หน้าไฟล์กลาง ---------- */
+function esc2(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function sxlStatus(text,bad){var el=document.getElementById('sxLocalStatus');if(el){el.textContent=text;el.style.color=bad?'#b42d24':'inherit'}}
+function sxlMB(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB'}
+var SXL_SRC={dir:'จากโฟลเดอร์',file:'เลือกไฟล์ไว้',once:'ครั้งเดียว ไม่ติดตาม'};
+function sxlReadyN(){return SXL.cfg.tables.filter(function(T){return sxlLoadable(T)&&SXL.s[T.t].ready}).length}
+function sxlLoadN(){return SXL.cfg.tables.filter(sxlLoadable).length}
+function sxlRender(){
+ SXL.cfg.tables.forEach(function(T){var S=SXL.s[T.t],el=document.getElementById('sxl_st_'+T.t);if(!el)return;var h,cls;
+  if(!sxlLoadable(T)){h=(T.lazy?'เก็บใน _changes/'+T.t+' · เปิดทีละรหัส ไม่ต้องโหลดทั้งตาราง':'ไม่ต้องโหลด · บันทึกลง _changes/'+T.t)+(S.nW?'<br><small>รอบนี้บันทึกแล้ว '+S.nW+' แถว</small>':'');cls=SXL.canWrite?'ok':'off';el.innerHTML=h;el.className='sl-st '+cls;return}
+  if(S.ready){h='✓ '+esc2(S.name)+' · '+S.rows.length.toLocaleString()+' แถว · '+sxlMB(S.size)+'<br><small>'+(SXL_SRC[S.src]||'')+' · แก้ล่าสุด '+new Date(S.mod).toLocaleString('th-TH')+'</small>';cls='ok';
+   if(S.over.size)h+='<br><small>+ ของที่บันทึกใน _changes '+S.over.size.toLocaleString()+' ชุด'+(S.nW?' · รอบนี้บันทึกแล้ว '+S.nW+' แถว':'')+'</small>';
+   if(S.werr)h+='<br><small class="sl-bad">'+esc2(S.werr)+'</small>';
+   var n=SXL.notes[T.t];if(n)h+='<br><small class="sl-warn">'+esc2(n)+'</small>';
+   if(T.t===SXL.cfg.settingsTable&&SXL.settingsPending)h+='<br><small class="sl-warn">ไฟล์เปลี่ยนแล้ว — กด อ่านไฟล์ล่าสุด เพื่อใช้ค่าใหม่</small>'}
+  else{h='ยังไม่ได้เลือก<br><small>'+esc2(T.miss)+'</small>';cls=T.core?'bad':'off'}
+  if(S.err){h+='<br><small class="sl-bad">'+esc2(S.err)+'</small>';if(!S.ready)cls='bad'}
+  el.innerHTML=h;el.className='sl-st '+cls});
+ var di=document.getElementById('sxlDirInfo');
+ if(di)di.innerHTML=SXL.dir?('โฟลเดอร์: <b>'+esc2(SXL.dir.name)+'</b> · จับคู่ไฟล์ตามชื่อตาราง เช่น '+esc2(SXL.cfg.tables[0].t)+'_rows.csv'+(SXL.dirErr?(' <span class="sl-bad">'+esc2(SXL.dirErr)+'</span>'):'')):'เลือกโฟลเดอร์ที่เก็บ CSV ครั้งเดียว โปรแกรมจับคู่ไฟล์ตามชื่อตารางให้เอง (เช่น '+esc2(SXL.cfg.tables[0].t)+'_rows.csv) · StarNexus กับ Production ใช้โฟลเดอร์เดียวกันได้';
+ var top=document.getElementById('sxLocalTop');if(top){var core=SXL.cfg.tables.filter(function(T){return T.core&&sxlLoadable(T)&&!SXL.s[T.t].ready}).length;
+  top.textContent='ไฟล์กลาง · '+sxlReadyN()+'/'+sxlLoadN()+' ตาราง'+(SXL.dir&&!SXL.canWrite?' · อ่านอย่างเดียว':'');top.style.background=core?'#9a4a12':'#135e73'}
+ var wi=document.getElementById('sxlWInfo');
+ if(wi)wi.innerHTML=!SXL.dir?'<span class="sl-warn">บันทึก: ต้องเลือกโฟลเดอร์ Server ก่อน (เลือกไฟล์ทีละตัวบันทึกไม่ได้)</span>'
+  :SXL.canWrite?'<span class="sl-st ok">บันทึก: ✓ อนุญาตแก้ไขโฟลเดอร์แล้ว</span> · ของที่บันทึกอยู่ในโฟลเดอร์ย่อย <code>_changes</code> · ไฟล์ CSV เดิมไม่ถูกแก้'
+  :'<span class="sl-bad">บันทึก: ยังไม่ได้อนุญาตให้แก้ไข — กด “เชื่อมตำแหน่งที่จำไว้” แล้วเลือกอนุญาต</span>';
+ try{SXL.cfg.onRender&&SXL.cfg.onRender()}catch(e){}}
+function sxLocalSettings(){sxlRender();document.getElementById('sxLocalPanel').style.display='flex'}
+async function sxlPickDir(){
+ if(!window.showDirectoryPicker)throw Error('เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ใช้ Chrome/Edge หรือเลือกหลายไฟล์ครั้งเดียวด้านล่าง');
+ var d=await showDirectoryPicker({mode:'readwrite',id:'sxlocal'});SXL.dir=d;SXL.dirErr='';await sxlCanWrite();
+ /* ตารางที่โฟลเดอร์นี้มีไฟล์ ให้โฟลเดอร์ชนะไฟล์ที่เลือกแยกไว้รอบก่อน · ตารางที่โฟลเดอร์ไม่มี ใช้ไฟล์เดิมต่อ */
+ var found=await sxlScanDir(d);
+ for(var t of Object.keys(found)){var S=SXL.s[t];S.src='';S.handle=null;try{await sxlIdbPut('file:'+t,null)}catch(e){}}
+ try{await sxlIdbPut('dir',d)}catch(e){}
+ var ch=await sxlSync(true,'pick');
+ if(!Object.keys(found).length)sxlStatus('ไม่พบไฟล์ที่ชื่อตรงตารางในโฟลเดอร์ “'+d.name+'” — ชื่อไฟล์ต้องขึ้นต้นด้วยชื่อตาราง เช่น '+SXL.cfg.tables[0].t+'_rows.csv',true);
+ else if(!ch.size)sxlStatus('อ่านโฟลเดอร์แล้ว · พร้อม '+sxlReadyN()+' ตาราง')}
+async function sxlPickOne(t){
+ if(!window.showOpenFilePicker){var inp=document.getElementById('sxl_in_'+t);if(inp)inp.click();return}
+ var hs=await showOpenFilePicker({types:[sxlCfg(t).xlsx?{description:'CSV หรือ Excel',accept:{'text/csv':['.csv'],'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx'],'application/vnd.ms-excel.sheet.macroEnabled.12':['.xlsm']}}:{description:'CSV',accept:{'text/csv':['.csv']}}],multiple:false,id:'sxlocal'}),h=hs[0];
+ var S=SXL.s[t];S.src='file';S.handle=h;try{await sxlIdbPut('file:'+t,h)}catch(e){}
+ var f=await h.getFile();if(await sxlLoadFile(t,f,'file',h,true))await sxlApply(new Set([t]),'pick');sxlRender();
+ var mt=sxlMatchName(f.name);if(mt&&mt!==t)sxlStatus('หมายเหตุ: ชื่อไฟล์ '+f.name+' ดูเหมือนเป็นของตาราง '+mt+' — ตรวจว่าเลือกถูกแถว',true)}
+async function sxlOnce(files,forceT){var ch=new Set(),skip=[];
+ for(var f of files){var t=forceT||sxlMatchName(f.name);if(!t){skip.push(f.name);continue}
+  var S=SXL.s[t];if(await sxlLoadFile(t,f,'once',null,true)){ch.add(t);try{await sxlIdbPut('file:'+t,null)}catch(e){}}else S.src='once'}
+ if(ch.size)await sxlApply(ch,'pick');sxlRender();
+ if(skip.length)sxlStatus('ไม่รู้ว่าไฟล์นี้เป็นของตารางไหน (ชื่อต้องขึ้นต้นด้วยชื่อตาราง): '+skip.join(', ')+' — ใช้ปุ่ม เลือกไฟล์ ในแถวของตารางนั้นแทน',true)}
+/* เอาตำแหน่งที่จำไว้กลับมา · เบราว์เซอร์ยังให้สิทธิ์อยู่ อ่านเลยไม่ต้องกด (ask=false) */
+async function sxlRestore(ask){var need=0;
+ var ok=async function(h,mode){if(!h)return false;var p='prompt';try{p=await h.queryPermission({mode:mode||'read'})}catch(e){}
+  if(p!=='granted'&&ask){try{p=await h.requestPermission({mode:mode||'read'})}catch(e){p='prompt'}}return p==='granted'};
+ /* โฟลเดอร์: ขอสิทธิ์แก้ไขก่อน (บันทึกได้) · ไม่ให้ก็ยังอ่านได้ */
+ try{var d=await sxlIdbGet('dir');if(d){if(await ok(d,'readwrite')){SXL.dir=d;SXL.canWrite=true}else if(await ok(d,'read')){SXL.dir=d;SXL.canWrite=false}else need++}}catch(e){}
+ for(var T of SXL.cfg.tables){try{var h=await sxlIdbGet('file:'+T.t);if(!h&&T.t==='xml_history')h=await sxlIdbGet('xml_history');   // รอบ 1 จำไว้ใต้ชื่อนี้
+  if(h){if(await ok(h,'read')){SXL.s[T.t].src='file';SXL.s[T.t].handle=h}else need++}}catch(e){}}
+ await sxlSync(true,'restore');
+ if(need)sxlStatus(ask?'บางตำแหน่งยังไม่ได้รับอนุญาต ('+need+') — กด เชื่อมตำแหน่งที่จำไว้ อีกครั้ง หรือเลือกโฟลเดอร์ใหม่':'มีตำแหน่งที่จำไว้ '+need+' แห่ง — กด “เชื่อมตำแหน่งที่จำไว้” เพื่ออนุญาตอ่าน',!ask);
+ else if(!SXL.dir&&!SXL.cfg.tables.some(function(T){return SXL.s[T.t].handle})){if(ask)sxlStatus('ยังไม่มีตำแหน่งที่จำไว้ — กด เลือกโฟลเดอร์ Server',true)}
+ else sxlStatus('เชื่อมตำแหน่งที่จำไว้แล้ว · พร้อม '+sxlReadyN()+' ตาราง')}
+function sxLocalMount(){if(document.getElementById('sxLocalPanel'))return;var C=SXL.cfg;
+ var style=document.createElement('style');style.textContent='#sxLocalPanel{position:fixed;inset:0;z-index:999999;background:#0008;display:none;align-items:center;justify-content:center;padding:20px}#sxLocalPanel .sl-box{background:#fff;color:#172c40;width:min(900px,96vw);max-height:92vh;overflow:auto;padding:22px 24px;border-radius:14px;font:14px/1.6 system-ui,sans-serif;text-align:left}#sxLocalPanel h2{margin:0 0 6px;font-size:20px}#sxLocalPanel p{margin:8px 0}#sxLocalPanel button{padding:8px 12px;margin:4px 4px 4px 0;border:1px solid #93a9b8;border-radius:6px;cursor:pointer;background:transparent;color:inherit;font:inherit}#sxLocalPanel button.pri{background:#135e73;color:#fff;border-color:#135e73;font-weight:600}#sxLocalPanel td,#sxLocalPanel th{padding:8px;text-align:left;vertical-align:top;border-bottom:1px solid #8884}#sxLocalPanel table{width:100%;border-collapse:collapse;margin:8px 0}#sxLocalPanel,#sxLocalPanel p,#sxLocalPanel td,#sxLocalPanel th,#sxLocalPanel button{font-family:system-ui,Sarabun,sans-serif;font-size:14px;line-height:1.55}#sxLocalPanel th{font-weight:600;color:#172c40}#sxLocalPanel td,#sxLocalPanel th,#sxLocalPanel small{white-space:normal;overflow:visible;text-overflow:clip;max-width:none}#sxLocalPanel code{font:13px/1.4 ui-monospace,monospace}#sxLocalPanel small{opacity:.85;font-size:12.5px}#sxLocalPanel .sl-note{font-size:13px}#sxLocalPanel .sl-st.ok{color:#17703a}#sxLocalPanel .sl-st.bad{color:#b42d24}#sxLocalPanel .sl-st.off{opacity:.7}#sxLocalPanel .sl-bad{color:#b42d24}#sxLocalPanel .sl-warn{color:#9a5a00}#sxLocalPanel .sl-core{font-size:11px;background:#135e7322;border-radius:4px;padding:1px 5px;margin-left:4px}#sxLocalPanel .sl-note{font-size:13px;opacity:.85}#sxLocalTop{position:fixed;z-index:5000;background:#135e73;color:#fff;padding:10px 14px;border:0;border-radius:9px;cursor:pointer;font:600 13px system-ui,sans-serif;box-shadow:0 2px 10px #0003;'+(C.btnPos||'bottom:54px;right:16px')+'}'+(C.css||'');document.head.append(style);
+ var rows=C.tables.map(function(T){return '<tr><td><code>'+T.t+'</code>'+(T.core?'<span class="sl-core">จำเป็น</span>':'')+'<br><small>'+esc2(T.use)+'</small></td><td id="sxl_st_'+T.t+'" class="sl-st"></td><td style="white-space:nowrap">'+(sxlLoadable(T)?'<button data-sxl-pick="'+T.t+'">เลือกไฟล์</button><input type="file" accept=".csv,text/csv'+(T.xlsx?',.xlsx,.xlsm':'')+'" id="sxl_in_'+T.t+'" data-sxl-once="'+T.t+'" hidden>':'')+'</td></tr>'}).join('')
+  +(C.extraRows||[]).map(function(x){return '<tr><td><b>'+esc2(x.name)+'</b><br><small>'+esc2(x.use)+'</small></td><td class="sl-st off">'+esc2(x.state)+'</td><td></td></tr>'}).join('');
+ var acts=(C.actions||[]).map(function(a,i){return '<button data-sxl-act="'+i+'"'+(a.primary?' class="pri"':'')+'>'+esc2(a.label)+'</button>'}).join('');
+ var panel=document.createElement('div');panel.id='sxLocalPanel';panel.innerHTML='<div class="sl-box"><h2>'+esc2(C.title)+'</h2><p>'+C.intro+'</p><div><button id="sxlDir" class="pri">เลือกโฟลเดอร์ Server</button><button id="sxLocalReconnect">เชื่อมตำแหน่งที่จำไว้</button><button id="sxLocalCheck">อ่านไฟล์ล่าสุด</button></div><p class="sl-note" id="sxlDirInfo"></p><p class="sl-note" id="sxlWInfo"></p><table><thead><tr><th>ตาราง</th><th>ไฟล์ที่ใช้</th><th></th></tr></thead><tbody>'+rows+'</tbody></table><p>ถ้าเลือกโฟลเดอร์ไม่ได้ เลือกหลายไฟล์พร้อมกันครั้งเดียว (ไม่ติดตามการแก้ไฟล์): <input id="sxLocalUpload" type="file" multiple accept=".csv,text/csv,.xlsx,.xlsm"></p><p id="sxLocalStatus" role="status" style="white-space:pre-wrap"></p><p class="sl-note">เบราว์เซอร์ให้สิทธิ์ผ่านการเลือกเท่านั้น จึงพิมพ์ Path เองไม่ได้ · ตอนเลือกโฟลเดอร์ เบราว์เซอร์จะถามว่าให้ดูไฟล์และแก้ไขไฟล์ ให้อนุญาตทั้งสองอย่างถึงจะบันทึกได้ · โปรแกรมตรวจไฟล์ทุก 10 วินาที อ่านใหม่เมื่อเปลี่ยน'+(C.note?(' · '+C.note):'')+'</p>'+acts+'<button id="sxLocalClose">ปิด</button></div>';document.body.append(panel);
+ var btn=document.createElement('button');btn.id='sxLocalTop';btn.onclick=sxLocalSettings;document.body.append(btn);
+ var guard=function(fn){return async function(e){try{await fn(e)}catch(err){if(err&&err.name!=='AbortError')sxlStatus(err.message||String(err),true)}}};
+ var hide=function(){panel.style.display='none'};
+ document.getElementById('sxLocalClose').onclick=hide;
+ document.getElementById('sxlDir').onclick=guard(sxlPickDir);
+ document.getElementById('sxLocalReconnect').onclick=guard(function(){return sxlRestore(true)});
+ document.getElementById('sxLocalCheck').onclick=guard(async function(){if(!SXL.dir&&!C.tables.some(function(T){return SXL.s[T.t].handle}))throw Error('ยังไม่ได้เลือกโฟลเดอร์หรือไฟล์ที่ติดตามได้ — ไฟล์แบบครั้งเดียวต้องเลือกใหม่เมื่อมีการแก้');
+  SXL.settingsApplied=false;var ch=await sxlSync(true,'check');sxlStatus('อ่านไฟล์ล่าสุดแล้ว · พร้อม '+sxlReadyN()+' ตาราง'+(ch.size?(' · อ่านใหม่: '+Array.from(ch).join(', ')):''))});
+ panel.querySelectorAll('[data-sxl-pick]').forEach(function(b){b.onclick=guard(function(){return sxlPickOne(b.dataset.sxlPick)})});
+ panel.querySelectorAll('[data-sxl-once]').forEach(function(inp){inp.onchange=guard(async function(e){var f=e.target.files[0];e.target.value='';if(f)await sxlOnce([f],inp.dataset.sxlOnce)})});
+ document.getElementById('sxLocalUpload').onchange=guard(async function(e){var fs=Array.from(e.target.files);e.target.value='';if(fs.length)await sxlOnce(fs)});
+ panel.querySelectorAll('[data-sxl-act]').forEach(function(b){b.onclick=guard(function(){return C.actions[+b.dataset.sxlAct].onClick(hide)})});
+ setInterval(async function(){if(document.hidden||SXL.busy)return;try{await sxlRefresh()}catch(e){sxlStatus('ตรวจไฟล์ไม่สำเร็จ: '+e.message,true)}},10000);
+ sxlRender();if(C.openAtStart!==false)sxLocalSettings();
+ sxlWhenBooted().then(function(){return sxlRestore(false)}).catch(function(){});
+}
+/* fetch ตรงไป Supabase (/rest/v1) → ส่งเข้าไฟล์กลางแทน: POST ตาราง = เพิ่ม/ทับแถว · POST rpc = ฟังก์ชันที่โปรแกรมตั้งไว้ · อย่างอื่นตอบว่าไม่รองรับ */
+var sxLocalFetch=window.fetch.bind(window);
+window.fetch=function(url,init){var u=typeof url==='string'?url:(url instanceof URL)?url.href:(url&&url.url)||'';if(/supabase\.(co|com|in)\b/i.test(u))return sxlRest(u,init||{},url);return sxLocalFetch.apply(window,arguments)};
+async function sxlRest(u,init,req){
+ var J=function(status,obj){return new Response(obj==null?null:JSON.stringify(obj),{status:status,headers:{'Content-Type':'application/json'}})};
+ var path='';try{path=new URL(u).pathname}catch(e){}
+ var method=String(init.method||(req&&req.method)||'GET').toUpperCase(),body=init.body;
+ var hdr=function(n){var h=init.headers||{};if(typeof h.get==='function')return h.get(n)||'';for(var k in h)if(k.toLowerCase()===n.toLowerCase())return String(h[k]);return ''};
+ var m=/\/rest\/v1\/rpc\/([^\/?#]+)/.exec(path);
+ if(m){var fn=SXL.cfg&&SXL.cfg.rpc&&SXL.cfg.rpc[m[1]];if(!fn)return J(404,{message:'รุ่นทดลองไฟล์กลางไม่รองรับ '+m[1]});
+  try{return J(200,await fn(body?JSON.parse(body):{}))}catch(e){return J(400,{message:e.message||String(e)})}}
+ m=/\/rest\/v1\/([^\/?#]+)$/.exec(path);
+ if(m&&method==='POST'){var rows;try{rows=JSON.parse(body||'null')}catch(e){return J(400,{message:'body ไม่ใช่ JSON'})}
+  var q=SXL_DB.from(decodeURIComponent(m[1]));q=/merge-duplicates/i.test(hdr('Prefer'))?q.upsert(rows):q.insert(rows);
+  var r=await q;if(r.error)return J(r.status||400,{message:r.error.message,code:r.error.code});return new Response(null,{status:201})}
+ return J(501,{message:'รุ่นทดลองไฟล์กลางไม่รองรับคำขอนี้ ('+method+' '+path+')'})}
+function sxlStart(){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',sxLocalMount);else sxLocalMount()}
+/* ───────── Production V2 · ต่อเข้าไฟล์กลาง (อ่าน + เขียนกลับ · แกนกลางเดียวกับ StarNexus · โฟลเดอร์ Server เดียวกัน) ───────── */
+sxlInit({
+ app:'Production',title:'Production V2 · ทดลองไฟล์กลาง',
+ intro:'ไม่เชื่อม Supabase · อ่าน CSV ที่ส่งออกจาก Supabase เป็นข้อมูลตั้งต้น · ของที่บันทึก (Order ใหม่ · BOM · Item Id Set · กฎ) เขียนลงโฟลเดอร์ย่อย <b>_changes</b> ในโฟลเดอร์ Server (ไฟล์ CSV เดิมไม่ถูกแก้) · ใช้โฟลเดอร์เดียวกับ StarNexus — Order ที่ StarNexus ส่งเข้าไฟล์กลางจะขึ้นเองภายใน 10 วินาที',
+ note:'ต้นทางแก้ Order ที่เปิดอยู่ → โหลดใหม่ให้เอง (กำลังแก้ไขหรือมีค่าที่ยังไม่บันทึก จะขึ้นแถบให้กดโหลดเอง) · Order อื่นติดป้าย “มีแก้ใหม่” ในรายการซ้าย',
+ btnPos:'bottom:16px;left:256px',
+ tables:[
+  {t:'imos_orders',core:1,use:'Order ทั้งหมด · ชิ้นงาน · BOM',miss:'ไม่มีรายการ Order ให้เปิด'},
+  {t:'imos_mapping',core:1,use:'แปลงรหัส conid ของอุปกรณ์',miss:'รหัสอุปกรณ์ที่ต้องแปลงจะไม่ขึ้น'},
+  {t:'fitting_global',core:1,use:'ชื่อ/หน่วยของรหัสอุปกรณ์ · ใช้ CSV หรือไฟล์ Excel จาก AX (FittingGlobal_*.xlsm) ก็ได้',miss:'BOM ไม่มีชื่อ/หน่วยอุปกรณ์'},
+  {t:'app_settings',core:1,use:'Item Id Set · BOM ที่แก้ · กฎ Material Suffix / FrontStyle / Frame Fit',miss:'ใช้ค่าตั้งต้น — กฎวัสดุ/บาน/Item Id Set ไม่ขึ้น'},
+  {t:'part_index',core:0,use:'หน้าประกอบ (Assembly) · ลิงก์ชิ้นงานตามบาร์โค้ด',miss:'หน้าประกอบหาชิ้นไม่เจอ'}
+ ],
+ extraRows:[{name:'เพิ่ม/แก้รหัส Fitting Global',use:'รุ่นทดลองใช้ข้อมูลจาก AX (ไฟล์ Excel)',state:'แก้ที่ AX แล้วกด Refresh ในไฟล์ Excel'}],
+ apply:async function(ch){var st=[];
+  if(ch.has('imos_mapping')){try{await loadMapping()}catch(e){}st.push('Mapping '+Object.keys(mapping||{}).length.toLocaleString()+' รหัส')}
+  if(ch.has('app_settings')){for(var f of [loadMatRules,loadFSRules,loadFrameFitRules]){try{await f()}catch(e){console.error(e)}}st.push('ใช้กฎจาก app_settings แล้ว')}
+  if(ch.has('fitting_global')){try{(window.FG_refresh||window.loadFittingGlobal)(true)}catch(e){}st.push('กำลังโหลด Fitting Global '+SXL.s.fitting_global.rows.length.toLocaleString()+' รหัส')}
+  if(ch.has('imos_orders')||ch.has('imos_mapping')){try{await refreshStatus()}catch(e){}}
+  if(ch.has('imos_orders')){try{await renderSidebar()}catch(e){console.error(e)}st.push('รายการ Order '+SXL.s.imos_orders.rows.length.toLocaleString()+' รายการ')}
+  return st},
+ actions:[{label:'ไปหน้า Order',primary:true,onClick:function(hide){hide()}}],
+ onRender:function(){var t=document.getElementById('tbSbText');if(t&&!t._sxl){t._sxl=1;t.style.cursor='pointer';t.title='ไฟล์กลาง — กดเพื่อเลือกโฟลเดอร์/ไฟล์';t.onclick=sxLocalSettings}}
+});
+/* สลับฐานข้อมูลเป็นไฟล์กลาง — วางก่อนโมดูลเสริมทุกตัว ของที่โมดูลถามตอนโหลดหน้าจึงวิ่งเข้าไฟล์กลางด้วย
+   ตัวจริงสร้าง db จาก supabase-js ไว้ในเขตห้ามแตะ — ไม่แก้บรรทัดนั้น แค่ชี้ db ใหม่ (window.db ตามไปด้วย) */
+db=SXL_DB;
+/* แยกแคชของรุ่นทดลองออกจากตัวจริง — เปิดจาก file:// เครื่องเดียวกันใช้ที่เก็บของเบราว์เซอร์ร่วมกัน
+   แคช Fitting Global (IndexedDB fg_cache + คีย์ fg_*) และป้ายที่มาของ Order (ordmeta_v91) จึงแยกชื่อ ไม่ทับของตัวจริง */
+(function(){try{var io=IDBFactory.prototype.open;IDBFactory.prototype.open=function(n){var a=[].slice.call(arguments);if(a[0]==='fg_cache')a[0]='sxlocal_fg_cache';return io.apply(this,a)};
+ var P=Storage.prototype,g=P.getItem,st=P.setItem,rm=P.removeItem,re=/^(fg_|ordmeta_v91$)/,k=function(x){x=String(x);return re.test(x)?'sxlocal:'+x:x};
+ P.getItem=function(x){return g.call(this,k(x))};P.setItem=function(x,v){return st.call(this,k(x),v)};P.removeItem=function(x){return rm.call(this,k(x))}}catch(e){console.error('sxlocal isolate:',e)}})();
+/* ป้ายสถานะบนแถบบน: เดิมเขียนว่า Supabase — ห่อทับ ไม่แก้ของเดิม */
+(function(){var o=refreshStatus;refreshStatus=async function(){var r=await o.apply(this,arguments);
+ ['sbConnText','tbSbText'].forEach(function(id){var el=document.getElementById(id);if(!el)return;var t=el.textContent||'';
+  if(/^Supabase/.test(t))el.textContent='ไฟล์กลาง — อ่านแล้ว';else if(t==='เชื่อมต่อไม่ได้')el.textContent='ยังไม่ได้เลือกไฟล์กลาง — กดที่นี่'});return r}})();
+/* บูตของ Production จบที่ hideSplash — รอให้จบก่อนค่อยเอาข้อมูลจากไฟล์กลางมาใช้ */
+(function(){var _hs=hideSplash;hideSplash=function(){sxlBooted();return _hs.apply(this,arguments)}})();
+[4000,8000].forEach(function(ms){setTimeout(function(){try{if(document.title.indexOf('ไฟล์กลาง')<0)document.title+=' · ไฟล์กลาง (ทดลอง)'}catch(e){}},ms)});
+sxlStart();
+</script>
+
 <!-- ══════════════════════════════════════════════════════════════════
      โปรแกรม NC Partlist v6.60 (SAW + CNC) — ฝังไว้ทั้งไฟล์ แบบ base64
      ถอดออกมาแล้วได้ไฟล์เดิมทุกไบต์ · ตอนใช้งานจะถูกเขียนลงเป็น
@@ -12447,7 +13004,24 @@ var _asmModeIv = setInterval(function(){
 
 window.IMPB_import = function(file){ importFile(file); };
 window.IMPB_list   = function(){ return Object.keys(IMPB.store); };
+/* v118 (ไฟล์กลาง): อ่านรายการ Order นำเข้าใหม่ — ตอนเปิดโปรแกรมยังไม่ได้เลือกโฟลเดอร์ Server จึงยังอ่านไม่ได้
+   แถวที่ดึงมาแล้วเก็บไว้เหมือนเดิม (Order นำเข้าที่เปิดอยู่ไม่หายจากจอ) */
+window.IMPB_reload = function(changed){
+  var old = IMPB.store || {}, ch = {};
+  (changed || []).forEach(function(k){ ch[k] = 1; });   /* v119: Order ที่ต้นทางแก้ → ไม่เก็บแถวเดิม (ยกเว้นตัวที่เปิดอยู่ — เก็บไว้จนกว่าจะโหลดใหม่) */
+  return load().then(function(){
+    Object.keys(IMPB.store).forEach(function(k){
+      var o = old[k];
+      if(o && o.rows && !IMPB.store[k].rows && (!ch[k] || k === IMPB.active)) IMPB.store[k].rows = o.rows;
+    });
+    if(IMPB.active && old[IMPB.active] && !IMPB.store[IMPB.active]) IMPB.store[IMPB.active] = old[IMPB.active];
+    try{ renameLabels(); }catch(e){}
+    try{ _renderOrderList(); }catch(e){}
+  });
+};
 window.IMPB_active = function(){ return IMPB.active; };
+/* v119: ลืมแถวที่ดึงไว้ของ Order นำเข้า — เปิดครั้งหน้าอ่านจากไฟล์กลางใหม่ (ใช้ตอนต้นทางแก้) */
+window.IMPB_forget = function(oid){ var it = IMPB.store[oid]; if(it) it.rows = null; };
 })();
 </script>
 
@@ -13574,7 +14148,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '117', D = '24/09/2026';
+  var V = '119', D = '25/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -18266,6 +18840,8 @@ async function seedAll(){
     + (bad ? ' · ไม่สำเร็จ ' + bad : ''), bad ? 'warn' : 'ok');
 }
 window.ORV_seedAll = seedAll;
+/* v118 (ไฟล์กลาง): อ่านรายการรอตัดสินใจ + ภาพถ่าย BOM ใหม่ — ตอนเปิดโปรแกรมยังไม่ได้เลือกโฟลเดอร์ Server จึงยังอ่านไม่ได้ */
+window.ORV_reload = function(){ return Promise.all([loadAll(), loadAllBase()]); };
 window.ORV_baseList = function(){ return Object.keys(ORV.base); };
 window.ORV_changed  = function(){ return Object.keys(ORV.changed); };
 
@@ -20129,6 +20705,1360 @@ var n = 0, iv = setInterval(function(){
       'background:#4338ca;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700', 'color:#64748b');
   }
 }, 300);
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v118/v119 — ต่อไฟล์กลางเข้ากับโปรแกรม · ห่อทับขั้น "ใช้ข้อมูล" ของไฟล์กลาง (ไม่แก้โมดูลไฟล์กลาง)
+     (1) v118: โมดูลที่อ่านฐานข้อมูลครั้งเดียวตอนเปิดโปรแกรม → อ่านใหม่เมื่อไฟล์กลางพร้อม/เปลี่ยน
+           imos_orders → รายการ Order นำเข้า (IMPB_reload) · app_settings → รอตัดสินใจ + ภาพถ่าย BOM (ORV_reload)
+     (2) v119: ต้นทางแก้ → โปรแกรมเปลี่ยนตาม
+           StarNexus / เครื่องอื่นบันทึก Order หรือค่าของ Order (BOM Fitting · Extra · ไม้ · Item Id Set) ลงโฟลเดอร์ Server
+           • Order ที่เปิดอยู่ → โหลดใหม่ให้เอง (คงแท็บ + ตำแหน่งเลื่อนเดิม) แล้ว RevGuard เด้ง "⚠ ต้นทางแก้" ให้เลือก รับ / ย้อนกลับ ตามเดิม
+             - กำลังแก้ไขตาราง หรือมีค่าที่แก้แล้วยังไม่บันทึก → ไม่ทับ ขึ้นแถบให้กดโหลดใหม่เอง
+               (ผู้ใช้กดบันทึกค่าของตัวเอง = เลือกใช้ค่าของตัวเอง → เลิกรอโหลดส่วนนั้น)
+             - โหมดรวมหลาย Order → ขึ้นแถบให้กดรวม BOM ใหม่
+             - พิมพ์ค้างในช่องกรอก → ขึ้นแถบ · กำลังโหลด / ส่ง SAW / รวม BOM / มีกล่องเปิดอยู่ / กำลังพิมพ์หรือกดเมาส์ /
+               อยู่แท็บ SAW / ทัวร์มือใหม่ → รอเงียบ ๆ จนว่างแล้วค่อยโหลด
+           • Order อื่น → ป้าย "มีแก้ใหม่" ในรายการซ้าย จนกว่าจะเปิดดู
+           • สลับกลับมาที่หน้าโปรแกรม → ตรวจโฟลเดอร์ทันที (ไม่ต้องรอรอบ 10 วินาที)
+           • ของที่แท็บนี้บันทึกเองไม่นับ — แต่ละแท็บมีรหัสของตัวเองในช่อง by ของไฟล์ที่บันทึก
+             (StarNexus ที่เปิดจากเว็บเดียวกันในเครื่องเดียวกันใช้รหัสเครื่องร่วมกัน จึงต่อท้ายรหัสแท็บ)
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+#xcBar{position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:9000;display:none;align-items:center;gap:10px;
+  width:max-content;max-width:min(760px,calc(100vw - 24px));box-sizing:border-box;background:#1e293b;color:#e2e8f0;
+  border:1px solid rgba(245,158,11,.6);border-radius:12px;padding:9px 10px 9px 14px;box-shadow:0 12px 30px rgba(0,0,0,.35);
+  font:600 12.5px/1.5 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#xcBar.on{display:flex}
+#xcBar .xc-dot{width:9px;height:9px;border-radius:50%;background:#f59e0b;flex-shrink:0;box-shadow:0 0 0 3px rgba(245,158,11,.25)}
+#xcBar .xc-t{flex:1;min-width:0}
+#xcBar .xc-t b{color:#fde68a;font-weight:700}
+#xcBar .xc-s{display:block;font-weight:500;font-size:11.5px;color:#94a3b8}
+#xcBar button{font:700 12px/1 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;border-radius:8px;padding:7px 12px;cursor:pointer;
+  white-space:nowrap;border:1px solid rgba(148,163,184,.42);background:transparent;color:#e2e8f0}
+#xcBar button:hover{background:rgba(148,163,184,.16)}
+#xcBar button.pri{background:#f59e0b;border-color:#f59e0b;color:#1c1917}
+#xcBar button.pri:hover{background:#d97706;border-color:#d97706}
+.order-item .xcbadge{display:inline-block;font-size:8px;font-weight:800;letter-spacing:.2px;padding:1px 5px;border-radius:5px;
+  background:#d97706;color:#fff;vertical-align:middle;line-height:1.5;margin-right:5px}
+#xcToast{position:fixed;left:50%;top:58px;transform:translate(-50%,-6px);z-index:9001;opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s;background:#1e293b;color:#e2e8f0;border:1px solid rgba(245,158,11,.55);border-radius:12px;
+  padding:9px 16px;width:max-content;max-width:min(600px,calc(100vw - 24px));box-sizing:border-box;
+  font:600 12.5px/1.5 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+#xcToast.in{opacity:1;transform:translate(-50%,0)}
+#xcToast b{color:#fde68a}
+</style>
+<script>
+(function(){
+'use strict';
+if(typeof SXL === 'undefined' || !SXL.cfg || typeof SXL.cfg.apply !== 'function' || SXL.cfg.__v118) return;
+SXL.cfg.__v118 = true;
+
+/* ── รหัสแท็บ: ไฟล์ที่แท็บนี้บันทึกมีช่อง by = TAB ─────────────────────── */
+var TAB = String(SXL.machine || 'x') + '.' + Math.random().toString(36).slice(2, 7);
+SXL.machine = TAB;
+
+var WATCH = /^(bom_edits|extra_fit|bomline_wood|iids):(.+)$/;
+var SNAP = { imos_orders: null, app_settings: null };   /* key → แถว (อ้างอิงแถวในไฟล์กลาง ไม่ได้คัดลอก) */
+var XC = {};            /* Order ที่ต้นทางแก้และยังไม่ได้เปิดดู: oid → { at } */
+var PEND = null;        /* Order ที่เปิดอยู่ถูกแก้: { oid, mode:'order'|'merge'|'gone', at, what:{ ชนิด: เวลาที่พบ }, sel, oids (โหมดรวม) } */
+var STALE = {};         /* Order นำเข้า (Lot) ที่ต้นทางแก้แต่ยังเปิดค้างแถวเดิมอยู่ → ล้างแถวที่จำไว้เมื่อไม่ได้เปิดแล้ว */
+var DIRTY = {};         /* ค่าที่แก้แล้วยังไม่บันทึก (ออกจากโหมดแก้ไขโดยไม่กดบันทึก): oid → { ax, cd, tAx, bom, be, tBom } */
+var RELOADING = false, lastKey = 0, lastPtr = 0;
+var LOADED = new WeakMap();   /* ข้อมูล Order ที่หน้าจอใช้อยู่ (currentData) → แถวที่อ่านมา */
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+function nowIso(){ return new Date().toISOString(); }
+function tbl(t){ return SXL.s ? SXL.s[t] : null; }
+function cfgOf(t){ try{ return sxlCfg(t); }catch(e){ return null; } }
+function hhmm(iso){ try{ var d = iso ? new Date(iso) : null; return (d && !isNaN(d)) ? d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' }) : ''; }catch(e){ return ''; } }
+function mbState(){ try{ return (typeof window.MBOM_state === 'function') ? window.MBOM_state() : null; }catch(e){ return null; } }
+function openOid(){ try{ return window.currentOrder || null; }catch(e){ return null; } }
+function loading(){ var ov = document.getElementById('orderLoadingOverlay'); return !!(ov && ov.style.display === 'flex'); }
+function editing(){ try{ return !!(axEditMode || bomEditMode); }catch(e){ return false; } }
+function axEmpty(){ try{ return !axEdits || !Object.keys(axEdits).length; }catch(e){ return true; } }
+document.addEventListener('keydown', function(){ lastKey = Date.now(); }, true);
+['pointerdown', 'wheel', 'mousemove'].forEach(function(n){ document.addEventListener(n, function(){ lastPtr = Date.now(); }, { capture:true, passive:true }); });
+
+/* จำว่าข้อมูลบนหน้าจอมาจากแถวไหน (ใช้ตัดสินว่าหน้าจอเป็นข้อมูลล่าสุดแล้วหรือยัง) */
+(function(){
+  if(typeof sxlProject !== 'function') return;
+  var orig = sxlProject;
+  sxlProject = function(T, S, rows, cols){
+    var out = orig.apply(this, arguments);
+    try{
+      if(T && T.t === 'imos_orders' && out && rows && out.length === rows.length){
+        for(var i = 0; i < out.length; i++){ var d = out[i] && out[i].data; if(d && typeof d === 'object') LOADED.set(d, rows[i]); }
+      }
+    }catch(e){}
+    return out;
+  };
+})();
+
+/* ── ไฟล์ล่าสุดของแถวหนึ่งใน _changes (null = ยังไม่เคยบันทึก ใช้ค่าจาก CSV ตั้งต้น) ── */
+function lastWrite(t, k){
+  var S = tbl(t), T = cfgOf(t);
+  if(!S || !T || !S.over) return null;
+  var fake = {}; fake[T.key] = k;
+  try{ return S.over.get(sxlBf(sxlBucketOf(T, fake))) || null; }catch(e){ return null; }
+}
+function keyOfWhat(w, oid){ return w === 'order' ? ['imos_orders', oid] : ['app_settings', w + ':' + oid]; }
+/* แท็บนี้บันทึกแถวนั้นเองตั้งแต่เวลา since หรือยัง */
+function ownSince(w, oid, since){
+  var k = keyOfWhat(w, oid), e = lastWrite(k[0], k[1]);
+  return !!(e && e.by === TAB && String(e.at || '') >= String(since || ''));
+}
+
+/* ── ค่าที่แก้แล้วยังไม่บันทึก ────────────────────────────────────────────
+   โปรแกรมเดิมเก็บค่าที่แก้ไว้ในหน่วยความจำจนกว่าจะกดบันทึก — ออกจากโหมดแก้ไขโดยไม่บันทึก ค่ายังค้างบนจอ
+   โหลดใหม่จะล้างค่าพวกนี้ จึงจำไว้ว่า Order ไหนมีค่าค้าง (เทียบข้อมูลตอนเข้า/ออกโหมดแก้ไข)
+   หายเองเมื่อบันทึกแล้ว (มีไฟล์ของแท็บนี้ใหม่กว่า) หรือ Order ถูกโหลดใหม่/ปิดไปแล้ว (โปรแกรมล้างค่าค้างเอง) */
+function sigAX(){ try{ return JSON.stringify([window.currentData && window.currentData.groups, axEdits]); }catch(e){ return '?' + Math.random(); } }
+function sigBOM(oid){ try{ return JSON.stringify((bomEdits || {})[oid] || null); }catch(e){ return '?' + Math.random(); } }
+function markDirty(oid, kind){
+  var d = DIRTY[oid] || (DIRTY[oid] = {});
+  if(kind === 'ax'){ d.ax = true; d.cd = window.currentData; d.tAx = nowIso(); }
+  else { d.bom = true; try{ d.be = bomEdits[oid]; }catch(e){ d.be = null; } d.tBom = nowIso(); }
+}
+function dirtyOf(oid){
+  var d = oid && DIRTY[oid];
+  if(!d) return false;
+  var be = null; try{ be = bomEdits[oid]; }catch(e){}
+  if(d.ax && (window.currentData !== d.cd || (ownSince('order', oid, d.tAx) && axEmpty()))) d.ax = false;
+  if(d.bom && (be !== d.be || ownSince('bom_edits', oid, d.tBom))) d.bom = false;
+  if(!d.ax && !d.bom){ delete DIRTY[oid]; return false; }
+  return true;
+}
+(function(){
+  function wrapToggle(name, kind){
+    var o = window[name];
+    if(typeof o !== 'function') return;
+    var s0 = null, oid0 = null;
+    var mode = function(){ try{ return !!(kind === 'ax' ? axEditMode : bomEditMode); }catch(e){ return false; } };
+    var sig = function(oid){ return kind === 'ax' ? sigAX() : sigBOM(oid); };
+    var w = function(){
+      var was = mode(), oid = openOid();
+      var r = o.apply(this, arguments);
+      try{
+        var now = mode();
+        if(!was && now){ oid0 = oid; s0 = sig(oid); }
+        else if(was && !now){
+          if(oid && oid === oid0 && s0 !== null && sig(oid) !== s0) markDirty(oid, kind);
+          s0 = null;
+        }
+      }catch(e){}
+      return r;
+    };
+    try{ window[name] = w; }catch(e){}
+  }
+  wrapToggle('toggleEditMode', 'ax');
+  wrapToggle('toggleBOMEditMode', 'bom');
+})();
+
+/* ── เทียบข้อมูลรอบก่อน/รอบนี้ ─────────────────────────────────────── */
+function refs(t){
+  var S = tbl(t), T = cfgOf(t);
+  if(!S || !S.ready || !T) return null;
+  var m = new Map(), K = T.key;
+  for(var i = 0; i < S.rows.length; i++){
+    var r = S.rows[i], k = String(r[K]);
+    if(t === 'app_settings' && !WATCH.test(k)) continue;
+    m.set(k, r);
+  }
+  return m;
+}
+function sameRow(t, a, b){
+  if(a === b) return true;
+  if(!a || !b) return false;
+  if(t === 'imos_orders') return a.data === b.data && String(a.loaded_at || '') === String(b.loaded_at || '');
+  return a.value === b.value;
+}
+/* แถวนี้มาจากไฟล์ใน _changes ไฟล์ไหน (null = จาก CSV ตั้งต้น) */
+function entryOf(t, row){
+  var S = tbl(t), T = cfgOf(t);
+  if(!S || !row || !T) return null;
+  try{ var e = S.over.get(sxlBf(sxlBucketOf(T, row))); if(e && e.rows && e.rows.indexOf(row) >= 0) return e; }catch(x){}
+  var hit = null;
+  S.over.forEach(function(e){ if(!hit && e.rows && e.rows.indexOf(row) >= 0) hit = e; });
+  return hit;
+}
+function ownRemoval(t, k){ var e = lastWrite(t, k); return !!(e && e.by === TAB); }
+function diff(t){
+  var cur = refs(t);
+  if(!cur) return null;
+  var old = SNAP[t];
+  SNAP[t] = cur;
+  if(!old) return null;                               /* ครั้งแรก: จำไว้ ไม่แจ้ง */
+  var out = { changed:[], added:[], removed:[], info:{} };
+  cur.forEach(function(r, k){
+    var o = old.get(k);
+    if(o === r || (o && sameRow(t, o, r))) return;
+    var e = entryOf(t, r);
+    if(e && e.by === TAB) return;                      /* แท็บนี้บันทึกเอง */
+    (o ? out.changed : out.added).push(k);
+    out.info[k] = { at: (e && e.at) || '' };
+  });
+  old.forEach(function(r, k){ if(!cur.has(k) && !ownRemoval(t, k)) out.removed.push(k); });
+  return out;
+}
+
+/* ── มีการแก้จากต้นทาง ─────────────────────────────────────────────── */
+function oidOfKey(t, k){ if(t === 'imos_orders') return k; var m = WATCH.exec(k); return m ? m[2] : null; }
+function orderExists(oid){
+  var S = tbl('imos_orders'), T = cfgOf('imos_orders');
+  try{ return !!(S && T && sxlIdx(T, S).get(String(oid))); }catch(e){ return true; }
+}
+function iidsVal(oid){
+  var raw = null;
+  try{ raw = sxlRawOf('app_settings', 'iids:' + oid); }catch(e){}
+  if(raw == null) return '';
+  try{ var v = JSON.parse(raw); return v == null ? '' : String(v); }catch(e){ return String(raw); }
+}
+function onExternal(dO, dS){
+  var hit = {}, t0 = nowIso();
+  var add = function(t, d){
+    if(!d) return;
+    d.changed.concat(d.added).forEach(function(k){
+      var oid = oidOfKey(t, k); if(!oid) return;
+      var h = hit[oid] || (hit[oid] = { at:'', what:{}, isNew:false });
+      var at = (d.info[k] || {}).at || '';
+      if(at > h.at) h.at = at;
+      h.what[t === 'imos_orders' ? 'order' : k.split(':')[0]] = t0;
+      if(t === 'imos_orders' && d.added.indexOf(k) >= 0) h.isNew = true;
+    });
+  };
+  add('imos_orders', dO); add('app_settings', dS);
+  var gone = dO ? dO.removed : [];
+  var open = openOid(), mb = mbState(), others = [];
+  Object.keys(hit).forEach(function(oid){
+    var h = hit[oid], ws = Object.keys(h.what);
+    var inMerge = !!(mb && mb.on && mb.sel.indexOf(oid) >= 0);
+    if(h.isNew && oid !== open && !inMerge) return;                  /* Order ใหม่ ขึ้นในรายการซ้ายเองอยู่แล้ว */
+    if(mb && mb.on){
+      if(inMerge){ setPend({ oid:oid, mode:'merge', at:h.at, what:h.what, sel:mb.sel }); return; }
+    } else if(oid === open){
+      /* Item Id Set อย่างเดียว และค่าใหม่ตรงกับที่ช่องแสดงอยู่แล้ว → ไม่ต้องโหลด */
+      if(ws.length === 1 && ws[0] === 'iids'){
+        var inp = document.getElementById('itemIdSetInput');
+        if(inp && String(inp.value || '').trim() === iidsVal(oid).trim()) return;
+      }
+      setPend({ oid:oid, mode:'order', at:h.at, what:h.what });
+      return;
+    }
+    if(!orderExists(oid)) return;                                   /* ค่าของ Order ที่ไม่มีในรายการ */
+    XC[oid] = { at: h.at || nowIso() };
+    others.push(oid);
+  });
+  gone.forEach(function(k){ delete XC[k]; });
+  if(open && gone.indexOf(open) >= 0 && !(mb && mb.on)) setPend({ oid:open, mode:'gone', at:'', what:{ order:t0 } });
+  if(others.length){
+    paintBadges();
+    toast('มี Order ถูกแก้จากต้นทาง: <b>' + others.slice(0, 3).map(esc).join(', ') + (others.length > 3 ? ' และอีก ' + (others.length - 3) : '')
+      + '</b> — ติดป้าย "มีแก้ใหม่" ไว้ในรายการซ้าย เปิดดูแล้วจะได้ข้อมูลล่าสุด', 5200);
+  }
+  tick();
+}
+function setPend(p){
+  if(PEND && PEND.mode === 'merge' && p.mode === 'merge'){         /* โหมดรวม: จำทุก Order ในชุดที่ถูกแก้ */
+    if(PEND.oids.indexOf(p.oid) < 0) PEND.oids.push(p.oid);
+    for(var k in p.what) PEND.what[k] = p.what[k];
+    if(p.at > (PEND.at || '')) PEND.at = p.at;
+    if(p.sel) PEND.sel = p.sel;
+    return;
+  }
+  if(PEND && PEND.oid === p.oid && PEND.mode === p.mode){
+    for(var w in p.what) PEND.what[w] = p.what[w];
+    if(p.at > (PEND.at || '')) PEND.at = p.at;
+    if(p.sel) PEND.sel = p.sel;
+    return;
+  }
+  if(p.mode === 'merge') p.oids = [p.oid];
+  PEND = p;
+}
+/* Order ในชุดรวมที่ถูกแก้ แต่ยังไม่ได้รวมใหม่ → ติดป้าย "มีแก้ใหม่" ไว้ (ยกเว้นตัวที่เปิดอยู่ ซึ่งโหลดใหม่แล้ว) */
+function mergeToBadges(p){
+  var open = openOid();
+  (p && p.oids || []).forEach(function(o){ if(o !== open && orderExists(o)) XC[o] = { at: p.at || nowIso() }; });
+  paintBadges();
+}
+
+/* ── โหลดใหม่ได้ตอนนี้ไหม ───────────────────────────────────────────── */
+var COVER = '';          /* สิ่งที่บังหน้าจออยู่ (ไว้ดูใน XC_state เวลาตรวจปัญหา) */
+function descEl(el){
+  var c = (el && typeof el.className === 'string') ? el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+  return el ? el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (c ? '.' + c : '') : '';
+}
+function modalOpen(){
+  COVER = '';
+  try{ if(window.__ORV && window.__ORV.open){ COVER = 'RevGuard'; return true; } }catch(e){}
+  var W = innerWidth, H = innerHeight, pts = [[W * 0.55, H * 0.5], [120, H * 0.45], [W * 0.62, 20]];
+  for(var i = 0; i < pts.length; i++){
+    var list = [];
+    try{ list = document.elementsFromPoint(pts[i][0], pts[i][1]) || []; }catch(e){ return false; }
+    for(var j = 0; j < list.length; j++){
+      var el = list[j];
+      if(el.closest && el.closest('#xcBar,#xcToast,#gdLayer,#gdBeacons,#gdMenu,#gdToast,.gd-star,#hcChip,#sxLocalTop,#__stSetBtn,.orv-toast')) continue;
+      if(el === document.documentElement || el === document.body) break;
+      if(!(el.closest && el.closest('.tb, .body'))){ COVER = descEl(el); return true; }
+      break;
+    }
+  }
+  return false;
+}
+/* พิมพ์ค้างในช่องกรอก (ยกเว้นช่องค้นหา และ Item Id Set ที่บันทึกเองทุกครั้งที่พิมพ์ — โหลดใหม่แล้วไม่หาย) */
+function typingInField(){
+  var a = document.activeElement;
+  if(!a || a === document.body || !a.tagName) return false;
+  if(a.closest && a.closest('#xcBar')) return false;
+  if(a.id === 'itemIdSetInput' || /ค้นหา/.test(a.getAttribute('placeholder') || '')) return false;
+  var txt = a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && /^(text|search|number|tel|email|url|)$/i.test(a.type || ''));
+  if(!txt || a.readOnly || a.disabled) return false;
+  return String(a.isContentEditable ? a.textContent : a.value).trim() !== '';
+}
+function unsafe(){
+  if(document.hidden) return 'hidden';
+  var mt = ''; try{ mt = currentMainTab; }catch(e){}
+  if(mt && mt !== 'ax' && mt !== 'imos') return 'tab';
+  if(RELOADING || loading()) return 'loading';
+  try{ if((window.MBOM_busy && MBOM_busy()) || (window.SAWB_busy && SAWB_busy())) return 'busy'; }catch(e){}
+  var mb = mbState(); if(mb && mb.on) return 'merge';
+  if(editing()) return 'edit';
+  if(dirtyOf(openOid())) return 'dirty';
+  try{ if(window.GUIDE && GUIDE.state().run) return 'tour'; }catch(e){}
+  if(modalOpen()) return 'modal';
+  if(typingInField()) return 'typing';
+  if(Date.now() - lastKey < 2500 || Date.now() - lastPtr < 1200) return 'active';
+  return '';
+}
+/* หน้าจอใช้ข้อมูลล่าสุดของ Order นี้อยู่แล้วหรือยัง (เช่น ผู้ใช้เพิ่งกดเปิดเองหลังต้นทางแก้) */
+function viewIsLatest(p){
+  if(!p || p.mode !== 'order') return false;
+  var ws = Object.keys(p.what);
+  if(ws.length !== 1 || ws[0] !== 'order') return false;
+  var S = tbl('imos_orders'), T = cfgOf('imos_orders'), row = null;
+  try{ row = sxlIdx(T, S).get(String(p.oid)); }catch(e){}
+  var cd = null; try{ cd = window.currentData; }catch(e){}
+  return !!(row && cd && typeof cd === 'object' && LOADED.get(cd) === row);
+}
+/* ตำแหน่งเลื่อนของตาราง/รายการ — ตารางถูกวาดใหม่ตอนโหลด ให้กลับมาอยู่ที่เดิม */
+function scrollKey(el){
+  if(el.id) return '#' + el.id;
+  var path = [], x = el;
+  while(x && !x.id && x !== document.body && path.length < 6){
+    var c = (typeof x.className === 'string' && x.className.trim()) ? '.' + x.className.trim().split(/\s+/)[0] : x.tagName.toLowerCase();
+    path.unshift(c); x = x.parentElement;
+  }
+  return (x && x.id ? '#' + x.id + ' ' : '') + path.join(' > ');
+}
+function scrollSnap(){
+  var out = [];
+  try{
+    document.querySelectorAll('#orderList, .main [id^="content"], .main [class*="wrap"], .main [class*="scroll"]').forEach(function(el){
+      if(el.scrollTop > 0 || el.scrollLeft > 0) out.push([scrollKey(el), el.scrollTop, el.scrollLeft]);
+    });
+  }catch(e){}
+  return out;
+}
+function scrollBack(snap){
+  snap.forEach(function(s){
+    try{
+      var el = document.querySelector(s[0]);
+      if(!el) return;
+      if(s[1] > 0 && el.scrollTop === 0) el.scrollTop = s[1];
+      if(s[2] > 0 && el.scrollLeft === 0) el.scrollLeft = s[2];
+    }catch(e){}
+  });
+}
+function doReload(){
+  var p = PEND; PEND = null; hideBar();
+  if(!p || typeof window.selectOrder !== 'function') return;
+  if(p.mode === 'merge'){
+    RELOADING = true;
+    Promise.resolve().then(function(){ return window.MBOM_run(p.sel); }).catch(function(){}).then(function(){ RELOADING = false; });
+    return;
+  }
+  if(viewIsLatest(p)) return;
+  try{ if(window.IMPB_forget) window.IMPB_forget(p.oid); }catch(e){}
+  RELOADING = true;
+  var snap = scrollSnap();
+  var done = function(){ RELOADING = false; delete XC[p.oid]; paintBadges(); };
+  Promise.resolve().then(function(){ return window.selectOrder(p.oid); }).then(function(){
+    done();
+    if(openOid() === p.oid && snap.length){ scrollBack(snap); setTimeout(function(){ if(openOid() === p.oid) scrollBack(snap); }, 400); }
+    toast('Order <b>' + esc(p.oid) + '</b> ถูกแก้จากต้นทาง' + (p.at ? ' (' + hhmm(p.at) + ' น.)' : '') + ' — โหลดข้อมูลล่าสุดให้แล้ว', 4200);
+  }, function(){ done(); });
+}
+
+/* ── แถบแจ้ง + ข้อความลอย ────────────────────────────────────────────── */
+var BAR = null;
+function bar(){
+  if(BAR && document.body.contains(BAR)) return BAR;
+  BAR = document.createElement('div');
+  BAR.id = 'xcBar';
+  BAR.setAttribute('role', 'status');
+  BAR.addEventListener('click', function(ev){
+    var b = ev.target.closest && ev.target.closest('[data-x]');
+    if(!b || !PEND) return;
+    var k = b.getAttribute('data-x');
+    if(k === 'later'){
+      if(PEND.mode === 'order'){ XC[PEND.oid] = { at: PEND.at || nowIso(), keep:1 }; STALE[PEND.oid] = 1; }
+      PEND = null; hideBar(); paintBadges(); return;
+    }
+    if(k === 'close'){ if(PEND.mode === 'merge') mergeToBadges(PEND); PEND = null; hideBar(); return; }
+    if(k === 'reload'){
+      if(PEND.mode === 'order' && (editing() || dirtyOf(PEND.oid))
+         && !confirm('Order นี้มีค่าที่กำลังแก้และยังไม่ได้บันทึก\n\nโหลดข้อมูลล่าสุดจากต้นทาง ค่าที่ยังไม่บันทึกจะหาย — โหลดเลยไหม?')) return;
+      doReload();
+    }
+  });
+  document.body.appendChild(BAR);
+  return BAR;
+}
+function showBar(why){
+  var b = bar(), p = PEND, h = '', sub = '', btn = '';
+  var when = p.at ? ' เมื่อ ' + hhmm(p.at) + ' น.' : '';
+  if(p.mode === 'gone'){
+    h = 'Order <b>' + esc(p.oid) + '</b> ถูกลบหรือเปลี่ยนชื่อจากเครื่องอื่นแล้ว';
+    sub = 'ข้อมูลบนจอเป็นของเดิม — ถ้าเปลี่ยนชื่อ ให้เปิดจากรายการซ้ายด้วยชื่อใหม่';
+    btn = '<button data-x="close">ปิด</button>';
+  } else if(p.mode === 'merge'){
+    var ms = p.oids || [p.oid];
+    h = 'Order <b>' + esc(ms[0]) + '</b>' + (ms.length > 1 ? ' และอีก ' + (ms.length - 1) + ' Order' : '') + ' ในชุดรวม BOM ถูกแก้จากต้นทาง' + when;
+    sub = 'ผลรวมบนจอยังเป็นข้อมูลเดิม — กดรวม BOM ใหม่เพื่อใช้ข้อมูลล่าสุด';
+    btn = '<button class="pri" data-x="reload">รวม BOM ใหม่</button><button data-x="close">ภายหลัง</button>';
+  } else {
+    h = 'Order <b>' + esc(p.oid) + '</b> ถูกแก้จากต้นทาง' + when;
+    sub = why === 'edit' ? 'กำลังแก้ไขตารางอยู่ จึงยังไม่โหลดทับ — ถ้ากดบันทึก ค่าของคุณอาจทับของที่ต้นทางแก้ · กดโหลดใหม่เพื่อใช้ของต้นทาง (ค่าที่ยังไม่บันทึกจะหาย)'
+        : why === 'dirty' ? 'มีค่าที่แก้ไว้แต่ยังไม่ได้บันทึก จึงยังไม่โหลดทับ — ถ้ากดบันทึก ค่าของคุณอาจทับของที่ต้นทางแก้ · กดโหลดใหม่เพื่อใช้ของต้นทาง (ค่าที่ยังไม่บันทึกจะหาย)'
+        : 'มีข้อความที่พิมพ์ค้างอยู่ จึงยังไม่โหลดทับ — โหลดให้เองเมื่อพิมพ์เสร็จ หรือกดโหลดใหม่ตอนนี้';
+    btn = '<button class="pri" data-x="reload">โหลดใหม่</button><button data-x="later">ภายหลัง</button>';
+  }
+  var html = '<span class="xc-dot"></span><div class="xc-t">' + h + '<span class="xc-s">' + sub + '</span></div>' + btn;
+  if(b.__h !== html){ b.innerHTML = html; b.__h = html; }
+  b.classList.add('on');
+}
+function hideBar(){ if(BAR) BAR.classList.remove('on'); }
+var TT = null;
+function toast(html, ms){
+  var t = document.getElementById('xcToast');
+  if(!t){ t = document.createElement('div'); t.id = 'xcToast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.innerHTML = html;
+  t.classList.add('in');
+  clearTimeout(TT);
+  TT = setTimeout(function(){ t.classList.remove('in'); }, ms || 3600);
+}
+
+/* ── ป้าย "มีแก้ใหม่" ในรายการซ้าย ──────────────────────────────────── */
+function oidOfItem(it){
+  var n = it.querySelector('.order-name');
+  if(n && n.textContent) return n.textContent.trim();
+  var m = (it.getAttribute('onclick') || '').match(/selectOrder\(\s*'([^']*)'/);
+  return m ? m[1] : '';
+}
+function paintBadges(){
+  var list = document.getElementById('orderList');
+  if(!list) return;
+  Array.prototype.forEach.call(list.querySelectorAll('.order-item'), function(it){
+    var oid = oidOfItem(it), x = oid && XC[oid], b = it.querySelector('.xcbadge');
+    if(x && !b){
+      var meta = it.querySelector('.order-meta');
+      if(!meta) return;
+      b = document.createElement('span'); b.className = 'xcbadge'; b.textContent = 'มีแก้ใหม่';
+      meta.insertBefore(b, meta.firstChild);
+    }
+    if(x && b) b.title = 'ต้นทางแก้ Order นี้' + (x.at ? ' เมื่อ ' + hhmm(x.at) + ' น.' : '') + ' — เปิดดูเพื่อโหลดข้อมูลล่าสุด';
+    if(!x && b) b.parentNode.removeChild(b);
+  });
+}
+(function watchList(){
+  var el = document.getElementById('orderList');
+  if(!el){ setTimeout(watchList, 1000); return; }
+  try{ new MutationObserver(function(){ if(Object.keys(XC).length) setTimeout(paintBadges, 0); }).observe(el, { childList:true }); }catch(e){}
+})();
+
+/* ── เฝ้าทุก 1 วินาที ────────────────────────────────────────────────── */
+var lastOpen = null, wasLoading = false;
+function tick(){
+  var open = openOid(), l = loading();
+  /* เปิด Order ที่ติดป้ายไว้ (เลือกใหม่ หรือโหลดเสร็จ) → เอาป้ายออก */
+  if(open && XC[open] && ((open !== lastOpen && !l) || (wasLoading && !l))){ delete XC[open]; paintBadges(); }
+  if(open !== lastOpen && !l) lastOpen = open;
+  wasLoading = l;
+  /* Lot ที่ต้นทางแก้ แต่ผู้ใช้กดภายหลัง: ไม่ได้เปิดอยู่แล้ว → ล้างแถวที่จำไว้ เปิดครั้งหน้าจะอ่านของใหม่ */
+  Object.keys(STALE).forEach(function(k){ if(k !== open){ try{ if(window.IMPB_forget) window.IMPB_forget(k); }catch(e){} delete STALE[k]; } });
+  Object.keys(DIRTY).forEach(function(k){ dirtyOf(k); });
+  if(!PEND){ hideBar(); return; }
+  if(PEND.mode === 'merge'){
+    var mb = mbState();
+    if(!mb || !mb.on){ var pm = PEND; PEND = null; hideBar(); mergeToBadges(pm); return; }   /* ออกจากโหมดรวม → Order แรกโหลดใหม่เอง ตัวอื่นติดป้าย */
+    if(RELOADING || (window.MBOM_busy && MBOM_busy())){ hideBar(); return; }
+    showBar('merge'); return;
+  }
+  if(open !== PEND.oid){                                       /* ไปเปิด Order อื่นแล้ว — เปิดกลับมาจะอ่านของใหม่เอง */
+    if(PEND.mode === 'order'){ try{ if(window.IMPB_forget) window.IMPB_forget(PEND.oid); }catch(e){} }
+    PEND = null; hideBar(); return;
+  }
+  if(PEND.mode === 'gone'){ showBar('gone'); return; }
+  /* ผู้ใช้กดบันทึกค่าของตัวเองหลังต้นทางแก้ = เลือกใช้ค่าของตัวเอง → ส่วนนั้นไม่ต้องโหลดใหม่ */
+  Object.keys(PEND.what).forEach(function(w){ if(ownSince(w, PEND.oid, PEND.what[w])) delete PEND.what[w]; });
+  if(!Object.keys(PEND.what).length){ PEND = null; hideBar(); return; }
+  var why = unsafe();
+  if(!why){ doReload(); return; }
+  if(why === 'merge'){                                         /* เข้าโหมดรวมหลาย Order ไปแล้ว → ติดป้ายไว้แทน */
+    XC[PEND.oid] = { at: PEND.at || nowIso(), keep:1 }; STALE[PEND.oid] = 1;
+    PEND = null; hideBar(); paintBadges(); return;
+  }
+  if(why === 'edit' || why === 'dirty' || why === 'typing') showBar(why);
+  else hideBar();                                              /* แท็บอื่น · กำลังโหลด/ส่งงาน · กล่องเปิด · ทัวร์ · กำลังกดเมาส์ → รอเงียบ ๆ */
+}
+setInterval(function(){ try{ tick(); }catch(e){ try{ console.warn('[ต้นทางแก้]', e); }catch(x){} } }, 1000);
+
+/* กลับมาที่หน้าโปรแกรม (สลับแท็บ/หน้าต่างจาก StarNexus) → ตรวจโฟลเดอร์ทันที ไม่ต้องรอรอบ 10 วินาที
+   (ไฟล์กลางหยุดตรวจตอนแท็บถูกซ่อน · ใช้คำสั่งตรวจเดียวกับรอบปกติ) */
+var lastWake = 0;
+function wake(){
+  if(document.hidden || Date.now() - lastWake < 2000) return;
+  lastWake = Date.now();
+  setTimeout(function(){ try{ if(!SXL.busy && !SXL.locked && typeof sxlRefresh === 'function') sxlRefresh().catch(function(){}); }catch(e){} }, 250);
+}
+document.addEventListener('visibilitychange', wake);
+window.addEventListener('focus', wake);
+
+/* ── ห่อทับขั้น "ใช้ข้อมูล" ของไฟล์กลาง ────────────────────────────────── */
+var ap = SXL.cfg.apply;
+SXL.cfg.apply = async function(ch, why){
+  var st = await ap.apply(this, arguments);
+  if(why === 'pick' || why === 'restore'){ SNAP.imos_orders = null; SNAP.app_settings = null; XC = {}; PEND = null; hideBar(); paintBadges(); }
+  var dO = null, dS = null;
+  try{ if(ch && ch.has('imos_orders')) dO = diff('imos_orders'); }catch(e){ console.error('[ต้นทางแก้] imos_orders:', e); }
+  try{ if(ch && ch.has('app_settings')) dS = diff('app_settings'); }catch(e){ console.error('[ต้นทางแก้] app_settings:', e); }
+  if(ch && ch.has('imos_orders') && typeof window.IMPB_reload === 'function'){
+    try{ await window.IMPB_reload(dO ? dO.changed : null); }catch(e){ console.error('[ไฟล์กลาง] อ่านรายการ Order นำเข้าใหม่ไม่ได้:', e); }
+  }
+  if(ch && ch.has('app_settings') && typeof window.ORV_reload === 'function'){
+    try{ await window.ORV_reload(); }catch(e){ console.error('[ไฟล์กลาง] อ่านรายการรอตัดสินใจใหม่ไม่ได้:', e); }
+  }
+  try{ if(dO || dS) onExternal(dO, dS); }catch(e){ console.error('[ต้นทางแก้]', e); }
+  return st;
+};
+
+/* ดูสถานะในคอนโซลเวลาตรวจปัญหา: XC_state() */
+window.XC_state = function(){
+  var why = PEND ? unsafe() : '';
+  var dirty = {};
+  Object.keys(DIRTY).forEach(function(k){ if(!dirtyOf(k)) return; var d = DIRTY[k]; dirty[k] = [d.ax ? 'BOM ไม้' : '', d.bom ? 'BOM Fitting' : ''].filter(Boolean).join(' + '); });
+  return { tab: TAB, pend: PEND ? { oid: PEND.oid, mode: PEND.mode, what: Object.keys(PEND.what) } : null, marked: Object.keys(XC), why: why,
+           cover: why === 'modal' ? COVER : '', dirty: dirty };
+};
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v118 — โหมดมือใหม่ (แนะนำการใช้งานแบบเกม) · โมดูลแยก (เพิ่มล้วน ไม่แก้ของเดิม)
+     • ปุ่ม "มือใหม่" บนแถบบน (ข้างปุ่มมืด) กดเปิด/ปิดโหมด · ลูกศรข้าง ๆ = รายการคำแนะนำแต่ละหน้า
+     • เปิดโหมด = เริ่มแบบคนใช้ครั้งแรก: ทัวร์ภาพรวม → เปิดหน้าไหนครั้งแรก คำแนะนำหน้านั้นขึ้นเอง
+     • ไฮไลต์เป็นวงกลม/แคปซูลรอบปุ่ม + วงแหวนกระพริบ + การ์ดคำอธิบาย · ขั้น "ลองกด" มีจุดกระพริบให้กด
+     • จุดส้มกระพริบ = หน้าที่ยังไม่เคยดูคำแนะนำ
+     • จำสถานะในเครื่องนี้ (localStorage) · ปิดโหมด = ไม่มีอะไรขึ้น ไม่แตะการทำงานเดิม
+     • ไม่ใช้อีโมจิ (เครื่อง Windows 7 แสดงเป็นกล่องสี่เหลี่ยม) · สีการ์ดเข้มเสมอ ไม่โดนตัวกวาดสีธีมมืด
+     • เรียกจาก Console ได้: GUIDE.on() · GUIDE.off() · GUIDE.start('bomf') · GUIDE.reset()
+     ══════════════════════════════════════════════════════════════════════ -->
+<style>
+#__gdWrap{display:inline-flex;align-items:stretch;height:24px;margin-left:8px;vertical-align:middle;position:relative;
+  border-radius:13px;border:1px solid rgba(217,119,6,.55);background:rgba(245,158,11,.12)}
+#__gdBtn{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;cursor:pointer;
+  padding:0 10px 0 5px;border-radius:13px;font:700 11px/1 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;color:#b45309;white-space:nowrap}
+#__gdBtn:hover{background:rgba(245,158,11,.10)}
+#__gdBtn .gd-sw{position:relative;width:24px;height:14px;border-radius:8px;background:#94a3b8;flex-shrink:0;transition:background .2s}
+#__gdBtn .gd-sw::after{content:'';position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.35);transition:left .2s}
+#__gdWrap.on #__gdBtn .gd-sw{background:#16a34a}
+#__gdWrap.on #__gdBtn .gd-sw::after{left:12px}
+#__gdBtn .gd-new{background:#dc2626;color:#fff;border-radius:6px;padding:2px 5px;font-size:9px;font-weight:800;letter-spacing:.2px}
+#__gdMenuBtn{display:none;position:relative;width:22px;border:none;border-left:1px solid rgba(217,119,6,.35);
+  background:transparent;cursor:pointer;border-radius:0 13px 13px 0;padding:0}
+#__gdMenuBtn:hover{background:rgba(245,158,11,.14)}
+#__gdMenuBtn::after{content:'';position:absolute;left:50%;top:50%;margin:-2px 0 0 -4px;
+  border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid #b45309}
+#__gdWrap.on #__gdMenuBtn{display:block}
+html[data-theme="dark"] #__gdBtn{color:#fbbf24}
+html[data-theme="dark"] #__gdMenuBtn::after{border-top-color:#fbbf24}
+
+#gdLayer{position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483600;pointer-events:none;
+  font-family:-apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#gdLayer .gd-dim{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(2,6,23,.68);pointer-events:auto;display:none}
+#gdLayer .gd-hole{position:fixed;border-radius:14px;box-shadow:0 0 0 200vmax rgba(2,6,23,.68);pointer-events:none;
+  transition:left .35s cubic-bezier(.3,.7,.2,1),top .35s cubic-bezier(.3,.7,.2,1),width .35s cubic-bezier(.3,.7,.2,1),height .35s cubic-bezier(.3,.7,.2,1),border-radius .35s}
+#gdLayer .gd-ring{position:fixed;border-radius:14px;border:3px solid #f59e0b;pointer-events:none;
+  box-shadow:0 0 18px rgba(245,158,11,.55);
+  transition:left .35s cubic-bezier(.3,.7,.2,1),top .35s cubic-bezier(.3,.7,.2,1),width .35s cubic-bezier(.3,.7,.2,1),height .35s cubic-bezier(.3,.7,.2,1),border-radius .35s}
+#gdLayer .gd-ring::before,#gdLayer .gd-ring::after{content:'';position:absolute;left:-3px;top:-3px;right:-3px;bottom:-3px;
+  border-radius:inherit;animation:gdPulse 1.6s ease-out infinite}
+#gdLayer .gd-ring::after{animation-delay:.8s}
+@keyframes gdPulse{0%{box-shadow:0 0 0 0 rgba(245,158,11,.75)}70%{box-shadow:0 0 0 16px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+#gdLayer .gd-tap{position:fixed;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(245,158,11,.62);
+  border:2px solid #fde68a;pointer-events:none;display:none;animation:gdTap 1.25s ease-out infinite}
+@keyframes gdTap{0%{transform:scale(.75);box-shadow:0 0 0 0 rgba(245,158,11,.7)}60%{transform:scale(1);box-shadow:0 0 0 18px rgba(245,158,11,0)}100%{transform:scale(.75);box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+#gdLayer .gd-tapl{position:fixed;transform:translate(-50%,-100%);background:#f59e0b;color:#1c1917;font-size:11.5px;font-weight:800;
+  padding:4px 9px;border-radius:9px;pointer-events:none;white-space:nowrap;display:none;animation:gdBob 1.25s ease-in-out infinite;
+  box-shadow:0 4px 12px rgba(0,0,0,.35)}
+#gdLayer .gd-tapl::after{content:'';position:absolute;left:50%;bottom:-5px;margin-left:-5px;border-left:5px solid transparent;
+  border-right:5px solid transparent;border-top:6px solid #f59e0b}
+@keyframes gdBob{0%,100%{margin-top:-16px}50%{margin-top:-22px}}
+#gdLayer .gd-blk{position:fixed;pointer-events:auto;background:transparent}
+#gdLayer .gd-card{position:fixed;left:0;top:0;width:340px;max-width:calc(100vw - 20px);box-sizing:border-box;
+  background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.38);border-radius:14px;padding:13px 16px 12px;
+  box-shadow:0 18px 50px rgba(0,0,0,.5);pointer-events:auto;opacity:0;transform:translateY(8px) scale(.97);
+  transition:opacity .22s ease,transform .22s ease,left .3s cubic-bezier(.3,.7,.2,1),top .3s cubic-bezier(.3,.7,.2,1)}
+#gdLayer .gd-card.in{opacity:1;transform:none}
+#gdLayer .gd-card.shake{animation:gdShake .38s}
+@keyframes gdShake{20%{margin-left:-7px}40%{margin-left:7px}60%{margin-left:-4px}80%{margin-left:4px}}
+#gdLayer .gd-hd{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+#gdLayer .gd-mas{width:30px;height:30px;flex-shrink:0}
+#gdLayer .gd-ttl{flex:1;font-size:14.5px;font-weight:800;color:#fff;line-height:1.35}
+#gdLayer .gd-cnt{font-size:11px;font-weight:800;color:#fbbf24;background:rgba(245,158,11,.14);border-radius:10px;padding:3px 8px;white-space:nowrap}
+#gdLayer .gd-txt{font-size:12.8px;line-height:1.7;color:#cbd5e1}
+#gdLayer .gd-txt b{color:#fde68a;font-weight:700}
+#gdLayer .gd-hint{margin-top:8px;font-size:12px;font-weight:800;color:#fbbf24}
+#gdLayer .gd-dots{display:flex;gap:4px;margin:10px 0 0;flex-wrap:wrap}
+#gdLayer .gd-dots i{display:block;width:6px;height:6px;border-radius:3px;background:rgba(148,163,184,.42)}
+#gdLayer .gd-dots i.on{width:16px;background:#f59e0b}
+#gdLayer .gd-dots i.past{background:rgba(245,158,11,.5)}
+#gdLayer .gd-ft{display:flex;align-items:center;gap:6px;margin-top:11px}
+#gdLayer .gd-ft .gd-sp{flex:1}
+#gdLayer .gd-b{font:700 12px/1 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;border-radius:8px;padding:8px 12px;cursor:pointer;
+  border:1px solid rgba(148,163,184,.42);background:transparent;color:#e2e8f0;white-space:nowrap}
+#gdLayer .gd-b:hover{background:rgba(148,163,184,.16)}
+#gdLayer .gd-b.pri{background:#f59e0b;border-color:#f59e0b;color:#1c1917;padding:8px 15px}
+#gdLayer .gd-b.pri:hover{background:#d97706;border-color:#d97706}
+#gdLayer .gd-b.lnk{border-color:transparent;color:#94a3b8;padding:8px 4px}
+#gdLayer .gd-b.lnk:hover{color:#e2e8f0;background:transparent}
+#gdLayer .gd-tip{margin-top:8px;font-size:10.5px;color:#64748b}
+#gdLayer .gd-arrow{position:absolute;width:14px;height:14px;background:#1e293b;border:1px solid rgba(148,163,184,.38);transform:rotate(45deg)}
+#gdLayer .gd-card[data-side="below"] .gd-arrow{top:-8px;border-right-color:transparent;border-bottom-color:transparent}
+#gdLayer .gd-card[data-side="above"] .gd-arrow{bottom:-8px;border-left-color:transparent;border-top-color:transparent}
+#gdLayer .gd-card[data-side="right"] .gd-arrow{left:-8px;border-top-color:transparent;border-right-color:transparent}
+#gdLayer .gd-card[data-side="left"] .gd-arrow{right:-8px;border-bottom-color:transparent;border-left-color:transparent}
+#gdLayer .gd-card[data-side="none"] .gd-arrow{display:none}
+
+#gdBeacons{position:fixed;left:0;top:0;width:0;height:0;z-index:2147483590;pointer-events:none}
+#gdBeacons .gd-bc{position:fixed;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#f59e0b;
+  border:2px solid #7c2d12;pointer-events:none;animation:gdDot 1.6s ease-out infinite}
+@keyframes gdDot{0%{box-shadow:0 0 0 0 rgba(245,158,11,.75)}70%{box-shadow:0 0 0 11px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+
+#gdMenu{position:fixed;z-index:2147483610;width:290px;box-sizing:border-box;background:#1e293b;color:#e2e8f0;
+  border:1px solid rgba(148,163,184,.38);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.45);padding:8px;
+  font-family:-apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#gdMenu .gm-h{display:flex;align-items:center;gap:8px;padding:4px 6px 8px;font-size:13px;font-weight:800;color:#fff}
+#gdMenu .gm-h svg{width:24px;height:24px}
+#gdMenu .gm-row{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;border:none;background:transparent;
+  color:#e2e8f0;font:600 12px/1.35 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;padding:8px;border-radius:8px;cursor:pointer;text-align:left}
+#gdMenu .gm-row:hover{background:rgba(148,163,184,.16)}
+#gdMenu .gm-st{margin-left:auto;font-size:10.5px;font-weight:800;border-radius:8px;padding:2px 7px;white-space:nowrap}
+#gdMenu .gm-st.done{color:#86efac;background:rgba(34,197,94,.16)}
+#gdMenu .gm-st.todo{color:#fcd34d;background:rgba(245,158,11,.16)}
+#gdMenu .gm-sw{position:relative;margin-left:auto;width:30px;height:17px;border-radius:9px;background:#64748b;flex-shrink:0}
+#gdMenu .gm-sw::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:left .2s}
+#gdMenu .gm-sw.on{background:#16a34a}
+#gdMenu .gm-sw.on::after{left:15px}
+#gdMenu .gm-sep{height:1px;background:rgba(148,163,184,.25);margin:6px 4px}
+#gdMenu .gm-note{font-size:10.5px;color:#94a3b8;padding:2px 8px 4px;line-height:1.5}
+
+#gdToast{position:fixed;z-index:2147483620;left:50%;top:58px;transform:translate(-50%,-6px);max-width:min(560px,calc(100vw - 24px));box-sizing:border-box;
+  display:flex;align-items:center;gap:10px;background:#1e293b;color:#e2e8f0;border:1px solid rgba(245,158,11,.55);border-radius:12px;
+  padding:9px 16px;font:600 12.5px/1.5 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;box-shadow:0 12px 30px rgba(0,0,0,.35);
+  opacity:0;transition:opacity .25s,transform .25s;pointer-events:none}
+#gdToast.in{opacity:1;transform:translate(-50%,0)}
+#gdToast svg{width:26px;height:26px;flex-shrink:0}
+.gd-star{position:fixed;z-index:2147483621;width:10px;height:10px;margin:-5px 0 0 -5px;background:#f59e0b;pointer-events:none;
+  clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+@media (prefers-reduced-motion:reduce){
+  #gdLayer .gd-ring::before,#gdLayer .gd-ring::after,#gdLayer .gd-tap,#gdLayer .gd-tapl,#gdBeacons .gd-bc{animation:none}
+}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.GUIDE) return;
+
+var LS_ON = 'pv2_guide_on', LS_DONE = 'pv2_guide_done', LS_SEEN = 'pv2_guide_btn_seen';
+function lsGet(k, d){ try{ var v = localStorage.getItem(k); return v === null ? d : v; }catch(e){ return d; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+var S = { on: lsGet(LS_ON, '0') === '1', done: {}, run: null, sc: '', stable: 0, miss: 0, blk: 0 };
+try{ S.done = JSON.parse(lsGet(LS_DONE, '{}')) || {}; }catch(e){ S.done = {}; }
+function saveDone(){ lsSet(LS_DONE, JSON.stringify(S.done)); }
+
+/* ── ตัวช่วย DOM ─────────────────────────────────────────────────── */
+function $(s, root){ try{ return (root || document).querySelector(s); }catch(e){ return null; } }
+function $$(s, root){ try{ return (root || document).querySelectorAll(s); }catch(e){ return []; } }
+function G(n){ try{ return window[n]; }catch(e){ return undefined; } }
+function vis(el){
+  if(!el || !el.getBoundingClientRect || !document.body || !document.body.contains(el)) return false;
+  var r = el.getBoundingClientRect();
+  if(r.width < 2 || r.height < 2) return false;
+  var cs = getComputedStyle(el);
+  if(cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) return false;
+  return r.right > 1 && r.bottom > 1 && r.left < innerWidth - 1 && r.top < innerHeight - 1;
+}
+function mine(el){ return !!(el && el.closest && el.closest('#gdLayer,#gdBeacons,#gdMenu,#gdToast,.gd-star')); }
+function byOnclick(fn){ return $('button[onclick="' + fn + '"]'); }
+function fgButton(){
+  var bs = $$('.tb button');
+  for(var i = 0; i < bs.length; i++) if((bs[i].getAttribute('onclick') || '') === 'openFG()') return bs[i];
+  return null;
+}
+/* Order แรกที่เห็นในรายการ — เลือก Order ปกติก่อน (Lot นำเข้าไม่มี BOM Fitting ให้ดู) */
+function firstOrderItem(){
+  var it = $$('#orderList .order-item'), box = $('#orderList'), b = box ? box.getBoundingClientRect() : null, seen = null;
+  for(var i = 0; i < it.length; i++){
+    var r = it[i].getBoundingClientRect();
+    if(b && !(r.top >= b.top - 1 && r.bottom <= b.bottom + 1)) continue;
+    if(!it[i].querySelector('.impbadge')) return it[i];
+    if(!seen) seen = it[i];
+  }
+  return seen || it[0] || null;
+}
+function parentOf(sel){ var e = $(sel); return e ? e.parentElement : null; }
+
+/* ── ตอนนี้อยู่หน้าไหน ───────────────────────────────────────────── */
+function fgOpen(){ var o = $('#fgOv'); return !!(o && o.style.display !== 'none' && vis(o)); }
+function mbOn(){ try{ var s = window.MBOM_state && window.MBOM_state(); return !!(s && s.on); }catch(e){ return false; } }
+function orderOpen(){
+  if(G('currentOrder')) return true;
+  try{ return !!(window.IMPB_active && window.IMPB_active()); }catch(e){ return false; }
+}
+function mainTab(){ var t = $('.main-tabs .main-tab.active'); return t ? t.id : ''; }
+function subTab(){ var t = $('#areaAX .sub-tabs .sub-tab.active'); return t ? t.id : ''; }
+function screenNow(){
+  if(fgOpen()) return 'fg';
+  var mt = mainTab();
+  if(mt === 'tabSAW') return 'saw';
+  if(mt === 'tabAX' && mbOn()) return 'merge';
+  if(!orderOpen()) return 'home';
+  if(mt === 'tabIMOS') return 'imos';
+  var st = subTab();
+  return st === 'subTabBOMF' ? 'bomf' : st === 'subTabWoodCheck' ? 'wood' : 'order';
+}
+function appReady(){
+  if($('#splash')) return false;
+  return $$('#orderList .order-item').length > 0 || ((G('_sidebarOrders') || []).length > 0);
+}
+/* มีหน้าต่าง/กล่องของโปรแกรมบังอยู่ไหม — ดูว่าจุดกลางจอเป็นของหน้าหลักหรือของป๊อปอัป */
+function topAt(x, y){
+  var list = [];
+  try{ list = document.elementsFromPoint(x, y) || []; }catch(e){ return null; }
+  for(var i = 0; i < list.length; i++){
+    var el = list[i];
+    if(mine(el)) continue;
+    if(el.id === '__stSetBtn' || el.id === 'hcChip' || el.id === 'sxLocalTop') continue;
+    return el;
+  }
+  return null;
+}
+function blocked(allowSel){
+  var W = innerWidth, H = innerHeight;
+  var pts = [[W * 0.55, H * 0.5], [120, H * 0.45], [W * 0.62, 20]];
+  for(var i = 0; i < pts.length; i++){
+    var el = topAt(pts[i][0], pts[i][1]);
+    if(!el || el === document.documentElement || el === document.body) continue;
+    if(allowSel && el.closest(allowSel)) continue;
+    if(!el.closest('.tb, .body')) return true;
+  }
+  return false;
+}
+
+/* ── หน้าตา: ตัวมาสคอตดาว (SVG ไม่ใช่อีโมจิ) ─────────────────────── */
+var MASCOT = '<svg class="gd-mas" viewBox="0 0 40 40" aria-hidden="true">'
+  + '<path d="M20 2.6l5.3 10.9 12 1.7-8.7 8.4 2.1 11.9L20 29.8 9.3 35.5l2.1-11.9-8.7-8.4 12-1.7z" fill="#fbbf24" stroke="#b45309" stroke-width="1.6" stroke-linejoin="round"/>'
+  + '<circle cx="16" cy="19.5" r="1.9" fill="#1f2937"/><circle cx="24" cy="19.5" r="1.9" fill="#1f2937"/>'
+  + '<path d="M16.4 23.6q3.6 3.1 7.2 0" stroke="#1f2937" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>';
+
+/* ══ เนื้อหาคำแนะนำ ═════════════════════════════════════════════════
+   el   = ตัวที่ไฮไลต์ (selector · ฟังก์ชัน · หรือหลายตัว = ไฮไลต์รวมกัน)
+   act  = 'click' → ต้องกดตัวนั้นเอง (แบบเกม) · cond = แสดงเมื่อเงื่อนไขจริง
+   shape: auto · round · rect */
+var T = {
+  welcome: { name: 'ภาพรวมหน้าแรก', where: '', steps: [
+    { center: true, t: 'สวัสดี! มาเริ่มใช้ STAR NEXUS กัน',
+      x: 'โปรแกรมนี้แปลงแบบเฟอร์นิเจอร์จาก IMOS / BoardForge เป็นข้อมูลผลิต — <b>BOM ไม้</b>, <b>BOM Fitting</b> และ<b>ไฟล์สั่งตัด .saw</b> · ข้อมูลเก็บในโฟลเดอร์ Server (ไฟล์กลาง)<br>จะพาดูทีละจุด ใช้เวลาประมาณ 1 นาที', next: 'เริ่มเลย', first: true },
+    { el: '#orderList', shape: 'rect', t: 'รายการ Order',
+      x: 'งานทุก Order อยู่ตรงนี้ กดที่ชื่อเพื่อเปิดดู<br>ป้ายใต้ชื่อบอกที่มา: <b>FURNITECH</b> จาก BoardForge · <b>IMOS</b> ไฟล์ IMOS · <b>IMPORT</b> Lot ที่นำเข้าจากไฟล์' },
+    { el: '.order-filter', t: 'ค้นหาและกรอง', x: 'พิมพ์เลขหรือชื่อ Order บางส่วนก็ได้ · ปุ่มด้านล่างกรองตามที่มา ตัวเลขคือจำนวน Order' },
+    { el: '#settingsBtn', t: 'เพิ่มข้อมูลเข้าโปรแกรม', x: 'ปุ่มเฟือง: นำเข้าไฟล์ IMOS (_AUFTRAG.TXT) · อัปโหลด Mapping Excel · ทำ BOM เองจาก Excel' },
+    { el: '#mbReset', t: 'ล้างหน้าจอ', x: 'เลิกเลือก Order และล้างตารางที่แสดงอยู่ — ข้อมูลในฐานข้อมูลไม่หาย' },
+    { el: '#watchBtn', t: 'Watch Folder อัตโนมัติ', x: 'เลือกโฟลเดอร์ที่ IMOS ส่งไฟล์ออกมา แล้วโปรแกรมจะดึง Order ใหม่เข้าให้เองเป็นระยะ (ใช้กับ Chrome หรือ Edge)' },
+    { el: ['#tabAX', '#tabIMOS', '#tabSAW'], t: 'แท็บหลัก 3 แท็บ',
+      x: '<b>AX Detail</b> ทำ BOM ไม้ / BOM Fitting / เช็คไม้<br><b>Imos Detail</b> ดูข้อมูลดิบตามไฟล์<br><b>SAW / NC</b> ส่งงานไปจัดแผ่นตัด ออกไฟล์ .saw และสติกเกอร์' },
+    { el: [fgButton, '#__fgReload'], t: 'Fitting Global', x: 'รายการรหัสไม้ ขอบ อุปกรณ์ และสินค้าสำเร็จที่โปรแกรมใช้ — อ่านจากไฟล์ Excel ของ AX หรือ CSV ในโฟลเดอร์ Server · ค้นหาได้ ถ้าจะเพิ่ม/แก้รหัส ให้แก้ที่ AX แล้วกด Refresh ในไฟล์ Excel' },
+    { el: ['#tbSbDot', '#tbSbText'], t: 'สถานะข้อมูล (ไฟล์กลาง)', x: 'จุดเขียว = อ่านข้อมูลจากโฟลเดอร์ Server แล้ว · ถ้าขึ้นว่ายังไม่ได้เลือก ให้กดที่ข้อความนี้เพื่อเลือกโฟลเดอร์' },
+    { el: '#sxLocalTop', t: 'ไฟล์กลาง (ที่เก็บข้อมูล)', x: 'บอกว่าอ่านตารางครบกี่ตาราง · กดเพื่อ<b>เลือกโฟลเดอร์ Server</b> ครั้งแรก, <b>เชื่อมตำแหน่งที่จำไว้</b> หลังเปิดโปรแกรมใหม่ หรือ<b>อ่านไฟล์ล่าสุด</b><br>ของที่บันทึกเก็บในโฟลเดอร์ย่อย _changes ไฟล์ CSV เดิมไม่ถูกแก้' },
+    { el: '#__snThemeBtn', t: 'โหมดมืด', x: 'สลับหน้าจอสว่าง / มืด ให้สบายตา' },
+    { el: '#hcChip', shape: 'round', t: 'ตรวจความพร้อม + วิธีใช้', x: 'กดเพื่อเช็คว่าเครื่องนี้พร้อมทำงานไหม และมีวิธีใช้แบบ 1 หน้า · ถ้ามีอะไรไม่พร้อม ปุ่มนี้จะกระพริบแดง' },
+    { el: '#__stSetBtn', t: 'ตั้งค่า ⇄ ไฟล์', x: 'สำรองการตั้งค่าของเครื่องนี้เป็นไฟล์ แล้วนำไปใส่เครื่องอื่นได้ · ลากย้ายตำแหน่งปุ่มได้' },
+    { el: '#__gdWrap', t: 'ปุ่มโหมดมือใหม่',
+      x: 'กดเพื่อปิด / เปิดคำแนะนำได้ทุกเมื่อ · ลูกศรข้าง ๆ เปิดรายการคำแนะนำของแต่ละหน้า<br><b>จุดส้มกระพริบ</b> = ส่วนที่ยังไม่เคยดู เปิดหน้านั้นแล้วคำแนะนำจะขึ้นเอง' },
+    { el: firstOrderItem, act: 'click', cond: function(){ return mainTab() === 'tabAX' && !mbOn(); },
+      t: 'ลองเลย!', x: 'กดเปิด Order นี้ดู แล้วคำแนะนำของหน้าถัดไปจะขึ้นเอง' }
+  ]},
+
+  order: { name: 'BOM ไม้ (เปิด Order)', screen: 'order', where: 'เปิด Order ใดก็ได้ในแท็บ AX Detail',
+    ready: function(){ return !!$('#contentAX table'); },
+    beacon: function(){ return (!orderOpen() && mainTab() === 'tabAX' && !mbOn()) ? firstOrderItem() : null; },
+    steps: [
+    { el: '#oid', t: 'Order ที่เปิดอยู่', x: 'ชื่อ Order ที่กำลังดู — ตารางด้านล่างเป็นข้อมูลของ Order นี้' },
+    { el: ['#subTabBOMW', '#subTabBOMF', '#subTabWoodCheck'], t: 'แท็บย่อยของ AX Detail',
+      x: '<b>BOM ไม้</b> รายการชิ้นไม้ทุกชิ้น<br><b>BOM Fitting</b> วัตถุดิบที่ต้องเบิก (ขอบ อุปกรณ์ ไม้แผ่น)<br><b>เช็คไม้</b> ตรวจรหัสไม้กับ Fitting Global' },
+    { el: '#contentAX', shape: 'rect', t: 'ตาราง BOM ไม้',
+      x: '1 แถว = ไม้ 1 ชิ้น พร้อมขนาดสำเร็จ ขนาดตัด รหัสไม้ รหัสขอบ · คลิกหัวคอลัมน์เพื่อเรียง · ลากเส้นขอบหัวคอลัมน์เพื่อขยาย' },
+    { el: '#qAX', t: 'ค้นหาในตาราง', x: 'พิมพ์รหัส ชื่อชิ้น หรือขนาด · ระวัง: ถ้ามีคำค้นค้างอยู่ ไฟล์ Export จะออกเฉพาะแถวที่ค้นเจอ' },
+    { el: function(){ return parentOf('#itemIdSetInput'); }, t: 'Item Id Set',
+      x: 'รหัสสินค้าสำเร็จของ Order นี้ใน AX — ตรวจให้ถูกก่อน Export · ถ้าเป็นรูปแบบ RE-xxxx-xxxx อาจเป็นค่าที่โปรแกรมเดาจากเลข Order' },
+    { el: '#__axGap', t: 'ตรวจลำดับชิ้น', x: 'ขึ้นสีเขียว "ชิ้นครบ" = เลขชิ้นเรียงครบไม่มีหาย · ถ้าเตือนว่าเลขชิ้นขาด ให้ตรวจไฟล์ต้นทางก่อนผลิต' },
+    { el: '#editModeBtn', t: 'แก้ไขตาราง', x: 'กดเพื่อแก้ค่าในตาราง เช่น รหัสผิว ขนาด ร่อง แล้วกดบันทึก — ค่าที่แก้จำไว้กับ Order นี้' },
+    { el: [function(){ return byOnclick('exportAXExcel()'); }, '#ncPdExportBtn', function(){ return byOnclick('exportRepairBOM()'); }], t: 'ส่งออก Excel',
+      x: '<b>Export BOM ไม้</b> ไฟล์นำเข้า AX<br><b>(PD)</b> เลขตู้แบบ PD01, PD02 ชุดเดียวกับ SAW/NC<br><b>แจ้งซ่อม</b> ฟอร์แมตสำหรับงานแจ้งซ่อม' },
+    { el: '#mbToggle', t: 'เลือกหลาย Order', x: 'ผลิตหลาย Order พร้อมกัน? รวม BOM หลาย Order เป็นตารางเดียว (ทุกแถวติดชื่อ Order) แล้ว Export ครั้งเดียว' },
+    { el: ['#asmModeBtn', '#__blfAskBtn', function(){ return byOnclick('openMatConfig()'); }, function(){ return byOnclick('openFSConfig()'); }], t: 'ตั้งค่าเสริม',
+      x: 'ดึงลิงก์ Assembly (ลิงก์ตู้บนสติกเกอร์ของ Order ที่ Import) · ถามขนาดไม้ทุกครั้ง · กติการหัสผิว · กติกาขอบเพิ่ม — ปกติไม่ต้องแตะ' },
+    { el: '#subTabBOMF', act: 'click', t: 'ต่อไป: BOM Fitting', x: 'กดแท็บ BOM Fitting เพื่อดูวัตถุดิบที่ต้องเบิกของ Order นี้' }
+  ]},
+
+  bomf: { name: 'BOM Fitting', screen: 'bomf', where: 'เปิด Order แล้วกดแท็บ BOM Fitting',
+    ready: function(){ return vis($('#contentBOM')); },
+    beacon: function(){ return (orderOpen() && mainTab() === 'tabAX' && !mbOn() && subTab() !== 'subTabBOMF') ? $('#subTabBOMF') : null; },
+    steps: [
+    { el: function(){ return $('#contentBOM table.bom-table') || $('#contentBOM'); }, shape: 'rect', t: 'BOM Fitting',
+      x: 'วัตถุดิบที่ต้องเบิกของ Order: <b>ขอบ</b> (เมตร) · <b>Fitting</b> อุปกรณ์ (EA) · <b>BOM ไม้</b> ไม้แผ่นจากใบสั่งตัด (แผ่น)<br>ชื่อสีแดง = รหัสนี้ยังไม่มีใน Fitting Global' },
+    { el: function(){ var i = $('#bomSets'); return i ? (i.closest('div[style*="border"]') || i.parentElement) : null; }, t: 'จำนวนชุด / Order',
+      x: 'ผลิตกี่ชุดใส่ตรงนี้ โปรแกรมคูณขอบและอุปกรณ์ให้ · ไม้ไม่คูณ เพราะเป็นยอดจริงจากใบสั่งตัดอยู่แล้ว' },
+    { el: '#bomFltBar', t: 'ค้นหาและกรอง', x: 'ค้นด้วยรหัสหรือชื่อ (หลายรหัสคั่นด้วย , ) · ปุ่มกรองดูเฉพาะ ขอบ / Fitting / ไม้' },
+    { el: '#bomSelAll', t: 'เลือกบางรายการ', x: 'ติ๊กช่องหน้าแถวแล้วกด Export จะออกเฉพาะที่เลือก · ช่องบนสุดนี้ = เลือกทุกแถวที่แสดงอยู่' },
+    { el: '#bomEditBtn', t: 'แก้ไข BOM Fitting', x: 'เปลี่ยนรหัส แก้จำนวน ลบแถว หรือเพิ่มแถวเอง แล้วกดบันทึก' },
+    { el: function(){ return $('#bomSubToolbar button[onclick="openExtraFitPanel()"]'); }, t: 'เพิ่ม Fitting', x: 'วางรายการจาก Excel (รหัส + จำนวน) เพิ่มเข้า BOM ของ Order นี้' },
+    { el: function(){ return byOnclick('exportFrameDrawings()'); }, t: 'Export แบบผลิต', x: 'สร้างแบบผลิตกรอบบานให้อัตโนมัติจากข้อมูล Order' },
+    { el: function(){ return byOnclick('exportBOMExcel()'); }, t: 'Export BOM Fitting', x: 'ไฟล์ Excel (ItemId · Qty · Warehouse) สำหรับนำเข้า AX · รหัสเดียวกันรวมยอดให้เอง' },
+    { el: '#__blfAskBtn', t: 'ถามขนาดไม้ทุกครั้ง',
+      x: 'ตอนส่งไม้จากใบสั่งตัดเข้ามา โปรแกรมเลือกรหัสตามขนาดแผ่นให้เอง (P48 = 4×8 ฟุต · P68 = 6×8 ฟุต) · เปิดสวิตช์นี้ถ้าอยากให้ถามยืนยันทุกครั้ง' },
+    { el: '#subTabWoodCheck', act: 'click', t: 'ต่อไป: เช็คไม้', x: 'กดแท็บเช็คไม้ เพื่อตรวจว่ารหัสไม้ของ Order นี้มีใน Fitting Global ครบไหม' }
+  ]},
+
+  wood: { name: 'เช็คไม้', screen: 'wood', where: 'เปิด Order แล้วกดแท็บ เช็คไม้',
+    ready: function(){ return vis($('#contentWoodCheck')); },
+    beacon: function(){ return (orderOpen() && mainTab() === 'tabAX' && !mbOn() && subTab() !== 'subTabWoodCheck') ? $('#subTabWoodCheck') : null; },
+    steps: [
+    { el: '#contentWoodCheck', shape: 'rect', t: 'เช็คไม้', x: 'สรุปไม้ของ Order ตามรหัส CutRite: ใช้กี่ชิ้น และรหัสนั้นมีใน Fitting Global หรือยัง' },
+    { el: ['#wcMissBadge', '#wcOkBadge'], t: 'ผลตรวจ', x: 'สีแดง = มีรหัสไม้ที่ยังไม่อยู่ใน Fitting Global ต้องเพิ่มก่อนนำเข้า AX · สีเขียว = ครบทุกรหัส' },
+    { el: '#woodCheckToolbar .st', t: 'จำนวน', x: 'จำนวนชนิดไม้ และจำนวนชิ้นทั้งหมดของ Order' },
+    { el: '#tabIMOS', act: 'click', t: 'ต่อไป: Imos Detail', x: 'กดแท็บ Imos Detail เพื่อดูข้อมูลดิบของ Order นี้' }
+  ]},
+
+  imos: { name: 'Imos Detail', screen: 'imos', where: 'เปิด Order แล้วกดแท็บ Imos Detail',
+    ready: function(){ return vis($('#content')); },
+    beacon: function(){ return (orderOpen() && mainTab() !== 'tabIMOS') ? $('#tabIMOS') : null; },
+    steps: [
+    { el: '#content', shape: 'rect', t: 'Imos Detail — ข้อมูลดิบ',
+      x: 'ข้อมูลตามไฟล์ต้นทาง แยกตามตู้: ชิ้นไม้ (Board) ขอบ (Edge) อุปกรณ์ (Fitting) · ใช้ตรวจเทียบว่าโปรแกรมอ่านไฟล์ถูก' },
+    { el: '#imosToolbar .ftabs', t: 'กรองชนิดข้อมูล', x: 'ดูเฉพาะ Board / Edge / Fitting' },
+    { el: '#q', t: 'ค้นหา', x: 'ค้นหาในข้อมูลดิบ เช่น รหัสขอบ ชื่อชิ้น หรือรหัสอุปกรณ์' },
+    { el: '#ibar .bst', t: 'จำนวนรวม', x: 'จำนวนชิ้นไม้ ขอบ และอุปกรณ์ของ Order นี้' },
+    { el: '#tabSAW', act: 'click', t: 'ต่อไป: SAW / NC', x: 'กดแท็บ SAW / NC เพื่อดูวิธีส่งงานไปจัดแผ่นตัด' }
+  ]},
+
+  saw: { name: 'SAW / NC (ส่งงานไปตัด)', screen: 'saw', where: 'กดแท็บ SAW / NC',
+    ready: function(){ return vis($('#sawPanel')) || vis($('#sawGoBtn')); },
+    beacon: function(){ return mainTab() !== 'tabSAW' ? $('#tabSAW') : null; },
+    steps: [
+    { el: '#sawPanel', t: 'SAW / NC — ส่งงานไปตัด',
+      x: '3 ขั้น: <b>1</b> ติ๊ก Order ทางซ้าย → <b>2</b> กดส่งเข้า SAW / NC → <b>3</b> จัด Pattern แล้วออกไฟล์ .saw และสติกเกอร์ในหน้าต่างที่เปิดขึ้น' },
+    { el: '#orderList', shape: 'rect', t: 'ติ๊กเลือก Order', x: 'ในแท็บนี้ กดที่ Order = ติ๊กเลือก (ไม่ได้เปิดดู) เลือกได้หลายอัน · แต่ละ Order ได้ตัวอักษรชั้นวาง A, B, C…' },
+    { el: ['#sawAll', '#sawNone'], t: 'เลือกทั้งหมด / ล้าง', x: 'เลือกทุก Order ที่เห็นทางซ้าย (ตามตัวกรอง) หรือล้างที่เลือก' },
+    { el: '#sawGoBtn', t: 'ส่งเข้า SAW / NC', x: 'เปิดหน้าต่างจัดแผ่นตัดพร้อมชิ้นงานที่เลือก · ถ้าเบราว์เซอร์บล็อกหน้าต่างใหม่ ให้กดอนุญาต pop-up ของเว็บนี้' },
+    { el: '#sawReloadBtn', t: 'เริ่มใหม่', x: 'ปิดหน้าต่าง SAW / NC ที่ค้างอยู่ แล้วเริ่มใหม่' },
+    { el: ['#sawDot', '#sawMsg'], t: 'สถานะ', x: 'บอกผลการส่ง เช่น ส่งแล้วกี่ชิ้น หรือมีอะไรผิดพลาด' }
+  ]},
+
+  merge: { name: 'เลือกหลาย Order', screen: 'merge', where: 'กดปุ่ม เลือกหลาย Order ในแท็บ AX Detail',
+    ready: function(){ return vis($('#mbRun')); },
+    beacon: function(){ return (mainTab() === 'tabAX' && !mbOn()) ? $('#mbToggle') : null; },
+    steps: [
+    { el: '#mbBar', t: 'โหมดเลือกหลาย Order', x: 'ติ๊ก Order ทางซ้ายหลายอัน แล้วกด "รวม BOM" จะได้ BOM ไม้ และ BOM Fitting รวมกัน ทุกแถวติดชื่อ Order' },
+    { el: '#mbRun', t: 'รวม BOM', x: 'กดหลังเลือก Order ครบ แล้วรอสักครู่ · Export ได้เหมือน Order ปกติ' },
+    { el: ['#mbAll', '#mbNone'], t: 'เลือกทั้งหมด / ล้าง', x: 'เลือกทุก Order ที่แสดงทางซ้าย หรือล้างการเลือก' },
+    { el: '#mbToggle', t: 'ออกจากโหมด', x: 'กดเพื่อกลับไปดูทีละ Order' }
+  ]},
+
+  fg: { name: 'Fitting Global', screen: 'fg', where: 'กดปุ่ม Fitting Global แถบบน',
+    ready: function(){ return vis($('#fgSB')); },
+    beacon: function(){ return !fgOpen() ? fgButton() : null; },
+    steps: [
+    { el: '#fgOv .fg-head', t: 'Fitting Global', x: 'รายการรหัสทั้งหมดที่โปรแกรมใช้ — ไม้ ขอบ อุปกรณ์ สินค้าสำเร็จ · อ่านจากไฟล์ Excel ของ AX (FittingGlobal_*.xlsm) หรือ fitting_global_rows.csv ในโฟลเดอร์ Server' },
+    { el: '#fgSB', t: 'ค้นหารหัส', x: 'ค้นด้วยรหัส ชื่อ หรือหมวด · เว้นวรรค = ต้องเจอทุกคำ · ใช้ * แทนตัวอักษรใด ๆ เช่น PB16*P48' },
+    { el: '#fgOv .fg-bar', t: 'ปุ่มจัดการ', x: 'ส่งออก CSV และรีเฟรชได้ตามปกติ · การเพิ่ม / แก้ / ลบรหัส ให้ทำที่ AX แล้วกด Refresh ในไฟล์ Excel — โปรแกรมอ่านไฟล์ใหม่ให้เองภายในประมาณ 10 วินาที' },
+    { el: '#fgOv .fg-body', shape: 'rect', t: 'รายการรหัส', x: 'คลิกหัวคอลัมน์เพื่อเรียง · ใช้ปุ่มด้านล่างเพื่อเปลี่ยนหน้า' }
+  ]}
+};
+var ORDER = ['welcome', 'order', 'bomf', 'wood', 'imos', 'saw', 'merge', 'fg'];
+
+/* ── หาตัวที่ไฮไลต์ ──────────────────────────────────────────────── */
+function raw(spec){
+  var arr = Array.isArray(spec) ? spec : [spec], out = [];
+  for(var i = 0; i < arr.length; i++){
+    var s = arr[i], el = null;
+    try{ el = (typeof s === 'function') ? s() : (typeof s === 'string' ? $(s) : s); }catch(e){ el = null; }
+    if(el && el.nodeType === 1) out.push(el);
+  }
+  return out;
+}
+function targets(st){ return raw(st.el).filter(vis); }
+function stepOk(st){
+  if(st.cond){ try{ if(!st.cond()) return false; }catch(e){ return false; } }
+  if(st.center) return true;
+  var els = targets(st);
+  if(els.length) return true;
+  /* อยู่นอกจอในกล่องที่เลื่อนได้ (เช่นรายการ Order) → เลื่อนมาให้เห็นก่อน */
+  var r = raw(st.el);
+  if(r.length === 1){
+    try{ r[0].scrollIntoView({ block: 'nearest', inline: 'nearest' }); }catch(e){}
+    return targets(st).length > 0;
+  }
+  return false;
+}
+function rectOf(els, pad){
+  var l = 1e9, t = 1e9, r = -1e9, b = -1e9;
+  els.forEach(function(el){
+    var q = el.getBoundingClientRect();
+    l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom);
+  });
+  l = Math.max(l, 0); t = Math.max(t, 0); r = Math.min(r, innerWidth); b = Math.min(b, innerHeight);
+  return { l: l - pad, t: t - pad, w: (r - l) + pad * 2, h: (b - t) + pad * 2 };
+}
+function shapeOf(rc, st){
+  var sh = st.shape || 'auto';
+  if(sh === 'auto') sh = (rc.w <= 96 && rc.h <= 96 && rc.w / rc.h < 1.9 && rc.h / rc.w < 1.9) ? 'circle' : 'pill';
+  if(sh === 'circle' || sh === 'round'){
+    var d = sh === 'round' ? Math.max(rc.w, rc.h) : Math.max(rc.w, rc.h, Math.sqrt(rc.w * rc.w + rc.h * rc.h) * 0.9);
+    return { l: rc.l + rc.w / 2 - d / 2, t: rc.t + rc.h / 2 - d / 2, w: d, h: d, r: d / 2 };
+  }
+  if(sh === 'rect') return { l: rc.l, t: rc.t, w: rc.w, h: rc.h, r: 14 };
+  return { l: rc.l, t: rc.t, w: rc.w, h: rc.h, r: Math.min(rc.h / 2, 22) };
+}
+
+/* ── ชั้นทัวร์ (พื้นมืด + วงกลม + การ์ด) ─────────────────────────── */
+var L = null;
+function layer(){
+  if(L && document.body.contains(L.root)) return L;
+  var root = document.createElement('div');
+  root.id = 'gdLayer';
+  root.innerHTML = '<div class="gd-dim"></div><div class="gd-hole"></div><div class="gd-ring"></div>'
+    + '<div class="gd-tap"></div><div class="gd-tapl">กดตรงนี้</div>'
+    + '<div class="gd-blk"></div><div class="gd-blk"></div><div class="gd-blk"></div><div class="gd-blk"></div><div class="gd-blk gd-hb"></div>'
+    + '<div class="gd-card" role="dialog" aria-modal="true" aria-live="polite"></div>';
+  document.body.appendChild(root);
+  L = { root: root, dim: $('.gd-dim', root), hole: $('.gd-hole', root), ring: $('.gd-ring', root), tap: $('.gd-tap', root),
+        tapl: $('.gd-tapl', root), blk: $$('.gd-blk', root), card: $('.gd-card', root) };
+  root.addEventListener('click', onLayerClick);
+  return L;
+}
+function killLayer(){ if(L && L.root && L.root.parentNode) L.root.parentNode.removeChild(L.root); L = null; }
+function box(el, g){ el.style.left = Math.round(g.l) + 'px'; el.style.top = Math.round(g.t) + 'px'; el.style.width = Math.max(0, Math.round(g.w)) + 'px'; el.style.height = Math.max(0, Math.round(g.h)) + 'px'; }
+
+function cur(){ return S.run ? T[S.run.id].steps[S.run.i] : null; }
+function avail(){
+  var t = T[S.run.id], out = [];
+  for(var i = 0; i < t.steps.length; i++){
+    var st = t.steps[i], ok = false;
+    try{ ok = st.center || (st.cond ? !!st.cond() : true) && raw(st.el).length > 0; }catch(e){ ok = false; }
+    if(i === S.run.i) ok = true;
+    if(ok) out.push(i);
+  }
+  return out;
+}
+
+function start(id){
+  if(!T[id]) return false;
+  closeMenu();
+  if(S.run) finish(null);
+  S.run = { id: id, i: -1, shown: 0 };
+  S.miss = 0; S.blk = 0;
+  layer();
+  paintBeacons(true);
+  if(!go(1)){ finish(null); return false; }
+  return true;
+}
+function go(dir){
+  var t = T[S.run.id], i = S.run.i + dir;
+  while(i >= 0 && i < t.steps.length && !stepOk(t.steps[i])) i += dir;
+  if(i >= t.steps.length){ finish(S.run.shown ? true : null); return !!S.run; }
+  if(i < 0) return true;
+  S.run.i = i; S.run.shown++; S.miss = 0;
+  render();
+  return true;
+}
+function next(){ if(S.run) go(1); }
+function back(){ if(S.run) go(-1); }
+
+function render(){
+  var st = cur(); if(!st) return;
+  var c = L.card, list = avail(), pos = list.indexOf(S.run.i), last = pos === list.length - 1;
+  var dots = '';
+  for(var k = 0; k < list.length && list.length <= 18; k++) dots += '<i class="' + (k === pos ? 'on' : (k < pos ? 'past' : '')) + '"></i>';
+  var h = '<div class="gd-arrow"></div><div class="gd-hd">' + MASCOT + '<div class="gd-ttl"></div>'
+    + '<span class="gd-cnt">' + (pos + 1) + ' / ' + list.length + '</span></div>'
+    + '<div class="gd-txt">' + st.x + '</div>'
+    + (st.act ? '<div class="gd-hint">ลองกดตรงที่กระพริบได้เลย</div>' : '')
+    + '<div class="gd-dots">' + dots + '</div><div class="gd-ft">';
+  if(st.first) h += '<button class="gd-b lnk" data-a="off">ปิดโหมดมือใหม่</button>';
+  else h += '<button class="gd-b lnk" data-a="skip">ข้ามทั้งหมด</button>';
+  h += '<span class="gd-sp"></span>';
+  if(st.first) h += '<button class="gd-b" data-a="later">ไว้ทีหลัง</button>';
+  else if(pos > 0) h += '<button class="gd-b" data-a="back">ย้อนกลับ</button>';
+  if(st.act) h += '<button class="gd-b" data-a="next">' + (last ? 'จบ' : 'ข้ามขั้นนี้') + '</button>';
+  else h += '<button class="gd-b pri" data-a="next">' + (st.next || (last ? 'เสร็จแล้ว' : 'ถัดไป')) + '</button>';
+  h += '</div>' + (st.act || st.first ? '' : '<div class="gd-tip">แตะที่ไหนก็ได้ หรือกดปุ่มลูกศรขวา เพื่อไปต่อ</div>');
+  c.classList.remove('in');
+  c.innerHTML = h;
+  $('.gd-ttl', c).textContent = st.t;
+  place(true);
+  setTimeout(function(){ if(L && L.card === c) c.classList.add('in'); }, 30);
+  var pb = $('.gd-b.pri', c) || $('.gd-b[data-a="next"]', c);
+  try{ if(pb) pb.focus({ preventScroll: true }); }catch(e){}
+}
+
+function place(fresh){
+  var st = cur(); if(!st || !L) return;
+  var W = innerWidth, H = innerHeight;
+  if(st.center){
+    L.dim.style.display = 'block';
+    L.hole.style.display = L.ring.style.display = 'none';
+    L.tap.style.display = L.tapl.style.display = 'none';
+    for(var z = 0; z < L.blk.length; z++) L.blk[z].style.display = 'none';
+    placeCard(null, st);
+    return;
+  }
+  var els = targets(st);
+  if(!els.length){ S.miss++; return; }
+  S.miss = 0;
+  L.dim.style.display = 'none';
+  var g = shapeOf(rectOf(els, st.pad == null ? 6 : st.pad), st);
+  L.hole.style.display = L.ring.style.display = 'block';
+  box(L.hole, g); L.hole.style.borderRadius = Math.round(g.r) + 'px';
+  var gr = { l: g.l - 3, t: g.t - 3, w: g.w + 6, h: g.h + 6 };
+  box(L.ring, gr); L.ring.style.borderRadius = Math.round(g.r + 3) + 'px';
+  var b = L.blk;
+  box(b[0], { l: 0, t: 0, w: W, h: Math.max(0, g.t) });
+  box(b[1], { l: 0, t: g.t + g.h, w: W, h: Math.max(0, H - g.t - g.h) });
+  box(b[2], { l: 0, t: g.t, w: Math.max(0, g.l), h: g.h });
+  box(b[3], { l: g.l + g.w, t: g.t, w: Math.max(0, W - g.l - g.w), h: g.h });
+  for(var k = 0; k < 4; k++) b[k].style.display = 'block';
+  if(st.act){
+    b[4].style.display = 'none';
+    var q = els[0].getBoundingClientRect(), cx = q.left + q.width / 2, cy = q.top + q.height / 2;
+    L.tap.style.display = L.tapl.style.display = 'block';
+    L.tap.style.left = Math.round(cx) + 'px'; L.tap.style.top = Math.round(cy) + 'px';
+    L.tapl.style.left = Math.round(cx) + 'px'; L.tapl.style.top = Math.round(Math.max(40, g.t)) + 'px';
+  } else {
+    box(b[4], g); b[4].style.display = 'block';
+    L.tap.style.display = L.tapl.style.display = 'none';
+  }
+  placeCard(g, st, fresh);
+}
+function placeCard(g, st, fresh){
+  var c = L.card, W = innerWidth, H = innerHeight, m = 10, gap = 18;
+  var cw = c.offsetWidth, ch = c.offsetHeight, side = 'none', x, y, a = c.querySelector('.gd-arrow');
+  if(!g){ x = (W - cw) / 2; y = Math.max(m, (H - ch) / 2 - 20); }
+  else {
+    var cx = g.l + g.w / 2, cy = g.t + g.h / 2, top = st.act ? 34 : 0;
+    var fits = { below: g.t + g.h + gap + ch <= H - m, above: g.t - gap - ch - top >= m,
+                 right: g.l + g.w + gap + cw <= W - m, left: g.l - gap - cw >= m };
+    var pref = ['below', 'above', 'right', 'left'];
+    if(st.side) pref.unshift(st.side);
+    for(var i = 0; i < pref.length; i++) if(fits[pref[i]]){ side = pref[i]; break; }
+    if(side === 'below' || side === 'above'){
+      y = side === 'below' ? g.t + g.h + gap : g.t - gap - ch - top;
+      x = Math.max(m, Math.min(W - cw - m, cx - cw / 2));
+      if(a){ a.style.left = Math.round(Math.max(16, Math.min(cw - 30, cx - x - 7))) + 'px'; a.style.top = ''; if(side === 'above' && top){ side = 'none'; } }
+    } else if(side === 'right' || side === 'left'){
+      x = side === 'right' ? g.l + g.w + gap : g.l - gap - cw;
+      y = Math.max(m, Math.min(H - ch - m, cy - ch / 2));
+      if(a){ a.style.top = Math.round(Math.max(16, Math.min(ch - 30, cy - y - 7))) + 'px'; a.style.left = ''; }
+    } else {                                   /* ไม่มีที่ว่างรอบ ๆ (ตารางใหญ่) → วางซ้อนด้านล่างของพื้นที่ */
+      x = Math.max(m, Math.min(W - cw - m, cx - cw / 2));
+      y = Math.max(m, Math.min(H - ch - m, g.t + g.h - ch - 20));
+    }
+  }
+  c.setAttribute('data-side', side);
+  if(fresh){ c.style.transition = 'opacity .22s ease, transform .22s ease'; }
+  c.style.left = Math.round(x) + 'px'; c.style.top = Math.round(y) + 'px';
+  if(fresh) setTimeout(function(){ c.style.transition = ''; }, 40);
+}
+
+function finish(done){
+  var run = S.run;
+  S.run = null;
+  killLayer();
+  if(run && done !== null){ S.done[run.id] = 1; saveDone(); }
+  if(run && done === true) celebrate(run.id);
+  paintMenuBtn();
+}
+function onLayerClick(ev){
+  var a = ev.target.closest && ev.target.closest('[data-a]');
+  if(a){
+    ev.stopPropagation();
+    var k = a.getAttribute('data-a');
+    if(k === 'next') next();
+    else if(k === 'back') back();
+    else if(k === 'skip') finish(false);
+    else if(k === 'later') finish(false);
+    else if(k === 'off') setOn(false);
+    return;
+  }
+  if(ev.target.closest && ev.target.closest('.gd-card')) return;
+  var st = cur(); if(!st) return;
+  if(st.center || st.act){ shake(); return; }
+  next();                                      /* แตะพื้นที่ไหนก็ได้ = ไปต่อ (แบบเกม) */
+}
+function shake(){
+  if(!L) return;
+  var c = L.card; c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake');
+}
+
+/* ขั้น "ลองกด": กดตัวที่ไฮไลต์จริง → โปรแกรมทำงานตามปกติ แล้วเราค่อยไปขั้นถัดไป */
+document.addEventListener('click', function(ev){
+  if(!S.run || mine(ev.target)) return;
+  var st = cur(); if(!st || !st.act) return;
+  var els = targets(st);
+  for(var i = 0; i < els.length; i++){
+    if(els[i].contains(ev.target)){
+      var id = S.run.id, i0 = S.run.i;
+      if(L) L.root.style.visibility = 'hidden';
+      setTimeout(function(){ if(S.run && S.run.id === id && S.run.i === i0){ if(L) L.root.style.visibility = ''; next(); } }, 450);
+      return;
+    }
+  }
+}, true);
+
+window.addEventListener('keydown', function(ev){
+  if(!S.run) return;
+  var k = ev.key, st = cur();
+  if(k === 'ArrowRight' || (k === 'Enter' && !(ev.target && /INPUT|TEXTAREA|SELECT/.test(ev.target.tagName)))){
+    if(k === 'Enter' && ev.target && ev.target.closest && ev.target.closest('#gdLayer [data-a]')) return;   /* ปุ่มในการ์ดจัดการเอง */
+    ev.preventDefault(); ev.stopPropagation();
+    if(st && st.act && k === 'ArrowRight') next(); else if(st && !st.act) next();
+  } else if(k === 'ArrowLeft'){ ev.preventDefault(); ev.stopPropagation(); back(); }
+  else if(k === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); finish(false); }
+}, true);
+window.addEventListener('resize', function(){ if(S.run) place(false); paintBeacons(); if(M) posMenu(); });
+
+/* ระหว่างทัวร์: ตามตำแหน่งปุ่มที่ขยับ · ปุ่มหาย → ข้ามไป · มีกล่องของโปรแกรมเด้งมาบัง → หยุดไว้ก่อน */
+setInterval(function(){
+  if(!S.run || !L) return;
+  var st = cur();
+  if(!st) return;
+  var allow = S.run.id === 'fg' ? '#fgOv' : null;
+  if(blocked(allow)){ if(++S.blk > 3){ finish(null); } return; }
+  S.blk = 0;
+  place(false);
+  if(S.miss > 8){                            /* ตัวที่ไฮไลต์หายไปเกิน ~1 วินาที */
+    S.miss = 0;
+    var t = T[S.run.id], j = S.run.i + 1;
+    while(j < t.steps.length && !stepOk(t.steps[j])) j++;
+    if(j < t.steps.length){ S.run.i = j - 1; go(1); }
+    else finish(S.run.shown >= 2 ? false : null);
+  }
+}, 120);
+
+/* ── ฉลองจบทัวร์ ──────────────────────────────────────────────────── */
+var toastT = null;
+function toastOn(){ var t = $('#gdToast'); return !!(t && t.classList.contains('in')); }
+function toast(html, ms){
+  var t = $('#gdToast');
+  if(!t){ t = document.createElement('div'); t.id = 'gdToast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.innerHTML = MASCOT.replace('class="gd-mas"', '') + '<div>' + html + '</div>';
+  t.classList.add('in');
+  clearTimeout(toastT);
+  toastT = setTimeout(function(){ t.classList.remove('in'); }, ms || 2600);
+  return t;
+}
+function celebrate(id){
+  var left = ORDER.filter(function(k){ return !S.done[k]; }).length;
+  var msg = 'เยี่ยม! ดูคำแนะนำ “' + T[id].name + '” ครบแล้ว'
+    + (left ? ' · เหลืออีก ' + left + ' หน้า เปิดหน้านั้นแล้วคำแนะนำจะขึ้นเอง' : ' · ครบทุกหน้าแล้ว');
+  var t = toast(msg, 2400);
+  try{
+    var r = t.getBoundingClientRect(), cx = r.left + 22, cy = r.top + r.height / 2;
+    for(var i = 0; i < 14; i++){
+      var s = document.createElement('div'); s.className = 'gd-star';
+      s.style.left = cx + 'px'; s.style.top = cy + 'px';
+      document.body.appendChild(s);
+      var ang = (Math.PI * 2 * i) / 14 + Math.random() * 0.3, dist = 40 + Math.random() * 50;
+      var an = s.animate([{ transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+        { transform: 'translate(' + (Math.cos(ang) * dist) + 'px,' + (Math.sin(ang) * dist + 20) + 'px) scale(.4) rotate(160deg)', opacity: 0 }],
+        { duration: 900 + Math.random() * 400, easing: 'cubic-bezier(.2,.7,.3,1)' });
+      (function(el){ an.onfinish = function(){ if(el.parentNode) el.parentNode.removeChild(el); }; })(s);
+    }
+  }catch(e){}
+}
+
+/* ── จุดส้มกระพริบ (ส่วนที่ยังไม่เคยดู) ────────────────────────────── */
+var BC = {};
+function paintBeacons(hideAll){
+  var host = $('#gdBeacons');
+  if(!host){ if(hideAll || !S.on) return; host = document.createElement('div'); host.id = 'gdBeacons'; document.body.appendChild(host); }
+  var show = !hideAll && S.on && !S.run && !!S.done.welcome && appReady() && !blocked(fgOpen() ? '#fgOv' : null);
+  ORDER.forEach(function(id){
+    var t = T[id], el = null;
+    if(show && !S.done[id] && t.beacon){ try{ el = t.beacon(); }catch(e){ el = null; } }
+    var d = BC[id];
+    if(el && vis(el)){
+      if(!d || !host.contains(d)){ d = document.createElement('i'); d.className = 'gd-bc'; d.setAttribute('data-t', id); host.appendChild(d); BC[id] = d; }
+      var r = el.getBoundingClientRect();
+      d.style.left = Math.round(Math.min(innerWidth - 8, r.right - 5)) + 'px';
+      d.style.top = Math.round(Math.max(8, r.top + 5)) + 'px';
+      d.style.display = 'block';
+    } else if(d) d.style.display = 'none';
+  });
+}
+
+/* ── ปุ่ม "มือใหม่" บนแถบบน + เมนู ────────────────────────────────── */
+function ensureBtn(){
+  var ex = $('#__gdWrap');
+  if(ex){
+    /* ปุ่มธีมถูกเพิ่มทีหลัง → ย้ายปุ่มมือใหม่ไปต่อท้ายปุ่มธีม (ไม่แทรกกลางระหว่างชื่อโปรแกรมกับเลขเวอร์ชัน) */
+    var th0 = $('#__snThemeBtn');
+    if(th0 && th0.parentNode === ex.parentNode && ex.previousElementSibling !== th0) th0.parentNode.insertBefore(ex, th0.nextSibling);
+    return true;
+  }
+  var tt = $('.tb .tt');
+  if(!tt) return false;
+  var w = document.createElement('span');
+  w.id = '__gdWrap';
+  w.innerHTML = '<button type="button" id="__gdBtn"><span class="gd-sw"></span><span>มือใหม่</span></button>'
+    + '<button type="button" id="__gdMenuBtn" title="คำแนะนำของแต่ละหน้า"></button>';
+  var th = $('#__snThemeBtn');
+  if(th && th.parentNode === tt) tt.insertBefore(w, th.nextSibling); else tt.appendChild(w);
+  $('#__gdBtn').addEventListener('click', function(ev){ ev.stopPropagation(); lsSet(LS_SEEN, '1'); setOn(!S.on); });
+  $('#__gdMenuBtn').addEventListener('click', function(ev){ ev.stopPropagation(); if(M) closeMenu(); else openMenu(); });
+  paintMenuBtn();
+  return true;
+}
+function paintMenuBtn(){
+  var w = $('#__gdWrap'), b = $('#__gdBtn');
+  if(!w || !b) return;
+  w.classList.toggle('on', S.on);
+  b.title = S.on ? 'โหมดมือใหม่: เปิดอยู่ — กดเพื่อปิด' : 'โหมดมือใหม่: กดเพื่อเปิดคำแนะนำการใช้งานทีละขั้น (แบบคนใช้ครั้งแรก)';
+  b.setAttribute('aria-pressed', S.on ? 'true' : 'false');
+  var nw = $('.gd-new', b), seen = lsGet(LS_SEEN, '') === '1';
+  if(!seen && !nw){ nw = document.createElement('span'); nw.className = 'gd-new'; nw.textContent = 'ใหม่'; b.appendChild(nw); }
+  if(seen && nw) nw.parentNode.removeChild(nw);
+}
+function setOn(on){
+  on = !!on;
+  closeMenu();
+  if(on){
+    S.on = true; lsSet(LS_ON, '1');
+    S.done = {}; saveDone();               /* เปิดโหมด = เริ่มใหม่แบบคนใช้ครั้งแรก */
+    S.sc = ''; S.stable = 0;
+    paintMenuBtn();
+    if(appReady() && !blocked(fgOpen() ? '#fgOv' : null)) start('welcome');
+  } else {
+    S.on = false; lsSet(LS_ON, '0');
+    if(S.run) finish(null);
+    paintBeacons(true);
+    var h = $('#gdBeacons'); if(h && h.parentNode) h.parentNode.removeChild(h);
+    BC = {};
+    paintMenuBtn();
+    toast('ปิดโหมดมือใหม่แล้ว · เปิดใหม่ได้ที่ปุ่ม "มือใหม่" แถบบน', 2400);
+  }
+}
+
+var M = null;
+function openMenu(){
+  closeMenu();
+  var m = document.createElement('div');
+  m.id = 'gdMenu';
+  var h = '<div class="gm-h">' + MASCOT.replace('class="gd-mas"', '') + 'คำแนะนำการใช้งาน</div>'
+    + '<button class="gm-row" data-m="toggle">โหมดมือใหม่<span class="gm-sw' + (S.on ? ' on' : '') + '"></span></button>'
+    + '<div class="gm-sep"></div><div class="gm-note">กดชื่อหน้าเพื่อดูคำแนะนำอีกครั้ง</div>';
+  ORDER.forEach(function(id){
+    h += '<button class="gm-row" data-m="t" data-id="' + id + '">' + T[id].name
+      + '<span class="gm-st ' + (S.done[id] ? 'done">ดูแล้ว' : 'todo">ยังไม่ดู') + '</span></button>';
+  });
+  h += '<div class="gm-sep"></div><button class="gm-row" data-m="reset">เริ่มนับใหม่ทั้งหมด (ดูทุกหน้าใหม่)</button>';
+  m.innerHTML = h;
+  document.body.appendChild(m);
+  M = m;
+  posMenu();
+  m.addEventListener('click', function(ev){
+    var r = ev.target.closest && ev.target.closest('[data-m]');
+    if(!r) return;
+    ev.stopPropagation();
+    var k = r.getAttribute('data-m');
+    if(k === 'toggle') setOn(!S.on);
+    else if(k === 'reset'){ S.done = {}; saveDone(); closeMenu(); start('welcome'); }
+    else if(k === 't') replay(r.getAttribute('data-id'));
+  });
+  setTimeout(function(){ document.addEventListener('mousedown', outMenu, true); }, 0);
+}
+function posMenu(){
+  if(!M) return;
+  var w = $('#__gdWrap');
+  if(!w){ closeMenu(); return; }
+  var r = w.getBoundingClientRect(), mw = M.offsetWidth;
+  M.style.left = Math.round(Math.max(8, Math.min(innerWidth - mw - 8, r.left))) + 'px';
+  M.style.top = Math.round(r.bottom + 8) + 'px';
+}
+function outMenu(ev){ if(M && !M.contains(ev.target) && !(ev.target.closest && ev.target.closest('#__gdWrap'))) closeMenu(); }
+function closeMenu(){
+  if(M && M.parentNode) M.parentNode.removeChild(M);
+  M = null;
+  document.removeEventListener('mousedown', outMenu, true);
+}
+function replay(id){
+  var t = T[id]; if(!t) return;
+  closeMenu();
+  if(!S.on){ S.on = true; lsSet(LS_ON, '1'); paintMenuBtn(); }
+  delete S.done[id]; saveDone();
+  if(id === 'welcome' || (t.screen === screenNow() && (!t.ready || t.ready()))){ start(id); return; }
+  toast('เปิดหน้า “' + t.name + '” แล้วคำแนะนำจะขึ้นเอง — ' + t.where, 3600);
+}
+
+/* ── ตัวเฝ้าหน้า: เปิดหน้าไหนครั้งแรก → เริ่มคำแนะนำของหน้านั้น ─────── */
+function tick(){
+  ensureBtn();
+  if(!S.on) return;
+  if(S.run) return;
+  if(!appReady()){ S.stable = 0; return; }
+  var sc = screenNow();
+  if(blocked(sc === 'fg' ? '#fgOv' : null)){ S.stable = 0; paintBeacons(); return; }
+  var id = null;
+  if(!S.done.welcome) id = 'welcome';
+  else for(var i = 1; i < ORDER.length; i++){ var k = ORDER[i]; if(T[k].screen === sc && !S.done[k]){ id = k; break; } }
+  if(id){
+    S.stable = (S.sc === sc) ? S.stable + 1 : 1;
+    S.sc = sc;
+    var t = T[id];
+    /* รอข้อความแสดงความยินดี/คำบอกทางหายก่อน การ์ดหน้าถัดไปจะได้ไม่ขึ้นซ้อนใต้ข้อความ */
+    if(S.stable >= 2 && (!t.ready || t.ready()) && !toastOn()){ start(id); return; }
+  } else { S.sc = sc; S.stable = 0; }
+  paintBeacons();
+}
+setInterval(function(){ try{ tick(); }catch(e){ try{ console.warn('[มือใหม่]', e); }catch(x){} } }, 650);
+try{ tick(); }catch(e){}
+
+window.GUIDE = {
+  on: function(){ setOn(true); }, off: function(){ setOn(false); },
+  start: function(id){ return start(id || 'welcome'); },
+  reset: function(){ S.done = {}; saveDone(); paintMenuBtn(); },
+  state: function(){
+    var st = cur(), rc = function(el){ var q = el.getBoundingClientRect(); return { l: q.left, t: q.top, r: q.right, b: q.bottom }; };
+    return { on: S.on, done: JSON.parse(JSON.stringify(S.done)), screen: screenNow(),
+             run: S.run ? { id: S.run.id, step: S.run.i, t: st ? st.t : '', act: !!(st && st.act), center: !!(st && st.center),
+                            rects: (st && !st.center) ? targets(st).map(rc) : [] } : null };
+  },
+  tours: ORDER.slice()
+};
 })();
 </script>
 
