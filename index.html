@@ -14175,7 +14175,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '123', D = '29/09/2026';
+  var V = '124', D = '29/09/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -21966,6 +21966,64 @@ function start(){
   scan();
 }
 start();
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v124 — โปรแกรมช้า / กดอะไรดีเลย์ : ต้นเหตุคือ fgLookup (หารหัสใน Fitting Global)
+     Fitting Global จากไฟล์ Excel ของ AX มี ~161,000 รหัส · รหัสที่ "หาไม่เจอตรงตัว" (เช่น รหัสไม้ 22 ตัวจากใบสั่งตัด
+     ที่ใน FG เป็น 25 ตัวลงท้าย P48) จะไปเทียบแบบไม่สนตัวพิมพ์ — โค้ดเดิมนับจำนวนรหัสทั้งตาราง (Object.keys) ใหม่ทุกครั้ง
+     ≈ 30 ms ต่อครั้ง · หน้าเช็คไม้ลองสลับรหัสได้ถึง ~18 แบบต่อวัสดุ · เปิด Order ใหญ่ 1 ครั้ง = หลายพันครั้ง = หลายวินาทีถึงหลายนาที
+     • fgLookup ตัวใหม่: ผลเหมือนเดิมทุกตัว — ใช้ดัชนีตัวพิมพ์ใหญ่ชุดเดิม (_fgUpperIndex) · ตรวจว่ายังใช้ได้ด้วย "ตารางเป็นตัวเดิมไหม"
+       และนับจำนวนรหัสใหม่ไม่เกินวินาทีละครั้ง (ทุกจุดที่แก้ FG ล้าง _fgUpperIndex อยู่แล้ว → สร้างใหม่ทันที)
+     • _suggestWiderEdge (หาขอบที่กว้างกว่าเมื่อรหัสขอบไม่อยู่ใน FG — ไล่ทั้ง 161,000 รหัสทุกครั้ง): จำผลต่อรหัส ล้างเมื่อ FG เปลี่ยน
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+if(window.__v124perf || typeof window.fgLookup !== 'function') return;
+window.__v124perf = true;
+var origFG = window.fgLookup;
+
+var chkAt = 0;
+/* ดัชนีตัวพิมพ์ใหญ่ — ตัวเดียวกับที่ fgLookup เดิมสร้าง (key.toUpperCase() → รายการ) */
+function upperIndex(){
+  var fg = window.fittingGlobal || {}, ix = window._fgUpperIndex, now = Date.now(), ago = now - chkAt;
+  /* ago < 0 = นาฬิกาเครื่องถูกตั้งย้อนหลัง → นับใหม่เลย (ไม่ค้างดัชนีเก่า) */
+  if(ix && ix._obj === fg && ago >= 0 && ago < 1000) return ix;
+  var keys = Object.keys(fg);
+  chkAt = now;
+  if(!ix || ix._obj !== fg || ix._n !== keys.length){
+    ix = { _n: keys.length, _obj: fg };
+    for(var i = 0; i < keys.length; i++) ix[keys[i].toUpperCase()] = fg[keys[i]];
+    window._fgUpperIndex = ix;
+  }
+  return ix;
+}
+window.fgLookup = function(code){
+  if(code == null) return null;
+  var k = String(code).replace(/[\u00A0\u200B]/g, ' ').trim();
+  if(!k) return null;
+  var fg = window.fittingGlobal || {};
+  if(fg[k]) return fg[k];
+  return upperIndex()[k.toUpperCase()] || null;
+};
+
+var origSWE = null, memo = { ix:null, m:null };
+if(typeof window._suggestWiderEdge === 'function'){
+  origSWE = window._suggestWiderEdge;
+  window._suggestWiderEdge = function(code){
+    var ix = upperIndex();
+    if(memo.ix !== ix){ memo.ix = ix; memo.m = Object.create(null); }
+    var k = String(code == null ? '' : code);
+    if(k in memo.m) return memo.m[k];
+    var r = origSWE.apply(this, arguments);
+    memo.m[k] = r;
+    return r;
+  };
+}
+/* ตรวจในคอนโซล: PERF_state() · ตัวเดิมเก็บไว้เทียบผล: PERF_orig.fgLookup / PERF_orig.suggestWiderEdge */
+window.PERF_orig = { fgLookup: origFG, suggestWiderEdge: (typeof origSWE === 'function') ? origSWE : null };
+window.PERF_state = function(){ var ix = window._fgUpperIndex; return { fgKeys: ix ? ix._n : null, checkedAgo: Date.now() - chkAt, widerEdgeMemo: memo.m ? Object.keys(memo.m).length : 0 }; };
 })();
 </script>
 
