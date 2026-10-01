@@ -14175,7 +14175,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '130', D = '01/10/2026';
+  var V = '131', D = '01/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -24427,6 +24427,10 @@ window.WBOM_axLines = function(code){   /* v129: บรรทัด BOM จา�
          (จำที่พิมพ์ครั้งล่าสุดไว้ในใบ printSel · ประวัติบอกจำนวนครั้งที่พิมพ์ + พิมพ์อะไร) · Excel ของใบออกตามที่เลือก · ประวัติเอกสารเหมือนเดิม
        • Prod Pool / PD Pool ไม่ล็อก: แก้ได้ในฟอร์ม · ในหน้าต่างดู/พิมพ์ (บันทึกลงใบเมื่อกดพิมพ์หรือ 💾 บันทึก Pool + log "แก้ Pool") · ค่าตั้งต้นที่ ⚙ ตั้งค่าเอกสาร
          · ช่องมีรายการค่าที่เคยใช้ให้เลือก (datalist) แต่พิมพ์ค่าใหม่ได้เสมอ
+     v131 — ฟอร์มรายการไม้ปิดผิว (ใบใหม่): ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting (ไม่หักที่เปิดไปแล้ว)
+       · ไม้ที่เปิดใบไปแล้ว (ใบที่ยังไม่ยกเลิก) ขึ้นแถวเตือน + เลขที่ใบ — ไม่สั่งซ้ำให้ติ๊กออก · แก้ใบเดิม / ใบเบิก / ใบ PR เหมือนเดิม
+       · ประวัติเอกสาร: ใบที่ยกเลิกแล้วมีปุ่ม "🗑 ลบ" (ลบออกจากประวัติถาวร · กดยืนยัน 2 ครั้ง · ลบได้เฉพาะใบที่ยกเลิก)
+         แถวใบที่ยกเลิกยังจางเหมือนเดิม แต่ปุ่มในแถวชัด · หัวการ์ดบอก "ยกเลิกแล้ว n ใบ = แถวสีจาง"
      ══════════════════════════════════════════════════════════════════════ -->
 <script>
 (function(){
@@ -24624,10 +24628,10 @@ function findDoc(no, oid){
   return hit;
 }
 function openedOf(oid, skipNo){
-  var o = { lm:{}, rq:{}, pr:{} }, rec = DC.map[oid];
+  var o = { lm:{}, rq:{}, pr:{}, nos:{ lm:{}, rq:{}, pr:{} } }, rec = DC.map[oid];   /* v131: nos = เลขที่ใบที่เปิดรหัสนั้น (ใบที่ไม่ยกเลิก) */
   (rec ? rec.docs : []).forEach(function(x){
     if(x.status === 'cancel' || x.no === skipNo) return;
-    x.lines.forEach(function(l){ var cu = norm(l.code).toUpperCase(); if(cu) o[x.type][cu] = r4((o[x.type][cu] || 0) + (+l.qty || 0)); });
+    x.lines.forEach(function(l){ var cu = norm(l.code).toUpperCase(); if(cu){ o[x.type][cu] = r4((o[x.type][cu] || 0) + (+l.qty || 0)); var a = o.nos[x.type][cu] = o.nos[x.type][cu] || []; if(a.indexOf(x.no) < 0) a.push(x.no); } });
   });
   return o;
 }
@@ -24756,6 +24760,7 @@ function css(){
     M + '.pd-hd.lm{background:#fff7ed}' + M + '.pd-hd.rq{background:#f0f9ff}' + M + '.pd-hd.pr{background:#f5f3ff}' + M + '.pd-hd.set{background:#f8fafc}',
     M + '.pd-title{font-size:15px;font-weight:800}' + M + '.pd-sub{font-size:11.5px;color:#64748b;margin-top:3px}',
     M + '.pd-x{position:absolute;top:10px;right:12px;border:none;background:none;font-size:18px;cursor:pointer;color:#64748b;padding:5px 7px;border-radius:6px}',
+    M + '.pd-dup{color:#b45309;font-weight:700}' + M + '.pd-tbl .pd-duprow td{border-bottom:1px solid #fde68a;background:#fffbeb}' + M + '.pd-sech .pd-dup{margin-left:8px}',   /* v131: ไม้ที่เคยเปิดใบไปแล้ว */
     M + '.pd-bd{padding:12px 20px;overflow:auto;flex:1;font-size:12.5px}',
     M + '.pd-ft{display:flex;gap:8px;align-items:center;padding:11px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;flex-wrap:wrap}',
     M + '.pd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 12px;margin:4px 0 10px}',
@@ -24792,6 +24797,8 @@ function css(){
     D + '.pd-btn.lm{color:#fdba74}' + D + '.pd-btn.rq{color:#7dd3fc}' + D + '.pd-btn.pr{color:#c4b5fd}',
     D + '.pd-chip.lm{color:#fdba74}' + D + '.pd-chip.rq{color:#7dd3fc}' + D + '.pd-chip.pr{color:#c4b5fd}' + D + '.pd-chip.ok{color:#4ade80}' + D + '.pd-chip.wait{color:#fde047}',
     D + '.pd-warn{color:#fde68a;background:rgba(234,179,8,.10)}' + D + '.pd-link{color:#7dd3fc}',
+    D + '.pd-modal .pd-dup{color:#fdba74}' + D + '.pd-modal .pd-tbl tr.pd-duprow td{background:rgba(234,179,8,.10)!important;border-color:rgba(234,179,8,.3)!important}',   /* v131: แถวเตือนในธีมมืด (!important ชนะกฎแถวสลับสีของธีมมืดที่เป็น !important) */
+    '#pdHist tr.off td:last-child{opacity:1}',   /* v131: ใบที่ยกเลิก แถวจาง แต่ปุ่ม ดู/พิมพ์ · 🗑 ลบ ชัดเหมือนปกติ (ไม่ดูเหมือนกดไม่ได้) */
     '@media (max-width:700px){#contentDocs{padding:10px 8px 30px}.pd-modal{padding:4px}.pd-modal .pd-bd{padding:10px}.pd-modal .pd-hd{padding:11px 44px 9px 12px}}',
     '@media (max-width:1300px){#subTabDocs .pd-tabw{display:none}}'   /* v130: จอแคบ ชื่อแท็บเหลือ "🧾 ใบปิดผิว" (ปุ่มบนแถบแท็บย่อยไม่ต้องตกบรรทัดเพิ่ม) */
   ].join('');
@@ -24862,7 +24869,7 @@ function render(full){
       +   '<button type="button" class="pd-btn big lm" data-act="new" data-type="lm">🧱 เปิดรายการไม้ปิดผิว</button>'
       +   '<button type="button" class="pd-btn big rq" data-act="new" data-type="rq">📦 เปิดใบเบิก</button>'
       +   '<button type="button" class="pd-btn big pr" data-act="new" data-type="pr">🛒 เปิด PR</button>'
-      +   '<span class="pd-note">ยอดตั้งต้น = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว · ติ๊กแก้ได้ก่อนบันทึก · โปรแกรมไม่เขียนเข้า AX (พิมพ์/ออก Excel ไปคีย์)</span></div></div>'
+      +   '<span class="pd-note">ใบปิดผิว = ยอดเต็มใน BOM Fitting (ติ๊กไว้ให้ทุกไม้) · ใบเบิก / PR = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว · ติ๊กแก้ได้ก่อนบันทึก · โปรแกรมไม่เขียนเข้า AX (พิมพ์/ออก Excel ไปคีย์)</span></div></div>'
       + '<div class="pd-card"><h3>สถานะ Order นี้</h3><div class="pd-stats" id="pdStats"></div></div>'
       + '<div class="pd-card"><div class="pd-row" style="margin-bottom:6px"><h3 style="margin:0">รายการใน BOM Fitting — ต้องใช้ / เปิดไปแล้ว</h3><span class="pd-sp"></span>'
       +   '<label class="pd-note"><input type="checkbox" data-f="left"> เฉพาะที่ยังเหลือ</label>'
@@ -24911,7 +24918,7 @@ function renderLm(full){
       + '<div id="pdWarn"></div>'
       + '<div class="pd-row" style="margin-top:8px">'
       +   '<button type="button" class="pd-btn big lm" data-act="new" data-type="lm">🧱 เปิดรายการไม้ปิดผิว</button>'
-      +   '<span class="pd-note">ใบเดียวมี 2 ส่วน: ① ไม้ปิดผิว + จำนวนแผ่น ② แตก BOM (วัสดุ × แผ่น) · LOT ตั้งจาก ItemID + วันที่ (แก้ได้) · ยอดตั้งต้น = ไม้ใน BOM Fitting ลบที่เปิดใบไปแล้ว</span></div></div>'
+      +   '<span class="pd-note">ใบเดียวมี 2 ส่วน: ① ไม้ปิดผิว + จำนวนแผ่น ② แตก BOM (วัสดุ × แผ่น) · LOT ตั้งจาก ItemID + วันที่ (แก้ได้) · ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting</span></div></div>'
       + '<div class="pd-card"><h3>สถานะ Order นี้</h3><div class="pd-stats" id="pdStats"></div></div>'
       + '<div class="pd-card"><div class="pd-row" style="margin-bottom:6px"><h3 style="margin:0">ไม้ที่ต้องปิดผิว — ต้องใช้ / เปิดไปแล้ว</h3><span class="pd-sp"></span>'
       +   '<label class="pd-note"><input type="checkbox" data-f="left"> เฉพาะที่ยังเหลือ</label>'
@@ -24956,7 +24963,7 @@ function renderStatsLm(oid, nd, op){
   var last = docs.slice().sort(function(a, b){ return (b.at || 0) - (a.at || 0); })[0];
   el.innerHTML = '<div class="pd-stat"><div class="k">🧱 ไม้ที่ต้องปิดผิว (มี BOM)</div><div class="v">' + has.length + ' รหัส</div><div class="s">รวม ' + num(sheets) + ' แผ่น · ยังไม่ได้เปิดใบ ' + left + ' รหัส</div></div>'
     + '<div class="pd-stat"><div class="k">🧾 รายการไม้ปิดผิวที่เปิดแล้ว</div><div class="v">' + docs.length + ' ใบ</div><div class="s">' + (last ? 'ล่าสุด ' + esc(last.no) + ' · ' + esc(dmyhm(last.at)) : 'ยังไม่มี') + '</div></div>'
-    + (nob.length ? '<div class="pd-stat"><div class="k">⚠ ไม้ที่ไม่มี BOM / ตั้งไว้ไม่แตก</div><div class="v">' + nob.length + ' รหัส</div><div class="s">ไม่ติ๊กให้ · ติ๊กเองได้ในฟอร์ม (ส่วนที่ 2 = ใช้รหัสไม้เดิม)</div></div>' : '');
+    + (nob.length ? '<div class="pd-stat"><div class="k">⚠ ไม้ที่ไม่มี BOM / ตั้งไว้ไม่แตก</div><div class="v">' + nob.length + ' รหัส</div><div class="s">ในฟอร์มติ๊กไว้ให้ด้วย · ไม่สั่งให้ติ๊กออก (ส่วนที่ 2 = ใช้รหัสไม้เดิม)</div></div>' : '');
 }
 function bomText(code){ var ls = explode(code, 1); return ls && ls.length ? ls.map(function(x){ return x.code + ' ×' + num(x.perSheet) + (x.unit && x.unit !== 'EA' ? ' ' + x.unit : ''); }).join(' · ') : ''; }
 function renderItemsLm(nd, op){
@@ -24999,7 +25006,8 @@ function renderHistLm(oid){
   var mk = Object.keys(months).sort().reverse(), mh = '<option value="">ทุกเดือน</option>' + mk.map(function(k){ return '<option value="' + k + '"' + (FL.month === k ? ' selected' : '') + '>' + k.slice(5) + '/' + k.slice(0, 4) + '</option>'; }).join('');
   if(ms && ms.__h !== mh){ ms.innerHTML = mh; ms.__h = mh; }
   var rows = histRowsLm(oid);
-  document.getElementById('pdHistN').textContent = '· ' + rows.length + ' ใบ';
+  var nCx = rows.filter(function(x){ return x.status === 'cancel'; }).length;   /* v131 */
+  document.getElementById('pdHistN').textContent = '· ' + rows.length + ' ใบ' + (nCx ? ' · ยกเลิกแล้ว ' + nCx + ' ใบ = แถวสีจาง (ลบได้ที่ปุ่ม 🗑 ลบ)' : '');
   if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="pd-empty">' + (FL.scope === 'order' && !oid ? 'เลือก Order ก่อน หรือเลือก "ทุก Order"' : 'ยังไม่มีรายการไม้ปิดผิว') + '</td></tr>'; return; }
   tb.innerHTML = rows.slice(0, 300).map(function(x){
     var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0)), o = ' data-oid="' + esc(x.oid) + '"', cancel = x.status === 'cancel';
@@ -25008,7 +25016,7 @@ function renderHistLm(oid){
       + '<td class="n">' + x.lines.length + ' <span class="pd-note">(' + num(tq) + ' แผ่น)</span></td>'
       + '<td>' + (cancel ? '<span class="pd-chip cancel">ยกเลิก</span>' : '<span class="pd-chip ok">ใช้งาน</span>') + (+x.printed > 0 ? '<div class="pd-note">พิมพ์ ' + (+x.printed) + ' ครั้ง</div>' : '') + '</td>'
       + '<td style="white-space:nowrap"><button type="button" class="pd-btn sm" data-act="view" data-no="' + esc(x.no) + '"' + o + '>👁 ดู/พิมพ์</button> '
-      + (cancel ? '' : '<button type="button" class="pd-btn sm" data-act="edit" data-no="' + esc(x.no) + '"' + o + '>✎ แก้</button> <button type="button" class="pd-btn sm danger" data-act="cancel" data-no="' + esc(x.no) + '"' + o + '>ยกเลิก</button>')
+      + (cancel ? '<button type="button" class="pd-btn sm danger" data-act="del" data-no="' + esc(x.no) + '"' + o + ' title="ลบใบที่ยกเลิกแล้วออกจากประวัติ (ถาวร)">🗑 ลบ</button>' : '<button type="button" class="pd-btn sm" data-act="edit" data-no="' + esc(x.no) + '"' + o + '>✎ แก้</button> <button type="button" class="pd-btn sm danger" data-act="cancel" data-no="' + esc(x.no) + '"' + o + '>ยกเลิก</button>')
       + '</td></tr>';
   }).join('') + (rows.length > 300 ? '<tr><td colspan="7" class="pd-note">… อีก ' + (rows.length - 300) + ' ใบ — กรอง/ค้นเพื่อหา</td></tr>' : '');
 }
@@ -25069,10 +25077,12 @@ function renderHist(oid){
   var tb = document.getElementById('pdHist'), ms = document.getElementById('pdMonth');
   var months = {};
   allDocs().forEach(function(x){ var d = new Date(x.at || 0); months[d.getFullYear() + '-' + pad(d.getMonth() + 1, 2)] = 1; });
+  if(FL.month && !months[FL.month]) FL.month = '';   /* v131: เดือนที่เลือกไม่มีเอกสารแล้ว (เช่น เพิ่งลบใบ) → ทุกเดือน */
   var mk = Object.keys(months).sort().reverse(), mh = '<option value="">ทุกเดือน</option>' + mk.map(function(k){ return '<option value="' + k + '"' + (FL.month === k ? ' selected' : '') + '>' + k.slice(5) + '/' + k.slice(0, 4) + '</option>'; }).join('');
   if(ms && ms.__h !== mh){ ms.innerHTML = mh; ms.__h = mh; }
   var rows = histRows(oid);
-  document.getElementById('pdHistN').textContent = '· ' + rows.length + ' ใบ';
+  var nCx = rows.filter(function(x){ return x.status === 'cancel'; }).length;   /* v131 */
+  document.getElementById('pdHistN').textContent = '· ' + rows.length + ' ใบ' + (nCx ? ' · ยกเลิกแล้ว ' + nCx + ' ใบ = แถวสีจาง (ลบได้ที่ปุ่ม 🗑 ลบ)' : '');
   if(!rows.length){ tb.innerHTML = '<tr><td colspan="8" class="pd-empty">' + (FL.scope === 'order' && !oid ? 'เลือก Order ก่อน หรือเลือก "ทุก Order"' : 'ยังไม่มีเอกสาร') + '</td></tr>'; return; }
   tb.innerHTML = rows.slice(0, 300).map(function(x){
     var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0));
@@ -25083,7 +25093,7 @@ function renderHist(oid){
       + '<td><code>' + esc(x.oid) + '</code></td><td>' + esc(dmyhm(x.at)) + (x.who ? '<div class="pd-note">' + esc(x.who) + '</div>' : '') + '</td>'
       + '<td class="n">' + x.lines.length + ' <span class="pd-note">(' + num(tq) + ')</span></td><td>' + (pr || '<span class="pd-note">—</span>') + '</td><td>' + statusChip(x) + '</td>'
       + '<td style="white-space:nowrap"><button type="button" class="pd-btn sm" data-act="view" data-no="' + esc(x.no) + '"' + o + '>👁 ดู/พิมพ์</button> '
-      + (cancel ? '' : '<button type="button" class="pd-btn sm" data-act="ax" data-no="' + esc(x.no) + '"' + o + '># เลข AX</button> <button type="button" class="pd-btn sm" data-act="edit" data-no="' + esc(x.no) + '"' + o + '>✎ แก้</button> <button type="button" class="pd-btn sm danger" data-act="cancel" data-no="' + esc(x.no) + '"' + o + '>ยกเลิก</button>')
+      + (cancel ? '<button type="button" class="pd-btn sm danger" data-act="del" data-no="' + esc(x.no) + '"' + o + ' title="ลบใบที่ยกเลิกแล้วออกจากประวัติ (ถาวร)">🗑 ลบ</button>' : '<button type="button" class="pd-btn sm" data-act="ax" data-no="' + esc(x.no) + '"' + o + '># เลข AX</button> <button type="button" class="pd-btn sm" data-act="edit" data-no="' + esc(x.no) + '"' + o + '>✎ แก้</button> <button type="button" class="pd-btn sm danger" data-act="cancel" data-no="' + esc(x.no) + '"' + o + '>ยกเลิก</button>')
       + '</td></tr>';
   }).join('') + (rows.length > 300 ? '<tr><td colspan="8" class="pd-note">… อีก ' + (rows.length - 300) + ' ใบ — กรอง/ค้นเพื่อหา</td></tr>' : '');
 }
@@ -25097,6 +25107,7 @@ function tabClick(ev){
   else if(act === 'ax') openAX(no, oid);
   else if(act === 'edit') openForm(null, no, oid);
   else if(act === 'cancel') openCancel(no, oid);
+  else if(act === 'del') openDelete(no, oid);   /* v131 */
   else if(act === 'histXlsx'){ if(lmLayout()) histXlsxLm(); else histXlsx(); }
   else if(act === 'resetSeq') openResetSeq();
 }
@@ -25159,16 +25170,16 @@ function openForm(type, editNo, editOid){
 function buildForm(type, oid, edit){
   var nd = edit ? { items:[], lam:[] } : need(), op = openedOf(oid, edit ? edit.no : null), ch = commonHead(oid), rec = DC.map[oid], last = (rec && rec.head && rec.head[type]) || {};
   FM = { type:type, oid:oid, edit:edit, head:{}, lines:[], secs:[], pair:null, msg:'', busy:false, arm:0,
-         known:(DC.map[oid] ? DC.map[oid].docs.map(function(x){ return x.no; }) : []) };
+         known:(DC.map[oid] ? DC.map[oid].docs.map(function(x){ return x.no + '@' + (+x.at || 0); }) : []) };   /* v131: เลขที่@เวลาสร้าง */
   var today = isoToday();
   if(type === 'lm'){   /* v129: รายการไม้ปิดผิว (ส่วนที่ 1 ไม้ + ส่วนที่ 2 แตก BOM) · ไม่มีใบเบิกคู่ */
     var lid = (oid === curOid()) ? itemIdOf(oid) : '';   /* ItemID อ่านได้เฉพาะ Order ที่เปิดอยู่ (แก้ใบของ Order อื่นจากประวัติ "ทุก Order" → ไม่เดา) */
     FM.head = edit ? clone(edit.head) : { fmt:2, lot:lotOf(lid, oid), lotAuto:true, itemId:lid, project:ch.project, due:last.due || '', prodPool:last.prodPool || SET.prodPool, pdPool:last.pdPool || SET.lmPool, note:'' };
     if(edit){ if(lmNew(edit) && FM.head.itemId == null && lid) FM.head.itemId = lid; delete FM.head.lotAuto; }   /* ใบก่อน v129 แก้แล้วยังเป็นแบบเดิม (Master Plan · PD / กำหนดเสร็จต่อแถวอยู่ครบ) */
     if(edit) FM.lines = edit.lines.map(function(l){ return { on:true, code:l.code, name:l.name, need:null, opened:null, qty:l.qty, kind:l.kind || 'bom', has:!l.kind || l.kind === 'bom', unit:l.unit || 'แผ่น', prevBom:l.bom || null, pd:l.pd || '', due:l.due || '', pool:(l.pool && l.pool !== edit.head.pdPool) ? l.pool : '' }; });
-    else FM.lines = nd.lam.map(function(L){
-      var cu = L.code.toUpperCase(), done = op.lm[cu] || 0, left = r4(L.sheets - done);
-      return { on:lamHas(L) && left > 1e-9, code:L.code, name:L.name, need:L.sheets, opened:done, qty:Math.max(0, left), kind:L.kind, has:lamHas(L), unit:'แผ่น', pool:'' };
+    else FM.lines = nd.lam.map(function(L){   /* v131: ติ๊กให้ทุกไม้ (ไม่เอาตัวไหนติ๊กออก) · จำนวน = ยอดเต็มใน BOM Fitting · เคยเปิดใบไปแล้ว → แถวเตือน */
+      var cu = L.code.toUpperCase(), done = op.lm[cu] || 0, sh = +L.sheets > 0 ? r4(+L.sheets) : 0;   /* ยอดเป็น 0 (Qty ใน BOM Fitting ว่าง) → ไม่ติ๊ก */
+      return { on:sh > 1e-9, code:L.code, name:L.name, need:L.sheets, opened:done, openedIn:(op.nos && op.nos.lm[cu]) || [], qty:sh, kind:L.kind, has:lamHas(L), unit:'แผ่น', pool:'' };
     });
   } else if(type === 'rq'){
     FM.head = edit ? clone(edit.head) : { desc:last.desc || ch.project, projectId:ch.projectId, lot:ch.lot, projectName:ch.projectName, building:ch.building, floor:ch.floor, room:ch.room, category:ch.category, createDate:today, shipDate:last.shipDate || '', note:'' };
@@ -25196,7 +25207,7 @@ function buildForm(type, oid, edit){
   }
   FM.head.who = (edit && edit.who) || whoGet();
   var ov = modal('__pdocForm', type, (edit ? '✎ แก้ ' : T[type].icon + ' เปิด') + T[type].long + (edit ? ' · ' + esc(edit.no) : ''),
-    'Order ' + esc(oid) + (edit ? ' · แก้แล้วเลขที่เดิม' : ' · ยอดตั้งต้น = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว (ใบที่ไม่ยกเลิก)'),
+    'Order ' + esc(oid) + (edit ? ' · แก้แล้วเลขที่เดิม' : (type === 'lm' ? ' · ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting (ตัวไหนไม่สั่งปิดผิวให้ติ๊กออก)' : ' · ยอดตั้งต้น = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว (ใบที่ไม่ยกเลิก)')),
     '<div id="pdFormBody"></div>',
     '<span id="pdFormNote" class="pd-note"></span><span class="pd-sp"></span><span id="pdFormMsg" class="pd-msg"></span>'
     + '<button type="button" class="pd-btn" data-act="x">ยกเลิก</button>'
@@ -25237,14 +25248,19 @@ function fmRender(){
       + lab('ผู้จัดทำ', 'head.who', h.who)
       + lab('รายละเอียด (บรรทัดกลางใบ)', 'head.project', h.project, { wide:true, ph:'เช่น BU3.2_โครงการ The Forest TYPE J แปลง D3 บ้านตัวอย่าง BR2 BR3 BR4' })
       + lab('หมายเหตุ', 'head.note', h.note, { wide:true }) + '</div>';
-    H += '<div class="pd-sec"><div class="pd-sech"><b>ส่วนที่ 1 · ไม้ปิดผิว</b><span class="pd-note">ติ๊กไม้ที่จะออกใบ · จำนวน = แผ่น · ตั้งต้น = ต้องใช้ − เปิดใบไปแล้ว</span></div>'
+    var nDup = FM.edit ? 0 : FM.lines.filter(function(l){ return +l.opened > 1e-9; }).length;   /* v131 */
+    H += '<div class="pd-sec"><div class="pd-sech"><b>ส่วนที่ 1 · ไม้ปิดผิว</b><span class="pd-note">' + (FM.edit ? 'ติ๊กไม้ที่จะออกใบ · จำนวน = แผ่น' : 'ติ๊กไว้ให้ทุกไม้ (ตัวไหนไม่สั่งปิดผิวให้ติ๊กออก) · จำนวน = แผ่น · ตั้งต้น = ยอดเต็มใน BOM Fitting') + '</span>'
+      + (nDup ? '<span class="pd-note pd-dup">⚠ ' + nDup + ' ไม้เคยเปิดใบไปแล้ว — ดูแถวสีส้ม</span>' : '') + '</div>'
       + '<table class="pd-tbl"><thead><tr><th><input type="checkbox" data-all="lines"' + (allOn(FM.lines) ? ' checked' : '') + ' aria-label="เลือกทั้งหมด"></th><th>รหัสไม้ปิดผิว</th><th>รายละเอียด</th><th class="n">ต้องใช้</th><th class="n">เปิดแล้ว</th><th class="n">จำนวน (แผ่น)</th><th>PD Pool</th></tr></thead><tbody>'
       + FM.lines.map(function(l, i){
           var tag = l.has ? '' : ' <span class="pd-chip wait">' + (l.kind === 'keep' ? 'ตั้งไว้ไม่แตก BOM' : 'ไม่มี BOM') + '</span>';
+          var dup = !FM.edit && +l.opened > 1e-9;   /* v131: ไม้นี้เปิดใบไปแล้ว (ใบที่ยังไม่ยกเลิก) */
           return '<tr' + (l.on ? '' : ' class="off"') + '><td><input type="checkbox" data-p="lines.' + i + '.on"' + (l.on ? ' checked' : '') + ' aria-label="เลือก ' + esc(l.code) + '"></td><td><code>' + esc(l.code) + '</code>' + tag + '</td>'
-            + '<td style="min-width:220px">' + inp('lines.' + i + '.name', l.name, { w:'100%' }) + '</td><td class="n">' + (l.need == null ? '—' : num(l.need)) + '</td><td class="n">' + (l.opened == null ? '—' : num(l.opened)) + '</td>'
+            + '<td style="min-width:220px">' + inp('lines.' + i + '.name', l.name, { w:'100%' }) + '</td><td class="n">' + (l.need == null ? '—' : num(l.need)) + '</td><td class="n">' + (l.opened == null ? '—' : (dup ? '<span class="pd-dup">' + num(l.opened) + '</span>' : num(l.opened))) + '</td>'
             + '<td class="n">' + inp('lines.' + i + '.qty', num(l.qty), { w:'76px', num:true, aria:'จำนวน ' + l.code }) + '</td>'
-            + '<td>' + inp('lines.' + i + '.pool', l.pool, { w:'86px', ph:h.pdPool || '', aria:'PD Pool ' + l.code, list:'pdPdPoolsF' }) + '</td></tr>';
+            + '<td>' + inp('lines.' + i + '.pool', l.pool, { w:'86px', ph:h.pdPool || '', aria:'PD Pool ' + l.code, list:'pdPdPoolsF' }) + '</td></tr>'
+            + (dup ? '<tr class="pd-duprow' + (l.on ? '' : ' off') + '"><td></td><td colspan="6" style="white-space:normal;max-width:none;padding-top:0"><span class="pd-dup">⚠ ไม้นี้เปิดใบไปแล้ว ' + num(l.opened) + ' แผ่น'
+              + ((l.openedIn || []).length ? ' (' + l.openedIn.map(function(n){ return esc(n); }).join(', ') + ')' : '') + ' — ถ้าไม่สั่งปิดผิวซ้ำ ให้ติ๊กออก หรือแก้จำนวน</span></td></tr>' : '');
         }).join('') + (FM.lines.length ? '' : '<tr><td colspan="7" class="pd-empty">ไม่มีไม้ที่ต้องปิดผิว</td></tr>') + '</tbody></table></div>';
     H += poolLists('F');
     H += '<div class="pd-sec"><div class="pd-sech"><b>ส่วนที่ 2 · แตก BOM</b><span class="pd-note">' + (FM.edit && !lmNew(FM.edit) ? 'ใบนี้ออกก่อน v129 — แก้แล้วยังพิมพ์แบบเดิม (Master Plan) · ส่วนนี้แสดงให้ดูเท่านั้น ไม่บันทึกลงใบ' : 'วัสดุของไม้ที่ติ๊ก × จำนวนแผ่น จาก BOM ตอนนี้ (AX / BOM ใส่เอง) — บันทึกลงใบตอนกดบันทึก') + '</span></div><div id="pdBom"></div></div>';
@@ -25367,7 +25383,8 @@ function bomRender(){
 function fmNotes(){
   if(!FM || !FM.el) return;
   var n = FM.el.querySelector('#pdFormNote'), t = '';
-  if(FM.type === 'lm'){ var ko = FM.lines.filter(function(l){ return l.on && +l.qty > 0; }); t = 'ไม้ปิดผิว ' + ko.length + ' รายการ · ' + num(ko.reduce(function(a, l){ return a + (+l.qty || 0); }, 0)) + ' แผ่น'; }
+  if(FM.type === 'lm'){ var ko = FM.lines.filter(function(l){ return l.on && +l.qty > 0; }); t = 'ไม้ปิดผิว ' + ko.length + ' รายการ · ' + num(ko.reduce(function(a, l){ return a + (+l.qty || 0); }, 0)) + ' แผ่น';
+    var kd = FM.edit ? 0 : ko.filter(function(l){ return +l.opened > 1e-9; }).length; if(kd) t += ' · ⚠ ในนี้มี ' + kd + ' ไม้ที่เคยเปิดใบไปแล้ว'; }   /* v131 */
   else if(FM.type === 'rq'){ var sN = FM.secs.filter(function(s){ return s.lines.some(function(l){ return l.on && +l.qty > 0; }); }).length; t = 'จะได้ใบเบิก ' + sN + ' ใบ'; }
   else t = 'ติ๊ก ' + FM.lines.filter(function(l){ return l.on; }).length + ' รายการ';
   n.textContent = t;
@@ -25394,7 +25411,8 @@ function fmInput(ev){
     setPath(FM, p, !!t.checked);
     var m = /^pair\.lines\.(\d+)\.on$/.exec(p);
     if(m){ var pl = FM.pair.lines[+m[1]]; FM.pair.ov[pl.code.toUpperCase()] = Object.assign(FM.pair.ov[pl.code.toUpperCase()] || {}, { on:!!t.checked }); }
-    var tr = t.closest('tr'); if(tr && p !== 'pair.on') tr.classList.toggle('off', !t.checked);
+    var tr = t.closest('tr'); if(tr && p !== 'pair.on'){ tr.classList.toggle('off', !t.checked);
+      var nx = tr.nextElementSibling; if(nx && nx.classList.contains('pd-duprow')) nx.classList.toggle('off', !t.checked); }   /* v131: แถวเตือนจางตามแถวไม้ */
     if(FM.type === 'lm' && FM.pair && /^lines\./.test(p)){ pairCalc(); pairRender(); }
     if(FM.type === 'lm' && /^lines\./.test(p)) bomRender();
     if(p === 'pair.on') pairRender();
@@ -25527,7 +25545,7 @@ function saveNew(oid, docs, pairDocs, type, h, known){
     var mainNos = docs.map(function(d){ return d.no; }), pairNos = pairDocs.map(function(d){ return d.no; });
     var mk = function(d, pair){ return { no:d.no, type:d.type, oid:oid, status:'open', at:now, by:by, who:d.head.who || '', ax:'', axAt:0, pair:pair, head:d.head, lines:d.lines, note:d.head.note || '', log:[{ at:now, by:by, t:'สร้าง' }] }; };
     return mutateRec(oid, function(rec){
-      var fresh = known ? rec.docs.filter(function(y){ return isDoc(y) && y.status !== 'cancel' && known.indexOf(y.no) < 0; }) : [];
+      var fresh = known ? rec.docs.filter(function(y){ return isDoc(y) && y.status !== 'cancel' && known.indexOf(y.no + '@' + (+y.at || 0)) < 0; }) : [];
       if(fresh.length) throw Error('มีเครื่องอื่นเพิ่งเปิดเอกสารของ Order นี้ (' + fresh.map(function(y){ return y.no; }).join(', ') + ') — ปิดฟอร์มแล้วเปิดใหม่เพื่อดูยอดล่าสุด');
       docs.forEach(function(d){ rec.docs.push(mk(d, pairNos.slice())); });
       pairDocs.forEach(function(d){ rec.docs.push(mk(d, mainNos.slice())); });
@@ -25600,7 +25618,7 @@ function openCancel(no, oid){
   var x = findDoc(no, oid);
   if(!x) return;
   var pd = extraOn() ? pairClosure(x).filter(function(y){ return y.status !== 'cancel'; }) : [];
-  var ov = modal('__pdocCancel', x.type, 'ยกเลิก ' + T[x.type].label + ' ' + esc(no), 'ยกเลิกแล้วยอดในใบนี้ไม่นับเป็น "เปิดไปแล้ว" · ใบยังอยู่ในประวัติ (พิมพ์ซ้ำได้ มีคำว่า ยกเลิก)',
+  var ov = modal('__pdocCancel', x.type, 'ยกเลิก ' + T[x.type].label + ' ' + esc(no), 'ยกเลิกแล้วยอดในใบนี้ไม่นับเป็น "เปิดไปแล้ว" · ใบยังอยู่ในประวัติ (พิมพ์ซ้ำได้ มีคำว่า ยกเลิก) · ลบออกจากประวัติได้ภายหลัง (ปุ่ม 🗑 ลบ)',
     '<label style="display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12px">เหตุผล<input class="pd-in" id="pdCxWhy" placeholder="เช่น เปิดผิด / เปลี่ยนแบบ"></label>'
     + (pd.length ? '<label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-weight:700"><input type="checkbox" id="pdCxPair" checked> ยกเลิกใบคู่กันด้วย (' + pd.map(function(y){ return esc(y.no); }).join(', ') + ')</label>' : '')
     + '<div id="pdCxMsg" class="pd-msg"></div>',
@@ -25644,6 +25662,49 @@ function cancelDoc(no, why, withPair, oid){
       done.push(y.no);
     });
     return done;
+  });
+}
+/* v131: ลบใบที่ยกเลิกแล้วออกจากประวัติ (ถาวร) — ลบได้เฉพาะใบที่ยกเลิก (ใบที่ใช้งานอยู่ต้องกดยกเลิกก่อน)
+   อ่านไฟล์กลางล่าสุดก่อนลบ (mutateRec) · ใบอื่นที่ผูกคู่ไว้ (pair · โหมดแสดงใบเบิก) เอาเลขที่นี้ออกจากรายการคู่ด้วย
+   ยอด "เปิดไปแล้ว" ไม่เปลี่ยน (ใบที่ยกเลิกไม่นับอยู่แล้ว) · ถ้าเป็นเลขที่ล่าสุด ใบใหม่อาจได้เลขนี้อีกครั้ง (เลขรัน = เลขสูงสุดที่มีอยู่ + 1) */
+function deleteDoc(no, oid){
+  if(!oid) return Promise.reject(Error('ไม่พบเอกสาร ' + no));
+  return mutateRec(oid, function(rec){   /* เฉพาะ Order ของใบนี้ — เลข LM ซ้ำข้าม Order ได้ (ล้างเลขรันแบบไม่ลบใบ) ห้ามไปลบของ Order อื่น */
+    var hit = null;
+    rec.docs.forEach(function(y){ if(isDoc(y) && y.no === no) hit = y; });
+    if(!hit) throw Error('ไม่พบเอกสาร ' + no + ' ในไฟล์กลาง (อาจถูกลบไปแล้ว)');
+    if(hit.status !== 'cancel') throw Error('ใบนี้ยังไม่ได้ยกเลิก — กดยกเลิกก่อนแล้วค่อยลบ');
+    rec.docs = rec.docs.filter(function(y){ return y !== hit; });
+    rec.docs.forEach(function(y){ if(y && Array.isArray(y.pair)) y.pair = y.pair.filter(function(m){ return m !== no; }); });
+    return no;
+  });
+}
+function openDelete(no, oid){
+  var x = findDoc(no, oid);
+  if(!x || (oid && x.oid !== oid)) return;
+  if(x.status !== 'cancel'){ alertBox('ลบได้เฉพาะใบที่ยกเลิกแล้ว — กด "ยกเลิก" ก่อน'); return; }
+  var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0));
+  var ov = modal('__pdocDel', x.type, '🗑 ลบ ' + T[x.type].label + ' ' + esc(no) + ' ออกจากประวัติ', 'ใบนี้ยกเลิกแล้ว · ลบแล้วหายจากประวัติเอกสารถาวร (เปิดดู / พิมพ์ซ้ำไม่ได้อีก) · ทุกเครื่องเห็นผลเหมือนกัน',
+    '<div style="font-size:13px;line-height:1.7">Order <code>' + esc(x.oid) + '</code> · ' + x.lines.length + ' รายการ (' + num(tq) + (x.type === 'lm' ? ' แผ่น' : '') + ')'
+    + ((x.head && x.head.lot) ? ' · LOT <code>' + esc(x.head.lot) + '</code>' : '') + ' · ยกเลิกเมื่อ ' + esc(dmyhm(x.cancelAt || x.at)) + (x.cancelWhy ? ' · เหตุผล: ' + esc(x.cancelWhy) : '') + '</div>'
+    + '<div class="pd-note" style="margin-top:6px">ไม่กระทบยอด "เปิดไปแล้ว" (ใบที่ยกเลิกไม่นับอยู่แล้ว) · ถ้าเป็นเลขที่ล่าสุด ใบใหม่อาจได้เลขนี้อีกครั้ง</div>'
+    + '<div id="pdDelMsg" class="pd-msg"></div>',
+    '<span class="pd-sp"></span><button type="button" class="pd-btn" data-act="x">ไม่ลบ</button><button type="button" class="pd-btn danger" data-act="ok">🗑 ลบออกจากประวัติ</button>', '560px');
+  var armed = 0;
+  ov.addEventListener('click', function(ev){
+    var b = ev.target.closest ? ev.target.closest('[data-act]') : null;
+    if(!b) return;
+    var a = b.getAttribute('data-act');
+    if(a === 'x'){ closeModal(ov); return; }
+    if(a !== 'ok') return;
+    var tn = Date.now();
+    if(armed && tn - armed < 400) return;   /* ดับเบิลคลิก ไม่นับเป็นการยืนยัน — ต้องกดอีกครั้งแยกกัน (ลบแล้วเอาคืนไม่ได้) */
+    if(!(armed && tn - armed < 5000)){ armed = tn; b.classList.add('armed'); b.textContent = 'กดอีกครั้งเพื่อยืนยันลบ'; return; }
+    b.disabled = true;
+    deleteDoc(no, x.oid).then(function(){ closeModal(ov); toast('🗑 ลบ ' + no + ' ออกจากประวัติแล้ว'); refresh(); },
+      function(e){ b.disabled = false; armed = 0; b.classList.remove('armed'); b.textContent = '🗑 ลบออกจากประวัติ';
+        var m = ov.querySelector('#pdDelMsg'); m.textContent = 'ลบไม่สำเร็จ: ' + errText(e); m.className = 'pd-msg bad';
+        try{ loadAll(true); }catch(x){} });   /* อ่านไฟล์กลางใหม่ → ประวัติตรงกับของจริง (เช่น เครื่องอื่นลบไปแล้ว) */
   });
 }
 
