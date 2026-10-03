@@ -14288,7 +14288,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '137', D = '02/10/2026';
+  var V = '138', D = '02/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -24550,6 +24550,15 @@ window.WBOM_axLines = function(code){   /* v129: บรรทัด BOM จา�
          (นับ End Date เป็นวันที่ 1: 29/10/2026 → 14/10/2026) · แก้วันกำหนดเสร็จเองได้ · End Date จำจากใบก่อนของ Order เดียวกัน (head.endDate)
        · ใบพิมพ์: "วันกำหนดเสร็จ(ปิดผิว)" (เดิม "กำหนดเสร็จ") ตัวใหญ่ ตัวหนา ในกรอบเน้น (แผนกปิดผิวดูช่องนี้) + บรรทัด End Date ตัวเล็กข้างใต้ (เฉพาะใบที่ใส่ End Date)
        · 🖨 พิมพ์ → Save as PDF ชื่อไฟล์ "ใบปิดผิว — <LOT>" (Chrome ใช้ชื่อแท็บเป็นชื่อไฟล์ → ตั้งชื่อแท็บชั่วคราวระหว่างพิมพ์)
+     v138 — ใบปิดผิวรวมหลาย Order / หลาย Item ในใบเดียว
+       • โหมดรวม BOM (เลือกหลาย Order → ▶ รวม BOM) → "🧱 เปิดรายการไม้ปิดผิว (รวม N Order)" · ไม้รหัสเดียวกันรวมยอดทุก Order
+         ใต้ไม้แต่ละรหัสมีแถว Item (Item ไหนกี่แผ่น) · ✎ แยกจำนวน แก้ราย Item · LOT = Item ID เลขน้อยสุด + "-MC" + วันที่ (Type ของ Lot เดียวกัน → ชื่อ Lot)
+       • เก็บใบเดียวที่ Order แรก + multi:{ oids, items:[{ oid, ids }], lot? } · บรรทัดไม้ by:{ Order:แผ่น } · ยอด "เปิดแล้ว" ของแต่ละ Order นับส่วนของตัวเอง
+         แก้ / ยกเลิกใบรวม = มีผลทุก Order ในใบ · ทุก Order ในใบเห็นใบนี้ในประวัติ (ป้าย "รวม N Order")
+       • ใบพิมพ์: "Order รวม N Order · Item Id N รายการ" + แถบ "Item ในล็อตนี้" + โน้ต Item ใต้ไม้ (ส่วนที่ 1) · Excel + ชีต "แยกราย Item"
+       • ประวัติเอกสาร: แท็บ "📄 Order นี้ / 📚 หน้ารวม · ทุก Order" แทน dropdown (ยังไม่เลือก Order / โหมดรวม → หน้ารวม) · ค้น Item ID ได้
+       • Lot ที่ปันไม้เข้า Type แล้ว → ปุ่ม "🧱 ใบปิดผิวของทั้ง Lot" (รวม BOM ของทุก Type ให้แล้วเปิดฟอร์ม) · โหมดรวมมี Lot ปนอยู่ → เตือน + ปุ่มเปลี่ยนเป็น Type
+       • Order เดียวที่มีหลาย Item ID (Lot ที่ไม่ได้ปันไม้) → ช่อง "Item ID ในล็อต" + แถบ Item ในใบพิมพ์ · Order เดียว Item เดียว = เหมือนเดิมทุกอย่าง
      ══════════════════════════════════════════════════════════════════════ -->
 <script>
 (function(){
@@ -24742,9 +24751,10 @@ function nextNos(type, n, oid){
     /* v129: รายการไม้ปิดผิว = LM-ปีเดือนวัน-เลขรัน (เริ่ม 001 ทุกวัน) · ล้างเลขรันแล้ว → ใบก่อนเวลานั้นไม่นับ · ไม่ซ้ำเลขใน Order เดียวกัน */
     var daily = type === 'lm', pre = SET.pre[type] + '-' + (daily ? ymdBE() : yymm()) + '-', max = 0, used = {};
     var fr = (sr && !sr.error && sr.data) ? mergeSet(parseRaw(sr.data.value).obj) : SET, from = daily && fr.seqReset ? (+fr.seqReset.lm || 0) : 0;
+    var own = Array.isArray(oid) ? oid : [oid];   /* v138: ใบรวม = หลาย Order */
     var see = function(x, o){
       if(String(x.no).indexOf(pre) !== 0) return;
-      if(o === oid) used[x.no] = 1;
+      if(own.indexOf(o) >= 0 || own.some(function(q){ return inMulti(x, q); })) used[x.no] = 1;   /* v138: + ใบรวมที่มี Order นี้ (เก็บที่ Order อื่น) */
       if(from && (+x.at || 0) < from) return;
       var q = parseInt(String(x.no).slice(pre.length), 10); if(q > max) max = q;
     };
@@ -24766,13 +24776,172 @@ function findDoc(no, oid){
   if(!hit) Object.keys(DC.map).some(function(k){ return DC.map[k].docs.some(function(x){ if(x.no === no){ hit = x; return true; } return false; }); });
   return hit;
 }
+/* ══ v138: ใบปิดผิวรวมหลาย Order ════════════════════════════════════════════════
+   เก็บใบเดียวที่ Order แรก (เรียงตาม Item ID) + multi:{ oids:[Order], items:[{ oid, ids:[Item ID] }], lot? } · บรรทัดไม้ by:{ Order:แผ่น }
+   ยอด "เปิดแล้ว" ของแต่ละ Order นับส่วนของตัวเองจากใบรวม (by) · แก้ / ยกเลิกใบรวม = มีผลกับทุก Order ในใบ (ใบเดียว เก็บที่เดียว) */
+function natCmp(a, b){ return String(a).localeCompare(String(b), undefined, { numeric:true }); }
+function isMulti(x){ return !!(x && x.multi && Array.isArray(x.multi.oids) && x.multi.oids.length); }
+function inMulti(x, oid){ return isMulti(x) && (x.multi.oids.indexOf(oid) >= 0 || (!!x.multi.lot && x.multi.lot === oid)); }
+function mItems(x){ return Array.isArray(x.multi.items) ? x.multi.items : x.multi.oids.map(function(o){ return { oid:o, ids:[o] }; }); }   /* Item ของใบรวม (ไม่มีรายการ → ใช้ชื่อ Order) */
+/* ใบที่เกี่ยวกับ Order นี้: ใบของ Order เอง + ใบรวมที่เก็บไว้ที่ Order อื่นแต่มี Order นี้อยู่ด้วย (หรือเป็น Lot ของใบ) */
+function docsOf(oid){
+  var rec = DC.map[oid], out = rec ? rec.docs.slice() : [];
+  Object.keys(DC.map).forEach(function(k){ if(k !== oid) DC.map[k].docs.forEach(function(x){ if(inMulti(x, oid)) out.push(x); }); });
+  return out;
+}
+function lmDocsOf(oids){   /* รายการไม้ปิดผิวที่ยังใช้งานของ Order ใดก็ได้ในรายการ (ใบรวมนับครั้งเดียว) */
+  var out = [];
+  (oids || []).forEach(function(o){ docsOf(o).forEach(function(x){ if(x.type === 'lm' && x.status !== 'cancel' && out.indexOf(x) < 0) out.push(x); }); });
+  return out;
+}
 function openedOf(oid, skipNo){
-  var o = { lm:{}, rq:{}, pr:{}, nos:{ lm:{}, rq:{}, pr:{} } }, rec = DC.map[oid];   /* v131: nos = เลขที่ใบที่เปิดรหัสนั้น (ใบที่ไม่ยกเลิก) */
-  (rec ? rec.docs : []).forEach(function(x){
+  var o = { lm:{}, rq:{}, pr:{}, nos:{ lm:{}, rq:{}, pr:{} } };   /* v131: nos = เลขที่ใบที่เปิดรหัสนั้น (ใบที่ไม่ยกเลิก) */
+  docsOf(oid).forEach(function(x){   /* v138: + ใบรวมที่มี Order นี้ → นับเฉพาะแผ่นของ Order นี้ (by[oid]) */
     if(x.status === 'cancel' || x.no === skipNo) return;
-    x.lines.forEach(function(l){ var cu = norm(l.code).toUpperCase(); if(cu){ o[x.type][cu] = r4((o[x.type][cu] || 0) + (+l.qty || 0)); var a = o.nos[x.type][cu] = o.nos[x.type][cu] || []; if(a.indexOf(x.no) < 0) a.push(x.no); } });
+    var mu = isMulti(x);
+    x.lines.forEach(function(l){
+      var cu = norm(l.code).toUpperCase(); if(!cu) return;
+      var q = mu ? (+(l.by && l.by[oid]) || 0) : (+l.qty || 0);
+      if(mu && !(q > 1e-9)) return;
+      o[x.type][cu] = r4((o[x.type][cu] || 0) + q); var a = o.nos[x.type][cu] = o.nos[x.type][cu] || []; if(a.indexOf(x.no) < 0) a.push(x.no);
+    });
   });
   return o;
+}
+function openedMulti(oids, skipNo){   /* v138: ยอดเปิดแล้วรวมหลาย Order (ใบรวมนับตามส่วนของแต่ละ Order) */
+  var o = { lm:{}, rq:{}, pr:{}, nos:{ lm:{}, rq:{}, pr:{} } };
+  (oids || []).forEach(function(oid){
+    var a = openedOf(oid, skipNo);
+    ['lm', 'rq', 'pr'].forEach(function(t){ Object.keys(a[t]).forEach(function(cu){
+      o[t][cu] = r4((o[t][cu] || 0) + a[t][cu]);
+      var n = o.nos[t][cu] = o.nos[t][cu] || []; (a.nos[t][cu] || []).forEach(function(x){ if(n.indexOf(x) < 0) n.push(x); });
+    }); });
+  });
+  return o;
+}
+function itIds(it){ return (it && it.ids && it.ids.length) ? it.ids : [it ? it.oid : '']; }
+function itLab(it){ var a = itIds(it); return a.length === 1 ? a[0] : it.oid; }
+function itFull(it){ return itIds(it).join(', ') + ' · ' + it.oid; }
+/* ป้ายสั้น: ขึ้นต้นเหมือนกัน (ถึงตัวคั่น - _ หรือเว้นวรรค) → เหลือส่วนท้าย เช่น RE-0069-0855 · RE-0069-0902 → 0855 · 0902 */
+function shortLabs(labs){
+  if(labs.length < 2) return labs.slice();
+  var p = labs[0];
+  labs.forEach(function(s){ var i = 0; while(i < p.length && i < s.length && p.charAt(i) === s.charAt(i)) i++; p = p.slice(0, i); });
+  var n = Math.max(p.lastIndexOf('-'), p.lastIndexOf('_'), p.lastIndexOf(' ')) + 1;
+  if(n < 1 || labs.some(function(s){ return s.length <= n; })) return labs.slice();
+  return labs.map(function(s){ return s.slice(n); });
+}
+/* โน้ต Item ใต้ไม้: จำนวนเท่ากันรวมเป็นกลุ่ม (มาก → น้อย) · ทุก Item เท่ากัน → "ทุก Item ×4 แผ่น (12 Item)" */
+function byNote(by, items, unit){
+  var labs = shortLabs(items.map(itLab)), ent = [];
+  items.forEach(function(it, i){ var q = r4(+(by && by[it.oid]) || 0); if(q > 1e-9) ent.push([labs[i], q]); });
+  if(!ent.length) return '';
+  if(items.length > 1 && ent.length === items.length && ent.every(function(e){ return e[1] === ent[0][1]; })) return 'ทุก Item ×' + num(ent[0][1]) + ' ' + (unit || 'แผ่น') + ' (' + items.length + ' Item)';
+  var g = [], gm = {};
+  ent.forEach(function(e){ var k = String(e[1]); if(!gm[k]){ gm[k] = { q:e[1], l:[] }; g.push(gm[k]); } gm[k].l.push(e[0]); });
+  g.sort(function(a, b){ return b.q - a.q; });
+  return g.map(function(x){ return '×' + num(x.q) + ': ' + x.l.join(' · '); }).join(' / ') + ' (' + ent.length + ' Item)';
+}
+function byOfQ(byq, oids){ var b = Object.create(null); oids.forEach(function(o, j){ var q = r4(+byq[j] || 0); if(q > 1e-9) b[o] = q; }); return b; }
+/* Item ในใบ (แถบ "Item ในล็อตนี้"): ใบรวม = Item ID ของทุก Order · ใบ Order เดียวที่มีหลาย Item ID (Lot ที่ไม่ได้ปันไม้) = head.itemIds */
+function docItems(x){
+  if(isMulti(x)){ var out = []; mItems(x).forEach(function(it){ itIds(it).forEach(function(id){ out.push({ id:id, oid:it.oid }); }); }); return out; }
+  var a = (x && x.head && Array.isArray(x.head.itemIds)) ? x.head.itemIds : [];
+  return a.length > 1 ? a.map(function(id){ return { id:id, oid:'' }; }) : [];
+}
+function ordTxt(x){ return isMulti(x) ? 'รวม ' + x.multi.oids.length + ' Order' : 'Order ' + x.oid; }
+function shortOid(o){ var m = /^(\d{8,})_/.exec(String(o || '')); return m ? m[1] : String(o || ''); }
+function idsBrief(x, k){ var a = docItems(x).map(function(t){ return t.id; }); k = k || 4; return a.slice(0, k).join(', ') + (a.length > k ? ' … +' + (a.length - k) : ''); }
+function mcName(id){ id = norm(id); return !id ? '' : (/[-_]MC$/i.test(id) ? id : id + '-MC'); }
+function splitIds(s){ var out = []; String(s == null ? '' : s).split(/[\n\r,;\t]+/).forEach(function(v){ v = norm(v); if(v && out.indexOf(v) < 0) out.push(v); }); return out; }
+/* ── v138: โหมดรวม BOM (โมดูลรวม BOM หลาย Order) ── */
+function mbMerged(){   /* รวม BOM แล้ว (มีแถวที่รวมไว้ · ไม่ได้กำลังรวม) */
+  try{
+    var s = window.MBOM_state && window.MBOM_state();
+    if(!s || !s.on || s.blank || !(s.fit > 0 || s.ax > 0)) return false;
+    return !(window.MBOM_busy && window.MBOM_busy());
+  }catch(e){ return false; }
+}
+/* Order ในโหมดรวม (เรียงตาม Item ID) · ids = Item ID ของแต่ละ Order (จากแถว AX ที่รวมไว้ · ไม่มี = ชื่อ Order) · wood = Order ที่มีไม้ปิดผิว */
+function mbInfo(nd){
+  var ax = [], ids = Object.create(null), all = [];
+  try{ ax = window.buildAXRows() || []; }catch(e){ ax = []; }
+  var addO = function(o){ if(o && all.indexOf(o) < 0) all.push(o); };
+  ax.forEach(function(r){
+    var o = r && r.__mbOrder; if(!o) return; addO(o);
+    var v = norm(r['Item Id Set']); if(!v || v === '—' || v === '-') return;
+    var a = ids[o] = ids[o] || []; if(a.indexOf(v) < 0) a.push(v);
+  });
+  ((nd && nd.mb) || []).forEach(addO);
+  all.forEach(function(o){ ids[o] = (ids[o] || []).sort(natCmp); if(!ids[o].length) ids[o] = [o]; });
+  all.sort(function(a, b){ return natCmp(ids[a][0], ids[b][0]) || natCmp(a, b); });
+  var wood = all.filter(function(o){ return ((nd && nd.lam) || []).some(function(L){ return L.by && +L.by[o] > 1e-9; }); });
+  return { oids:all, ids:ids, wood:wood };
+}
+/* ── v138: Lot ที่ปันไม้เข้า Type แล้ว (bomline_wood:<Order ของ Type> = { order:<Lot>, alloc:true }) ── */
+var LOTC = { map:null, at:0, busy:null }, LOTGO = null;
+function lotScan(force){
+  var d = dbNow();
+  if(!d) return Promise.resolve(LOTC.map);
+  if(LOTC.busy) return LOTC.busy;
+  if(!force && LOTC.at && Date.now() - LOTC.at < 60000) return Promise.resolve(LOTC.map);   /* อ่านไม่บ่อยกว่านาทีละครั้ง (อ่านไม่สำเร็จก็เว้นนาทีเหมือนกัน) */
+  LOTC.busy = Promise.resolve(d.from('app_settings').select('key,value').like('key', 'bomline_wood:%')).then(function(r){
+    if(r && r.error) throw r.error;
+    var m = Object.create(null);
+    ((r && r.data) || []).forEach(function(row){
+      var v = row && row.value;
+      if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ v = null; } }
+      if(!v || !v.alloc || !v.order || !Array.isArray(v.rows) || !v.rows.length) return;
+      var o = String(row.key || '').slice(13), lot = String(v.order);
+      if(!o || o === lot) return;
+      (m[lot] = m[lot] || []).push(o);
+    });
+    Object.keys(m).forEach(function(k){ m[k].sort(natCmp); });
+    LOTC.map = m; LOTC.at = Date.now(); LOTC.busy = null;
+    return m;
+  }).then(null, function(){ LOTC.busy = null; LOTC.at = Date.now(); return LOTC.map; });
+  return LOTC.busy;
+}
+function lotTypes(lot){ return (lot && LOTC.map && LOTC.map[lot]) || []; }
+function lotSig(m, oids){ return (oids || []).map(function(o){ return o + '>' + ((m && m[o]) || []).join(','); }).join('|'); }
+function lotOfOids(oids){   /* ทุก Order เป็น Type ของ Lot เดียวกัน (หรือตัว Lot เอง) → ชื่อ Lot */
+  var hit = '';
+  if(LOTC.map && oids.length) Object.keys(LOTC.map).some(function(L){
+    var ty = LOTC.map[L];
+    if(oids.every(function(o){ return o === L || ty.indexOf(o) >= 0; }) && oids.some(function(o){ return o !== L; })){ hit = L; return true; }
+    return false;
+  });
+  return hit;
+}
+function lotRun(oids, lot, open){   /* รวม BOM ของ Order ที่ให้ (โหมดรวม) · open = รวมเสร็จแล้วเปิดฟอร์มใบรวม */
+  if(typeof window.MBOM_run !== 'function'){ alertBox('ไม่พบโมดูลรวม BOM หลาย Order'); return; }
+  LOTGO = { lot:lot, oids:oids.slice(), t0:Date.now(), open:!!open };
+  toast('กำลังรวม BOM ' + oids.length + ' Order' + (lot ? ' ของ Lot ' + lot : '') + ' …');
+  try{ window.MBOM_run(oids.slice()); }catch(e){ LOTGO = null; alertBox('รวม BOM ไม่สำเร็จ: ' + errText(e)); return; }
+  refresh();
+  setTimeout(lotWait, 300);
+}
+function lotWait(){
+  var g = LOTGO;
+  if(!g) return;
+  if(Date.now() - g.t0 > 180000){ LOTGO = null; refresh(); toast('รวม BOM ยังไม่เสร็จ — รอให้รวมเสร็จแล้วกดเปิดรายการไม้ปิดผิวเอง (หรือกดใหม่)'); return; }
+  var busy = false; try{ busy = !!(window.MBOM_busy && window.MBOM_busy()); }catch(e){}
+  if(busy || !mbMerged()){ setTimeout(lotWait, 400); return; }
+  LOTGO = null;
+  refresh();
+  if(g.open && ON && !FM) openForm('lm');
+}
+function lotAll(lot){   /* Lot ที่ปันไม้แล้ว (ไม้อยู่ที่ Order ของ Type ทั้งหมด) → ใบปิดผิวใบเดียวของทั้ง Lot */
+  var ty = lotTypes(lot);
+  if(!lot || !ty.length || LOTGO) return;
+  lotRun(ty, lot, true);
+}
+function lotSwap(lot){   /* โหมดรวมมี Lot ที่ปันแล้วปนอยู่ → เปลี่ยนเป็น Order ของ Type */
+  if(LOTGO) return;
+  var nd = need(), mi = mbInfo(nd), ty = lotTypes(lot), out = [];
+  var push = function(o){ if(o && out.indexOf(o) < 0) out.push(o); };
+  mi.oids.forEach(function(o){ if(o !== lot) return push(o); if(mi.wood.indexOf(lot) >= 0) push(lot); ty.forEach(push); });
+  lotRun(out, lot, false);
 }
 function pairDocs(x){
   var rec = DC.map[x.oid], nos = x.pair || [];
@@ -24824,21 +24993,24 @@ function poolLists(sfx){
 function need(){
   var rows = [];
   try{ rows = window.buildBOMRows() || []; }catch(e){ rows = []; }
-  var by = {}, items = [], lb = {}, lam = [];
+  var by = {}, items = [], lb = {}, lam = [], mb = [];   /* v138: mb = Order ในโหมดรวม (แถวมี __mbOrder) · L.by = แผ่นของแต่ละ Order */
+  var addBy = function(L, o, q){ var b = L.by || (L.by = Object.create(null)); b[o] = r4((b[o] || 0) + q); };
   rows.forEach(function(r){
     if(!r) return;
+    var mo = r.__mbOrder || '';
+    if(mo && mb.indexOf(mo) < 0) mb.push(mo);
     if(r._type === 'BOM ไม้'){
       if(r._wbomChild && r._wbomFrom && !r._hidden){
         var base = String(r._origKey || '').split('>')[0], cl = String(r._wbomFrom).toUpperCase(), L = lb[cl];
         if(!L){ L = lb[cl] = { code:r._wbomFrom, name:fgName(r._wbomFrom), sheets:0, bases:{}, kind:'bom', src:r._wbomSrc || 'ax' }; lam.push(L); }
-        if(!L.bases[base]){ L.bases[base] = 1; L.sheets = r4(L.sheets + (+r._wbomSheets || 0)); }
+        if(!L.bases[base]){ L.bases[base] = 1; L.sheets = r4(L.sheets + (+r._wbomSheets || 0)); if(mo) addBy(L, mo, +r._wbomSheets || 0); }
       } else if(!r._wbomChild && !r._hidden){
         var wc = norm(r.ItemId != null && r.ItemId !== '' ? r.ItemId : r._code);
         if(wc && !sized(wc)){
           var cw = wc.toUpperCase(), W = lb[cw], s = srcOf(wc);
           if(!W){ W = lb[cw] = { code:wc, name:woodName(r, wc), sheets:0, bases:{}, kind:(s && s.noExplode) ? 'keep' : 'nobom', src:s ? s.src : '',
                                  hasBom:!!(s && !s.noExplode && s.lines > 0 && WOOD_RE.test(wc)) }; lam.push(W); }   /* v129: มี BOM แต่ BOM Fitting ไม่ได้แตก (ปิดสวิตช์) */
-          if(W.kind !== 'bom') W.sheets = r4(W.sheets + ((typeof r.Qty === 'number') ? r.Qty : (parseFloat(r.Qty) || 0)));
+          if(W.kind !== 'bom'){ var wq = (typeof r.Qty === 'number') ? r.Qty : (parseFloat(r.Qty) || 0); W.sheets = r4(W.sheets + wq); if(mo) addBy(W, mo, wq); }
         }
       }
     }
@@ -24850,7 +25022,7 @@ function need(){
     it.qty = r4(it.qty + q);
     if(r._wbomChild && r._wbomFrom && it.lamOf.indexOf(r._wbomFrom) < 0) it.lamOf.push(r._wbomFrom);
   });
-  return { items:items, lam:lam };
+  return mb.length ? { items:items, lam:lam, mb:mb } : { items:items, lam:lam };
 }
 
 /* ══ แท็บ ═══════════════════════════════════════════════════════════════════ */
@@ -24939,6 +25111,31 @@ function css(){
     D + '.pd-warn{color:#fde68a;background:rgba(234,179,8,.10)}' + D + '.pd-link{color:#7dd3fc}',
     D + '.pd-modal .pd-dup{color:#fdba74}' + D + '.pd-modal .pd-tbl tr.pd-duprow td{background:rgba(234,179,8,.10)!important;border-color:rgba(234,179,8,.3)!important}',   /* v131: แถวเตือนในธีมมืด (!important ชนะกฎแถวสลับสีของธีมมืดที่เป็น !important) */
     '#pdHist tr.off td:last-child{opacity:1}',   /* v131: ใบที่ยกเลิก แถวจาง แต่ปุ่ม ดู/พิมพ์ · 🗑 ลบ ชัดเหมือนปกติ (ไม่ดูเหมือนกดไม่ได้) */
+    /* v138: แท็บประวัติ · ป้ายใบรวม · แถบข้อมูล · ฟอร์มใบรวม (ช่อง Item ID ในล็อต · แถว Item · แยกจำนวน) */
+    '#contentDocs .pd-seg{display:inline-flex;border:1px solid var(--border2);border-radius:9px;overflow:hidden;flex-shrink:0}',
+    '#contentDocs .pd-seg button{border:none;background:var(--s2);color:var(--text);padding:6px 12px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}',
+    '#contentDocs .pd-seg button+button{border-left:1px solid var(--border2)}#contentDocs .pd-seg button.on{background:#1d4ed8;color:#fff}#contentDocs .pd-seg button:disabled{opacity:.45;cursor:default}',
+    '.pd-chip.mu{background:#2563eb;color:#fff}',
+    '.pd-info{font-size:12px;padding:8px 11px;border-radius:9px;background:rgba(37,99,235,.07);border:1px solid rgba(37,99,235,.28);color:#1e3a8a;margin:6px 0;line-height:1.6}',
+    '.pd-info.lot{background:rgba(22,163,74,.07);border-color:rgba(22,163,74,.3);color:#14532d}.pd-warn .pd-btn{margin-left:6px}',
+    D + '.pd-info{color:#bfdbfe;background:rgba(59,130,246,.12)}' + D + '.pd-info.lot{color:#bbf7d0;background:rgba(34,197,94,.10)}',
+    M + '.pd-grid .pd-lab{display:flex;flex-direction:column;gap:3px;font-size:11px;font-weight:700;color:#475569;min-width:0}',
+    M + '.pd-iids{display:flex;gap:6px;align-items:center}' + M + '.pd-iidbox{flex:1;min-width:0;display:flex;gap:5px;align-items:center;border:1px solid #cbd5e1;border-radius:7px;padding:4px 6px;background:#fff;overflow:hidden}',
+    M + '.pd-iid{font:700 11.5px/1.4 Menlo,Consolas,monospace;background:#eef2ff;color:#3730a3;border-radius:5px;padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    M + '.pd-iidn{font-size:11px;font-weight:700;color:#475569;background:#f1f5f9;border-radius:5px;padding:1px 6px;flex-shrink:0}',
+    M + '.pd-ipan{border:1px solid #c7d2fe;background:#f8faff;border-radius:10px;padding:10px 12px;margin:2px 0 10px}' + M + '.pd-ipan .pd-sech{background:none;border:none;padding:0 0 8px}',
+    M + '.pd-ipan .pd-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}' + M + '.pd-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}',
+    M + '.pd-ichip{display:flex;gap:6px;align-items:center;border:1px solid #e2e8f0;border-radius:7px;padding:4px 8px;background:#fff;font-size:11.5px;min-width:0}',
+    M + '.pd-ichip code{font:700 11.5px Menlo,Consolas,monospace;color:#3730a3;overflow:hidden;text-overflow:ellipsis}' + M + '.pd-ichip .pd-in{flex:1;min-width:0;padding:3px 6px;font:700 11.5px Menlo,Consolas,monospace}',
+    M + '.pd-ichip .x{margin-left:auto;border:none;background:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0 2px;line-height:1}' + M + '.pd-ichip .x:hover{color:#dc2626}',
+    M + '.pd-tbl tr.pd-itrow td{background:#f8faff;border-bottom:1px solid #e0e7ff;white-space:normal;max-width:none;padding-top:3px}',
+    M + '.pd-itrow b{color:#1e3a8a;font-size:11.5px}' + M + '.pd-itn{font-size:11.5px;color:#334155;margin-right:6px}' + M + '.pd-sph{display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
+    M + '.pd-split{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 14px;margin:6px 0 2px}',
+    M + '.pd-split label{display:flex;align-items:center;gap:6px;justify-content:flex-end;font:700 11.5px Menlo,Consolas,monospace;color:#1e3a8a;min-width:0}',
+    M + '.pd-in.pd-ro{background:#f1f5f9;color:#334155;text-align:right;border-color:#e2e8f0}',
+    D + '.pd-modal .pd-ipan{background:rgba(99,102,241,.08);border-color:rgba(129,140,248,.35)}' + D + '.pd-modal .pd-tbl tr.pd-itrow td{background:rgba(99,102,241,.08)!important;border-color:rgba(129,140,248,.25)!important}',
+    D + '.pd-modal .pd-iidbox,' + D + '.pd-modal .pd-ichip{background:var(--s3);border-color:var(--border2)}' + D + '.pd-modal .pd-itrow b,' + D + '.pd-modal .pd-split label{color:#a5b4fc}' + D + '.pd-modal .pd-itn{color:var(--text2)}',
+    D + '.pd-modal .pd-in.pd-ro{background:rgba(255,255,255,.06);color:var(--text)}',
     '@media (max-width:700px){#contentDocs{padding:10px 8px 30px}.pd-modal{padding:4px}.pd-modal .pd-bd{padding:10px}.pd-modal .pd-hd{padding:11px 44px 9px 12px}}',
     '@media (max-width:1300px){#subTabDocs .pd-tabw{display:none}}'   /* v130: จอแคบ ชื่อแท็บเหลือ "🧾 ใบปิดผิว" (ปุ่มบนแถบแท็บย่อยไม่ต้องตกบรรทัดเพิ่ม) */
   ].join('');
@@ -25046,6 +25243,15 @@ function render(full){
 }
 /* ══ v129: แท็บแบบใบเดียว "รายการไม้ปิดผิว" ═══════════════════════════════════════ */
 function lamHas(L){ return L.kind === 'bom' || !!L.hasBom; }
+var CTX_MI = null;   /* v138: Order ที่รวม (วาดหน้าแท็บครั้งล่าสุด) */
+function lmCtx(){   /* v138: ข้อมูลหน้าแท็บ — Order ที่เปิดอยู่ หรือ Order ที่รวม (โหมดรวม BOM ที่รวมแล้ว) */
+  var oid = curOid(), mb = mbOn(), mm = mb && mbMerged();
+  var nd = (oid || mm) ? need() : { items:[], lam:[] };
+  var mi = mm ? mbInfo(nd) : null;
+  if(mi && !mi.oids.length) mi = null;
+  var op = mi ? openedMulti(mi.oids) : (oid ? openedOf(oid) : { lm:{}, rq:{}, pr:{} });
+  return { oid:oid, mb:mb, nd:nd, mi:mi, op:op };
+}
 function renderLm(full){
   var c = document.getElementById('contentDocs');
   if(full || c.__built !== 'lm'){
@@ -25058,48 +25264,77 @@ function renderLm(full){
       + '<div id="pdWarn"></div>'
       + '<div class="pd-row" style="margin-top:8px">'
       +   '<button type="button" class="pd-btn big lm" data-act="new" data-type="lm">🧱 เปิดรายการไม้ปิดผิว</button>'
+      +   '<button type="button" class="pd-btn big lm" data-act="lotAll" style="display:none">🧱 ใบปิดผิวของทั้ง Lot</button>'   /* v138 */
       +   '<span class="pd-note">ใบเดียวมี 2 ส่วน: ① ไม้ปิดผิว + จำนวนแผ่น ② แตก BOM (วัสดุ × แผ่น) · LOT ตั้งจาก ItemID + วันที่ (แก้ได้) · ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting</span></div></div>'
-      + '<div class="pd-card"><h3>สถานะ Order นี้</h3><div class="pd-stats" id="pdStats"></div></div>'
+      + '<div class="pd-card"><h3 id="pdStatT">สถานะ Order นี้</h3><div class="pd-stats" id="pdStats"></div></div>'
       + '<div class="pd-card"><div class="pd-row" style="margin-bottom:6px"><h3 style="margin:0">ไม้ที่ต้องปิดผิว — ต้องใช้ / เปิดไปแล้ว</h3><span class="pd-sp"></span>'
       +   '<label class="pd-note"><input type="checkbox" data-f="left"> เฉพาะที่ยังเหลือ</label>'
       +   '<input class="pd-in" data-f="iq" placeholder="ค้นรหัส / ชื่อ" style="width:170px"></div>'
       +   '<div class="pd-scroll"><table class="pd-tbl"><thead><tr><th>รหัสไม้</th><th>ชื่อ</th><th>BOM (ต่อ 1 แผ่น)</th><th class="n">ต้องใช้</th><th class="n">เปิดใบแล้ว</th><th class="n">เหลือ</th></tr></thead><tbody id="pdItems"></tbody></table></div></div>'
-      + '<div class="pd-card"><div class="pd-row" style="margin-bottom:6px"><h3 style="margin:0">📚 ประวัติเอกสาร <span id="pdHistN" class="pd-note"></span></h3><span class="pd-sp"></span>'
-      +   '<select class="pd-in" data-f="scope"><option value="order">เฉพาะ Order นี้</option><option value="all">ทุก Order</option></select>'
+      + '<div class="pd-card"><div class="pd-row" style="margin-bottom:6px"><h3 style="margin:0">📚 ประวัติเอกสาร <span id="pdHistN" class="pd-note"></span></h3>'
+      +   '<span class="pd-seg" id="pdScope" role="tablist"><button type="button" role="tab" data-act="scope" data-scope="order">📄 Order นี้</button><button type="button" role="tab" data-act="scope" data-scope="all">📚 หน้ารวม · ทุก Order</button></span><span class="pd-sp"></span>'   /* v138: แท็บแทน dropdown */
       +   '<select class="pd-in" data-f="status"><option value="all">ทุกสถานะ</option><option value="open">ใช้งาน</option><option value="cancel">ยกเลิก</option></select>'
       +   '<select class="pd-in" data-f="month" id="pdMonth"><option value="">ทุกเดือน</option></select>'
-      +   '<input class="pd-in" data-f="q" placeholder="ค้นเลขที่ / LOT / Order / รหัส" style="width:210px">'
+      +   '<input class="pd-in" data-f="q" placeholder="ค้นเลขที่ / LOT / Order / Item ID / รหัส" style="width:210px">'
       +   '<button type="button" class="pd-btn sm" data-act="histXlsx">⬇ Excel ประวัติ</button></div>'
       +   '<div class="pd-scroll" style="max-height:460px"><table class="pd-tbl"><thead><tr><th>เลขที่</th><th>LOT</th><th>Order</th><th>วันที่</th><th class="n">ไม้</th><th>สถานะ</th><th></th></tr></thead><tbody id="pdHist"></tbody></table></div></div>';
-    ['scope', 'status', 'q', 'iq'].forEach(function(k){ var el = c.querySelector('[data-f="' + k + '"]'); if(el) el.value = FL[k]; });
+    ['status', 'q', 'iq'].forEach(function(k){ var el = c.querySelector('[data-f="' + k + '"]'); if(el) el.value = FL[k]; });
     var lf = c.querySelector('[data-f="left"]'); if(lf) lf.checked = FL.left;
   }
-  var oid = curOid(), nd = oid ? need() : { items:[], lam:[] }, op = oid ? openedOf(oid) : { lm:{}, rq:{}, pr:{} };
+  var X = lmCtx(), oid = X.oid, nd = X.nd, op = X.op, mi = X.mi, mb = X.mb;
+  CTX_MI = mi;
   lastOid = oid; lastSig = sigNeed(nd);
-  document.getElementById('pdOrd').textContent = oid ? ('· Order ' + oid) : '';
-  var warn = '';
+  var ord = document.getElementById('pdOrd');
+  if(mi) ord.innerHTML = '· <span class="pd-chip mu">รวม ' + mi.oids.length + ' Order</span> ' + esc(mi.oids.slice(0, 3).join(' + ') + (mi.oids.length > 3 ? ' …' : ''));
+  else ord.textContent = oid ? ('· Order ' + oid) : '';
+  var lotTy = (!mb && oid && !nd.lam.length) ? lotTypes(oid) : [];   /* v138: Lot ที่ปันไม้เข้า Type แล้ว (ไม่มีไม้ที่ตัวเอง) */
+  var warn = '', info = '';
   if(!DC.ok) warn = DC.err ? ('อ่านประวัติเอกสารไม่ได้: ' + DC.err) : 'กำลังอ่านประวัติเอกสาร…';
-  if(!oid) warn = 'เลือก Order ก่อน (ประวัติของทุก Order ดูได้ด้านล่าง — เลือก "ทุก Order")';
-  else if(mbOn()) warn = 'กำลังอยู่ในโหมดรวมหลาย Order — ปิดโหมดรวมก่อน (เอกสารเปิดทีละ Order)';
+  if(mb){   /* v138: โหมดรวม → ใบปิดผิวใบเดียวรวมทุก Order */
+    if(!mi) warn = LOTGO ? 'กำลังรวม BOM ' + LOTGO.oids.length + ' Order …' : 'โหมดรวมหลาย Order — เลือก Order ในแถบซ้าย แล้วกด ▶ รวม BOM ก่อน (ได้ใบปิดผิวใบเดียวรวมไม้ทุก Order)';
+    else if(!mi.wood.length) warn = 'Order ที่รวมยังไม่มีไม้ที่ต้องปิดผิวใน BOM Fitting — ส่งไม้จากใบสั่งตัดเข้า BOM Fitting ก่อน';
+    if(mi){
+      var noW = mi.oids.filter(function(o){ return mi.wood.indexOf(o) < 0; });
+      if(mi.wood.length) info += '<div class="pd-info">โหมดรวม <b>' + mi.oids.length + ' Order</b> — ออก<b>ใบปิดผิวใบเดียว</b>รวมไม้ทุก Order ได้ · ไม้รหัสเดียวกันรวมยอด ใต้ไม้แต่ละรหัสบอกว่าเป็นของ Item ไหนกี่แผ่น · เลขรัน LM ต่อจากเดิม · ทุก Order ในใบเห็นใบนี้ในประวัติ'
+        + (noW.length ? '<br>ไม่มีไม้ปิดผิว (ไม่อยู่ในใบ): ' + esc(noW.join(', ')) : '') + '</div>';
+      mi.oids.forEach(function(o){
+        var ty = lotTypes(o), miss = ty.filter(function(x){ return mi.oids.indexOf(x) < 0; });
+        if(ty.length && miss.length) info += '<div class="pd-warn">⚠ <b>' + esc(o) + '</b> เป็น Lot ที่ปันไม้เข้า Type แล้ว — ไม้อยู่ที่ Order ของ Type (' + esc(ty.join(' · ')) + ')'
+          + '<button type="button" class="pd-btn sm" data-act="lotSwap" data-oid="' + esc(o) + '"' + (LOTGO ? ' disabled' : '') + '>🔁 ใช้ Order ของ Type แทน</button></div>';
+      });
+    }
+  }
+  else if(!oid) warn = 'เลือก Order ก่อน (ประวัติของทุก Order ดูได้ด้านล่าง — แท็บ "หน้ารวม")';
+  else if(lotTy.length) info = '<div class="pd-info lot">Lot นี้ปันยอดไม้เข้าแต่ละ Type แล้ว (' + esc(lotTy.join(' · ')) + ') — ไม้อยู่ที่ Order ของแต่ละ Type · กดปุ่มด้านล่าง = เลือก ' + lotTy.length + ' Order ให้ในโหมดรวม แล้วเปิดใบปิดผิวใบเดียวของทั้ง Lot</div>';
   else if(!nd.lam.length) warn = 'Order นี้ยังไม่มีไม้ที่ต้องปิดผิวใน BOM Fitting — ส่งไม้จากใบสั่งตัดเข้า BOM Fitting ก่อน';
-  document.getElementById('pdWarn').innerHTML = warn ? '<div class="pd-warn">' + esc(warn) + '</div>' : '';
-  var can = !!(oid && !mbOn() && nd.lam.length && DC.ok);
-  Array.prototype.forEach.call(c.querySelectorAll('[data-act="new"]'), function(b){ b.disabled = !can; });
-  renderStatsLm(oid, nd, op);
+  document.getElementById('pdWarn').innerHTML = (warn ? '<div class="pd-warn">' + esc(warn) + '</div>' : '') + info;
+  var can = mi ? !!(mi.wood.length && DC.ok) : !!(oid && !mb && nd.lam.length && DC.ok);
+  Array.prototype.forEach.call(c.querySelectorAll('[data-act="new"]'), function(b){
+    b.disabled = !can;
+    b.textContent = (mi && mi.wood.length > 1) ? '🧱 เปิดรายการไม้ปิดผิว (รวม ' + mi.wood.length + ' Order)' : (mi && mi.wood.length === 1) ? '🧱 เปิดรายการไม้ปิดผิว (' + mi.wood[0] + ')' : '🧱 เปิดรายการไม้ปิดผิว';
+    b.style.display = lotTy.length ? 'none' : '';
+  });
+  var la = c.querySelector('[data-act="lotAll"]');
+  if(la){ la.style.display = lotTy.length ? '' : 'none'; la.disabled = !DC.ok || !!LOTGO; la.textContent = '🧱 ใบปิดผิวของทั้ง Lot (' + lotTy.length + ' Item)'; }
+  var stt = document.getElementById('pdStatT');
+  if(stt) stt.textContent = mi ? 'สถานะ ' + mi.oids.length + ' Order (รวม)' : 'สถานะ Order นี้';
+  renderStatsLm(oid, nd, op, mi);
   renderItemsLm(nd, op);
-  renderHistLm(oid);
+  renderHistLm(oid, mi);
   var tb = document.getElementById('pdTbStat');
-  if(tb){ var mine = oid && DC.map[oid] ? DC.map[oid].docs.filter(function(x){ return x.type === 'lm' && x.status !== 'cancel'; }) : [];
-    tb.innerHTML = 'รายการไม้ปิดผิว Order นี้ <b>' + mine.length + '</b> ใบ'; }
+  if(tb){ var mine = lmDocsOf(mi ? mi.oids : (oid ? [oid] : []));
+    tb.innerHTML = (mi ? 'รายการไม้ปิดผิวของ ' + mi.oids.length + ' Order ที่รวม' : 'รายการไม้ปิดผิว Order นี้') + ' <b>' + mine.length + '</b> ใบ'; }
+  var lo = mi ? mi.oids : ((!mb && oid && !nd.lam.length) ? [oid] : null);   /* v138: หา Lot ที่ปันไม้แล้ว (อ่านไม่บ่อยกว่านาทีละครั้ง) → เจอ = วาดใหม่ */
+  if(lo && DC.ok){ var s0 = lotSig(LOTC.map, lo); lotScan(false).then(function(m){ if(lotSig(m, lo) !== s0) refresh(); }); }
 }
-function renderStatsLm(oid, nd, op){
+function renderStatsLm(oid, nd, op, mi){
   var el = document.getElementById('pdStats');
   if(!el) return;
-  if(!oid){ el.innerHTML = '<div class="pd-empty">ยังไม่ได้เลือก Order</div>'; return; }
+  if(!oid && !mi){ el.innerHTML = '<div class="pd-empty">ยังไม่ได้เลือก Order</div>'; return; }
   var has = nd.lam.filter(lamHas), nob = nd.lam.filter(function(L){ return !lamHas(L); });
   var sheets = r4(has.reduce(function(a, L){ return a + (+L.sheets || 0); }, 0));
   var left = has.filter(function(L){ return L.sheets - (op.lm[L.code.toUpperCase()] || 0) > 1e-9; }).length;
-  var docs = DC.map[oid] ? DC.map[oid].docs.filter(function(x){ return x.type === 'lm' && x.status !== 'cancel'; }) : [];
+  var docs = lmDocsOf(mi ? mi.oids : [oid]);   /* v138: + ใบรวมที่มี Order นี้ · โหมดรวม = ใบของทุก Order ที่รวม */
   var last = docs.slice().sort(function(a, b){ return (b.at || 0) - (a.at || 0); })[0];
   el.innerHTML = '<div class="pd-stat"><div class="k">🧱 ไม้ที่ต้องปิดผิว (มี BOM)</div><div class="v">' + has.length + ' รหัส</div><div class="s">รวม ' + num(sheets) + ' แผ่น · ยังไม่ได้เปิดใบ ' + left + ' รหัส</div></div>'
     + '<div class="pd-stat"><div class="k">🧾 รายการไม้ปิดผิวที่เปิดแล้ว</div><div class="v">' + docs.length + ' ใบ</div><div class="s">' + (last ? 'ล่าสุด ' + esc(last.no) + ' · ' + esc(dmyhm(last.at)) : 'ยังไม่มี') + '</div></div>'
@@ -25114,7 +25349,7 @@ function renderItemsLm(nd, op){
     var cu = L.code.toUpperCase(), done = op.lm[cu] || 0;
     return { code:L.code, name:L.name, kind:L.kind, has:lamHas(L), need:L.sheets, lm:done, left:r4(L.sheets - done), bom:lamHas(L) ? bomText(L.code) : '' };
   }).filter(function(r){ return (!q || r.code.toUpperCase().indexOf(q) >= 0 || String(r.name).toUpperCase().indexOf(q) >= 0) && (!FL.left || r.left > 1e-9); });
-  if(!rows.length){ tb.innerHTML = '<tr><td colspan="6" class="pd-empty">' + (curOid() ? 'ไม่มีไม้ที่ต้องปิดผิว' : 'เลือก Order ก่อน') + '</td></tr>'; return; }
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="6" class="pd-empty">' + ((curOid() || CTX_MI) ? 'ไม่มีไม้ที่ต้องปิดผิว' : 'เลือก Order ก่อน') + '</td></tr>'; return; }
   tb.innerHTML = rows.slice(0, 600).map(function(r){
     var chip = r.has ? '' : ' <span class="pd-chip wait">' + (r.kind === 'keep' ? 'ตั้งไว้ไม่แตก BOM' : 'ไม่มี BOM') + '</span>';
     return '<tr' + (r.left <= 1e-9 ? ' class="off"' : '') + '><td><code>' + esc(r.code) + '</code>' + chip + '</td><td>' + esc(r.name) + '</td>'
@@ -25122,22 +25357,24 @@ function renderItemsLm(nd, op){
       + '<td class="n">' + num(r.need) + ' <span class="pd-note">แผ่น</span></td><td class="n">' + num(r.lm) + '</td><td class="n"><b>' + num(Math.max(0, r.left)) + '</b></td></tr>';
   }).join('');
 }
-function histRowsLm(oid){
-  var q = norm(FL.q).toUpperCase();
+function histScope(oid, mi){ return (mi || mbOn()) ? (FL.mscope || 'all') : (oid ? FL.scope : 'all'); }   /* v138: ยังไม่เลือก Order / โหมดรวม → หน้ารวม (โหมดรวมจำแท็บแยกจาก Order เดียว) */
+function histRowsLm(oid, mi, sc){
+  var q = norm(FL.q).toUpperCase(), so = (sc || histScope(oid, mi)) === 'order' ? (mi ? mi.oids : [oid]) : null;
   return allDocs().filter(function(x){
     if(x.type !== 'lm') return false;
-    if(FL.scope === 'order' && x.oid !== oid) return false;
+    if(so && !so.some(function(o){ return x.oid === o || inMulti(x, o); })) return false;   /* v138: ใบรวมขึ้นในประวัติของทุก Order ในใบ */
     if(FL.status === 'cancel' && x.status !== 'cancel') return false;
     if(FL.status === 'open' && x.status === 'cancel') return false;
     if(FL.month){ var d = new Date(x.at || 0), mk = d.getFullYear() + '-' + pad(d.getMonth() + 1, 2); if(mk !== FL.month) return false; }
     if(q){
-      var hay = [x.no, x.ax, x.oid, (x.head && x.head.lot) || ''].concat(x.lines.map(function(l){ return l.code; })).join(' ').toUpperCase();
+      var hd = x.head || {}, hay = [x.no, x.ax, x.oid, hd.lot || '', hd.itemId || ''].concat(x.lines.map(function(l){ return l.code; }))
+        .concat(docItems(x).map(function(it){ return it.id; })).concat(isMulti(x) ? x.multi.oids : []).join(' ').toUpperCase();   /* v138: + Item ID · Order ในใบรวม */
       if(hay.indexOf(q) < 0) return false;
     }
     return true;
   }).sort(function(a, b){ return (b.at || 0) - (a.at || 0); });
 }
-function renderHistLm(oid){
+function renderHistLm(oid, mi){
   var tb = document.getElementById('pdHist'), ms = document.getElementById('pdMonth');
   if(!tb) return;
   var months = {};
@@ -25145,14 +25382,23 @@ function renderHistLm(oid){
   if(FL.month && !months[FL.month]) FL.month = '';   /* เดือนที่เลือกไว้ไม่มีรายการไม้ปิดผิว (เพิ่งสลับโหมด / ลบใบทดสอบ) → ทุกเดือน */
   var mk = Object.keys(months).sort().reverse(), mh = '<option value="">ทุกเดือน</option>' + mk.map(function(k){ return '<option value="' + k + '"' + (FL.month === k ? ' selected' : '') + '>' + k.slice(5) + '/' + k.slice(0, 4) + '</option>'; }).join('');
   if(ms && ms.__h !== mh){ ms.innerHTML = mh; ms.__h = mh; }
-  var rows = histRowsLm(oid);
+  var sc = histScope(oid, mi), rows = histRowsLm(oid, mi, sc), has = !!(oid || mi);
+  var nO = has ? (sc === 'order' ? rows.length : histRowsLm(oid, mi, 'order').length) : 0, nA = sc === 'all' ? rows.length : histRowsLm(oid, mi, 'all').length;
+  var seg = document.getElementById('pdScope');   /* v138: แท็บ Order นี้ / หน้ารวม */
+  if(seg) Array.prototype.forEach.call(seg.querySelectorAll('button'), function(b){
+    var s = b.getAttribute('data-scope');
+    b.classList.toggle('on', s === sc); b.setAttribute('aria-selected', s === sc ? 'true' : 'false');
+    if(s === 'order'){ b.disabled = !has; b.textContent = (mi ? '📄 Order ที่รวม' : '📄 Order นี้') + (has ? ' (' + nO + ')' : ''); }
+    else b.textContent = '📚 หน้ารวม · ทุก Order (' + nA + ')';
+  });
   var nCx = rows.filter(function(x){ return x.status === 'cancel'; }).length;   /* v131 */
-  document.getElementById('pdHistN').textContent = '· ' + rows.length + ' ใบ' + (nCx ? ' · ยกเลิกแล้ว ' + nCx + ' ใบ = แถวสีจาง (ลบได้ที่ปุ่ม 🗑 ลบ)' : '');
-  if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="pd-empty">' + (FL.scope === 'order' && !oid ? 'เลือก Order ก่อน หรือเลือก "ทุก Order"' : 'ยังไม่มีรายการไม้ปิดผิว') + '</td></tr>'; return; }
+  document.getElementById('pdHistN').textContent = (sc === 'all' ? '· หน้ารวม ' + rows.length + ' ใบ (เลขรันต่อกันทุก Order)' : '· ' + rows.length + ' ใบ') + (nCx ? ' · ยกเลิกแล้ว ' + nCx + ' ใบ = แถวสีจาง (ลบได้ที่ปุ่ม 🗑 ลบ)' : '');
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="pd-empty">ยังไม่มีรายการไม้ปิดผิว</td></tr>'; return; }
   tb.innerHTML = rows.slice(0, 300).map(function(x){
-    var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0)), o = ' data-oid="' + esc(x.oid) + '"', cancel = x.status === 'cancel';
+    var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0)), o = ' data-oid="' + esc(x.oid) + '"', cancel = x.status === 'cancel', mu = isMulti(x);
     return '<tr' + (cancel ? ' class="off"' : '') + ' data-no="' + esc(x.no) + '"' + o + '><td><b>' + esc(x.no) + '</b></td><td><code>' + esc((x.head && x.head.lot) || '') + '</code></td>'
-      + '<td><code>' + esc(x.oid) + '</code></td><td>' + esc(dmyhm(x.at)) + (x.who ? '<div class="pd-note">' + esc(x.who) + '</div>' : '') + '</td>'
+      + '<td>' + (mu ? '<span class="pd-chip mu" title="' + esc(x.multi.oids.join(', ')) + '">รวม ' + x.multi.oids.length + ' Order</span><div class="pd-note" style="white-space:normal;max-width:300px">' + esc(idsBrief(x, 4)) + '</div>' : '<code>' + esc(x.oid) + '</code>') + '</td>'
+      + '<td>' + esc(dmyhm(x.at)) + (x.who ? '<div class="pd-note">' + esc(x.who) + '</div>' : '') + '</td>'
       + '<td class="n">' + x.lines.length + ' <span class="pd-note">(' + num(tq) + ' แผ่น)</span></td>'
       + '<td>' + (cancel ? '<span class="pd-chip cancel">ยกเลิก</span>' : '<span class="pd-chip ok">ใช้งาน</span>') + (+x.printed > 0 ? '<div class="pd-note">พิมพ์ ' + (+x.printed) + ' ครั้ง</div>' : '') + '</td>'
       + '<td style="white-space:nowrap"><button type="button" class="pd-btn sm" data-act="view" data-no="' + esc(x.no) + '"' + o + '>👁 ดู/พิมพ์</button> '
@@ -25160,7 +25406,7 @@ function renderHistLm(oid){
       + '</td></tr>';
   }).join('') + (rows.length > 300 ? '<tr><td colspan="7" class="pd-note">… อีก ' + (rows.length - 300) + ' ใบ — กรอง/ค้นเพื่อหา</td></tr>' : '');
 }
-function sigNeed(nd){ return nd.items.length + ':' + nd.items.reduce(function(a, it){ return a + it.qty; }, 0) + ':' + nd.lam.length; }
+function sigNeed(nd){ return nd.items.length + ':' + nd.items.reduce(function(a, it){ return a + it.qty; }, 0) + ':' + nd.lam.length + (nd.mb ? ':' + nd.mb.join(',') : '') + (mbOn() ? ':M' + (mbMerged() ? 1 : 0) : ''); }   /* v138: + Order ที่รวม · สถานะโหมดรวม (รวมเสร็จแล้วหรือยัง) */
 function renderStats(oid, nd, op){
   var el = document.getElementById('pdStats');
   if(!oid){ el.innerHTML = '<div class="pd-empty">ยังไม่ได้เลือก Order</div>'; return; }
@@ -25250,6 +25496,9 @@ function tabClick(ev){
   else if(act === 'del') openDelete(no, oid);   /* v131 */
   else if(act === 'histXlsx'){ if(lmLayout()) histXlsxLm(); else histXlsx(); }
   else if(act === 'resetSeq') openResetSeq();
+  else if(act === 'scope'){ var sv = b.getAttribute('data-scope') === 'all' ? 'all' : 'order'; if(CTX_MI || mbOn()) FL.mscope = sv; else FL.scope = sv; renderHistLm(curOid(), CTX_MI); }   /* v138 */
+  else if(act === 'lotAll') lotAll(curOid());
+  else if(act === 'lotSwap') lotSwap(oid);
 }
 function tabInput(ev){
   var t = ev.target, f = t && t.getAttribute && t.getAttribute('data-f');
@@ -25257,8 +25506,11 @@ function tabInput(ev){
   FL[f] = (t.type === 'checkbox') ? !!t.checked : t.value;
   var oid = curOid();
   var lmOnly = lmLayout();   /* v129: ตามหน้าตาที่วาดอยู่ (ตอนเพิ่งสลับโหมดในตั้งค่า) */
-  if(f === 'iq' || f === 'left') (lmOnly ? renderItemsLm : renderItems)(oid ? need() : { items:[], lam:[] }, oid ? openedOf(oid) : { lm:{}, rq:{}, pr:{} });
-  else (lmOnly ? renderHistLm : renderHist)(oid);
+  if(f === 'iq' || f === 'left'){
+    if(lmOnly) renderItemsLm((oid || CTX_MI) ? need() : { items:[], lam:[] }, CTX_MI ? openedMulti(CTX_MI.oids) : (oid ? openedOf(oid) : { lm:{}, rq:{}, pr:{} }));   /* v138: โหมดรวม = ยอดของทุก Order ที่รวม */
+    else renderItems(oid ? need() : { items:[], lam:[] }, oid ? openedOf(oid) : { lm:{}, rq:{}, pr:{} });
+  }
+  else if(lmOnly) renderHistLm(oid, CTX_MI); else renderHist(oid);
 }
 
 /* ══ หน้าต่างกลาง (ฟอร์ม · พิมพ์ · ตั้งค่า · เลข AX · ยกเลิก) ═══════════════════════════ */
@@ -25291,35 +25543,72 @@ function refreshOrder(oid){
 }
 var formSeq = 0;
 function openForm(type, editNo, editOid){
-  var oid = curOid(), edit = editNo ? findDoc(editNo, editOid) : null;
+  var oid = curOid(), edit = editNo ? findDoc(editNo, editOid) : null, plan = null;
   if(edit){ type = edit.type; oid = edit.oid; }
   if(!type || !T[type]) return;
   if(type !== 'lm' && !extraOn()){ alertBox('ใบเบิก / ใบ PR ซ่อนไว้ก่อน — เปิดกลับได้ที่ ⚙ ตั้งค่าเอกสาร (แสดงใบเบิก / ใบ PR)'); return; }
   if(!edit){
-    if(!oid){ alertBox('เลือก Order ก่อน'); return; }
-    if(mbOn()){ alertBox('ปิดโหมดรวมหลาย Order ก่อน — เอกสารเปิดทีละ Order'); return; }
+    if(mbOn() && type === 'lm' && !extraOn()){   /* v138: โหมดรวม BOM → ใบปิดผิวใบเดียวรวมทุก Order (ใบเบิก / PR ยังเปิดทีละ Order) */
+      plan = mbPlan();
+      if(plan.why){ alertBox(plan.why); return; }
+      oid = plan.oids[0];
+    } else {
+      if(!oid){ alertBox('เลือก Order ก่อน'); return; }
+      if(mbOn()){ alertBox('ปิดโหมดรวมหลาย Order ก่อน — เอกสารเปิดทีละ Order'); return; }
+    }
   }
-  var seq = ++formSeq;
-  refreshOrder(oid).then(function(){
+  var seq = ++formSeq, wide = !!(plan || isMulti(edit));
+  var pre = wide ? freshScan(null).then(function(){ DC.sig = ''; return loadAll(false); }) : refreshOrder(oid);   /* v138: ใบรวม → อ่านเอกสารล่าสุดของทุก Order */
+  pre.then(function(){
     if(seq !== formSeq) return;
     if(edit){ edit = findDoc(edit.no, oid) || edit; if(edit.status === 'cancel'){ alertBox('เอกสาร ' + edit.no + ' ถูกยกเลิกแล้ว'); return; } }
-    buildForm(type, oid, edit);
+    buildForm(type, oid, edit, plan);
     refresh();
   });
 }
-function buildForm(type, oid, edit){
+/* v138: โหมดรวม BOM ที่รวมแล้ว → Order ที่มีไม้ปิดผิว (เรียงตาม Item ID) + Item ID ของแต่ละ Order + Lot (ถ้าทุก Order เป็น Type ของ Lot เดียวกัน) */
+function mbPlan(){
+  if(!mbMerged()) return { why:'โหมดรวมหลาย Order: เลือก Order ในแถบซ้าย แล้วกด ▶ รวม BOM ก่อน' };
+  var nd = need(), mi = mbInfo(nd);
+  if(!mi.wood.length) return { why:'Order ที่รวมยังไม่มีไม้ที่ต้องปิดผิวใน BOM Fitting' };
+  return { oids:mi.wood.slice(), ids:mi.ids, all:mi.oids.slice(), lot:lotOfOids(mi.wood) };
+}
+function fmOpen(type, title, sub){   /* หน้าต่างฟอร์ม (v138: แยกออกมาใช้ร่วมกับฟอร์มใบรวม) */
+  var ov = modal('__pdocForm', type, title, sub,
+    '<div id="pdFormBody"></div>',
+    '<span id="pdFormNote" class="pd-note"></span><span class="pd-sp"></span><span id="pdFormMsg" class="pd-msg"></span>'
+    + '<button type="button" class="pd-btn" data-act="x">ยกเลิก</button>'
+    + '<button type="button" class="pd-btn" data-act="save">💾 บันทึก</button>'
+    + '<button type="button" class="pd-btn pri" data-act="savePrint">💾 บันทึก + พิมพ์</button>');
+  FM.el = ov;
+  ov.addEventListener('click', fmClick);
+  ov.addEventListener('input', fmInput);
+  ov.addEventListener('change', fmInput);
+  ov.addEventListener('keydown', function(ev){
+    if(ev.key === 'Escape'){ ev.stopPropagation(); fmClose(); }
+    else if(ev.key === 'Enter' && !ev.shiftKey && ev.target && ev.target.id === 'pdIidAdd'){ ev.preventDefault(); iidAdd(); }   /* v138: Enter = เพิ่ม · Shift+Enter = ขึ้นบรรทัด */
+  });
+  return ov;
+}
+function buildForm(type, oid, edit, plan){
+  if(type === 'lm' && ((plan && plan.oids.length > 1) || isMulti(edit))) return buildMulti(oid, edit, plan);   /* v138: ใบรวมหลาย Order */
   var nd = edit ? { items:[], lam:[] } : need(), op = openedOf(oid, edit ? edit.no : null), ch = commonHead(oid), rec = DC.map[oid], last = (rec && rec.head && rec.head[type]) || {};
   FM = { type:type, oid:oid, edit:edit, head:{}, lines:[], secs:[], pair:null, msg:'', busy:false, arm:0,
          known:(DC.map[oid] ? DC.map[oid].docs.map(function(x){ return x.no + '@' + (+x.at || 0); }) : []) };   /* v131: เลขที่@เวลาสร้าง */
   var today = isoToday();
   if(type === 'lm'){   /* v129: รายการไม้ปิดผิว (ส่วนที่ 1 ไม้ + ส่วนที่ 2 แตก BOM) · ไม่มีใบเบิกคู่ */
     var lid = (oid === curOid()) ? itemIdOf(oid) : '';   /* ItemID อ่านได้เฉพาะ Order ที่เปิดอยู่ (แก้ใบของ Order อื่นจากประวัติ "ทุก Order" → ไม่เดา) */
+    var pid = plan ? (plan.ids[oid] || []) : null;   /* v138: โหมดรวมแต่มีไม้แค่ Order เดียว → ใบ Order เดียว · ItemID จากแถวที่รวม */
+    if(pid) lid = pid.length === 1 ? pid[0] : oid;
     FM.head = edit ? clone(edit.head) : { fmt:2, lot:lotOf(lid, oid), lotAuto:true, itemId:lid, project:ch.project, due:last.due || '', endDate:last.endDate || '', prodPool:last.prodPool || SET.prodPool, pdPool:last.pdPool || SET.lmPool, note:'' };
     if(edit){ if(lmNew(edit) && FM.head.itemId == null && lid) FM.head.itemId = lid; delete FM.head.lotAuto; }   /* ใบก่อน v129 แก้แล้วยังเป็นแบบเดิม (Master Plan · PD / กำหนดเสร็จต่อแถวอยู่ครบ) */
+    if(!edit){ var rids = pid || ((oid === curOid() && !mbOn()) ? rawIds() : []); if(rids.length > 1) FM.head.itemIds = rids.slice(); }   /* v138: Order เดียวที่มีหลาย Item ID (Lot ที่ไม่ได้ปันไม้) → แถบ "Item ในล็อตนี้" */
+    FM.iidHad = !!(FM.head.itemIds && FM.head.itemIds.length > 1);
     if(edit) FM.lines = edit.lines.map(function(l){ return { on:true, code:l.code, name:l.name, need:null, opened:null, qty:l.qty, kind:l.kind || 'bom', has:!l.kind || l.kind === 'bom', unit:l.unit || 'แผ่น', prevBom:l.bom || null, pd:l.pd || '', due:l.due || '', pool:(l.pool && l.pool !== edit.head.pdPool) ? l.pool : '' }; });
-    else FM.lines = nd.lam.map(function(L){   /* v131: ติ๊กให้ทุกไม้ (ไม่เอาตัวไหนติ๊กออก) · จำนวน = ยอดเต็มใน BOM Fitting · เคยเปิดใบไปแล้ว → แถวเตือน */
+    else FM.lines = (pid ? nd.lam.filter(function(L){ return !!(L.by && (oid in L.by)); }) : nd.lam).map(function(L){   /* v131: ติ๊กให้ทุกไม้ (ไม่เอาตัวไหนติ๊กออก) · จำนวน = ยอดเต็มใน BOM Fitting · เคยเปิดใบไปแล้ว → แถวเตือน · v138: โหมดรวม (มีไม้ Order เดียว) → เฉพาะแถวของ Order นั้น */
       var cu = L.code.toUpperCase(), done = op.lm[cu] || 0, sh = +L.sheets > 0 ? r4(+L.sheets) : 0;   /* ยอดเป็น 0 (Qty ใน BOM Fitting ว่าง) → ไม่ติ๊ก */
-      return { on:sh > 1e-9, code:L.code, name:L.name, need:L.sheets, opened:done, openedIn:(op.nos && op.nos.lm[cu]) || [], qty:sh, kind:L.kind, has:lamHas(L), unit:'แผ่น', pool:'' };
+      if(pid) sh = r4(+L.by[oid] || 0);
+      return { on:sh > 1e-9, code:L.code, name:L.name, need:pid ? sh : L.sheets, opened:done, openedIn:(op.nos && op.nos.lm[cu]) || [], qty:sh, kind:L.kind, has:lamHas(L), unit:'แผ่น', pool:'' };
     });
   } else if(type === 'rq'){
     FM.head = edit ? clone(edit.head) : { desc:last.desc || ch.project, projectId:ch.projectId, lot:ch.lot, projectName:ch.projectName, building:ch.building, floor:ch.floor, room:ch.room, category:ch.category, createDate:today, shipDate:last.shipDate || '', note:'' };
@@ -25346,19 +25635,38 @@ function buildForm(type, oid, edit){
     });
   }
   FM.head.who = (edit && edit.who) || whoGet();
-  var ov = modal('__pdocForm', type, (edit ? '✎ แก้ ' : T[type].icon + ' เปิด') + T[type].long + (edit ? ' · ' + esc(edit.no) : ''),
-    'Order ' + esc(oid) + (edit ? ' · แก้แล้วเลขที่เดิม' : (type === 'lm' ? ' · ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting (ตัวไหนไม่สั่งปิดผิวให้ติ๊กออก)' : ' · ยอดตั้งต้น = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว (ใบที่ไม่ยกเลิก)')),
-    '<div id="pdFormBody"></div>',
-    '<span id="pdFormNote" class="pd-note"></span><span class="pd-sp"></span><span id="pdFormMsg" class="pd-msg"></span>'
-    + '<button type="button" class="pd-btn" data-act="x">ยกเลิก</button>'
-    + '<button type="button" class="pd-btn" data-act="save">💾 บันทึก</button>'
-    + '<button type="button" class="pd-btn pri" data-act="savePrint">💾 บันทึก + พิมพ์</button>');
-  FM.el = ov;
-  ov.addEventListener('click', fmClick);
-  ov.addEventListener('input', fmInput);
-  ov.addEventListener('change', fmInput);
-  ov.addEventListener('keydown', function(ev){ if(ev.key === 'Escape'){ ev.stopPropagation(); fmClose(); } });
+  fmOpen(type, (edit ? '✎ แก้ ' : T[type].icon + ' เปิด') + T[type].long + (edit ? ' · ' + esc(edit.no) : ''),
+    'Order ' + esc(oid) + (edit ? ' · แก้แล้วเลขที่เดิม' : (type === 'lm' ? ' · ติ๊กไว้ให้ทุกไม้ · จำนวนตั้งต้น = ยอดเต็มใน BOM Fitting (ตัวไหนไม่สั่งปิดผิวให้ติ๊กออก)' : ' · ยอดตั้งต้น = ยอดใน BOM Fitting ลบยอดที่เปิดไปแล้ว (ใบที่ไม่ยกเลิก)')));
   if(type === 'lm' && FM.pair) pairCalc();
+  fmRender();
+}
+/* v138: ฟอร์มใบรวมหลาย Order — ไม้รหัสเดียวกันรวมยอดทุก Order · byq = แผ่นของแต่ละ Order (ลำดับตาม multi.oids) · จำนวนรวมแก้ที่ ✎ แยกจำนวน */
+function buildMulti(oid, edit, plan){
+  var M = edit ? clone(edit.multi) : { oids:plan.oids.slice(), items:[] };
+  if(!edit && plan.lot) M.lot = plan.lot;
+  var src = edit ? (M.items || []) : plan.oids.map(function(o){ return { oid:o, ids:(plan.ids[o] || [o]).slice() }; });
+  M.items = M.oids.map(function(o){ var it = src.filter(function(y){ return y && y.oid === o; })[0]; return { oid:o, ids:itIds(it || { oid:o }).slice() }; });
+  var ch = commonHead(oid), rec = DC.map[oid], last = (rec && rec.head && rec.head.lm) || {}, known = [];
+  M.oids.forEach(function(o){ docsOf(o).forEach(function(x){ var k = x.no + '@' + (+x.at || 0); if(known.indexOf(k) < 0) known.push(k); }); });
+  FM = { type:'lm', oid:oid, edit:edit, head:{}, lines:[], secs:[], pair:null, msg:'', busy:false, arm:0, known:known, multi:M };
+  if(edit){
+    FM.head = clone(edit.head); delete FM.head.lotAuto;
+    FM.lines = edit.lines.map(function(l){ return { on:true, code:l.code, name:l.name, need:null, opened:null, qty:l.qty, kind:l.kind || 'bom', has:!l.kind || l.kind === 'bom', unit:l.unit || 'แผ่น', prevBom:l.bom || null, pd:l.pd || '', due:l.due || '', pool:(l.pool && l.pool !== edit.head.pdPool) ? l.pool : '',
+      byq:M.oids.map(function(o){ return r4(+(l.by && l.by[o]) || 0); }) }; });
+  } else {
+    var nd = need(), op = openedMulti(M.oids), real = M.items.filter(function(it){ return itIds(it)[0] !== it.oid; });   /* Item ID จริงมาก่อน (Order ที่ไม่มี Item Id Set ถูกเติมด้วยชื่อ Order) */
+    var first = (real.length ? real : M.items).map(function(it){ return itIds(it)[0]; }).sort(natCmp)[0] || oid, lid = mcName(M.lot || first);
+    FM.lidAuto = lid;
+    FM.head = { fmt:2, lot:lotOf(lid, oid), lotAuto:true, itemId:lid, project:ch.project, due:last.due || '', endDate:last.endDate || '', prodPool:last.prodPool || SET.prodPool, pdPool:last.pdPool || SET.lmPool, note:'' };
+    FM.lines = nd.lam.filter(function(L){ return M.oids.some(function(o){ return L.by && +L.by[o] > 1e-9; }); }).map(function(L){
+      var cu = L.code.toUpperCase(), byq = M.oids.map(function(o){ return r4(+(L.by && L.by[o]) || 0); }), sh = r4(byq.reduce(function(a, q){ return a + q; }, 0));
+      return { on:sh > 1e-9, code:L.code, name:L.name, need:sh, opened:op.lm[cu] || 0, openedIn:(op.nos && op.nos.lm[cu]) || [], qty:sh, kind:L.kind, has:lamHas(L), unit:'แผ่น', pool:'', byq:byq };
+    });
+  }
+  FM.head.who = (edit && edit.who) || whoGet();
+  var n = M.oids.length, list = M.oids.slice(0, 3).join(', ') + (n > 4 ? ' … ' + M.oids[n - 1] : (n === 4 ? ', ' + M.oids[3] : ''));
+  fmOpen('lm', (edit ? '✎ แก้ ' : T.lm.icon + ' เปิด') + T.lm.long + (edit ? ' · ' + esc(edit.no) : '') + ' <span class="pd-chip mu">รวม ' + n + ' Order</span>',
+    'รวม ' + n + ' Order: ' + esc(list) + (edit ? ' · แก้แล้วเลขที่เดิม · มีผลกับทุก Order ในใบ' : ' · จำนวนตั้งต้น = ยอดรวมทุก Order (แยกจำนวนราย Item ได้)'));
   fmRender();
 }
 function fmClose(){
@@ -25376,12 +25684,65 @@ function inp(path, val, opts){
 }
 function lab(text, path, val, opts){ opts = opts || {}; return '<label' + (opts.wide ? ' class="wide"' : '') + '>' + text + inp(path, val, opts) + '</label>'; }
 function allOn(arr){ var s = arr.filter(function(l){ return +l.qty > 0 || l.added; }); return s.length > 0 && s.every(function(l){ return l.on; }); }
+/* v138: Item ID ทั้งหมดในข้อมูลของ Order ที่เปิดอยู่ (แถวดิบ ก่อนช่อง Item Id Set ทับ) — Lot นำเข้าที่มีหลาย Type */
+function rawIds(){
+  var rows = [], out = [];
+  try{ rows = (typeof window.__iidsRawRows === 'function') ? (window.__iidsRawRows() || []) : (window.buildAXRows() || []); }catch(e){ rows = []; }
+  rows.forEach(function(r){ var v = norm(r && r['Item Id Set']); if(v && v !== '—' && v !== '-' && out.indexOf(v) < 0) out.push(v); });
+  return out.sort(natCmp);
+}
+function fmIds(){ return FM.multi ? [].concat.apply([], FM.multi.items.map(itIds)) : (Array.isArray(FM.head.itemIds) ? FM.head.itemIds : []); }
+function iidChips(ids){ var n = ids.length; return n ? '<code class="pd-iid">' + esc(ids[0]) + '</code>' + (n > 1 ? '<span class="pd-iidn">+' + (n - 1) + '</span>' : '') : '<span class="pd-note">—</span>'; }
+/* ItemID (ใช้ตั้ง LOT) + "Item ID ในล็อต" ซ้อนกัน — เฉพาะใบรวม / Order ที่มีหลาย Item ID · Order เดียว Item เดียว = ช่องเดิม */
+function iidCell(h){
+  var M = FM.multi, ids = fmIds();
+  if(!M && !FM.iidHad) return lab('ItemID (ใช้ตั้ง LOT)', 'head.itemId', h.itemId);
+  var hint = M ? ids.length + ' Item จาก ' + M.oids.length + ' Order' : ids.length + ' รายการ (กด ✎ ดู/แก้)';
+  return '<div class="pd-dates">' + lab('ItemID (ใช้ตั้ง LOT)', 'head.itemId', h.itemId)
+    + '<div class="pd-lab"><span>Item ID ในล็อต <span class="pd-hint">→ ' + esc(hint) + '</span></span><span class="pd-iids"><span class="pd-iidbox">' + iidChips(ids) + '</span>'
+    + '<button type="button" class="pd-btn sm" data-act="iids" title="ดูรายการ Item ID" aria-label="ดูรายการ Item ID">✎</button></span></div></div>';
+}
+function iidPanel(){
+  if(!FM.iidOpen) return '';
+  var M = FM.multi, ids = fmIds();
+  if(M) return '<div class="pd-ipan"><div class="pd-sech"><b>Item ID ในล็อตนี้ · ' + ids.length + ' Item จาก ' + M.oids.length + ' Order</b><span class="pd-note">ดึงจาก Order ที่รวม · แก้ Item ID ได้ (ใช้แสดงในใบ · หลายตัวคั่นด้วย ,) · จำนวนแผ่นราย Item แก้ที่ ✎ แยกจำนวน ใต้ไม้แต่ละรหัส</span><span class="pd-sp"></span>'
+    + '<button type="button" class="pd-btn sm" data-act="iidCopy">⧉ คัดลอก</button><button type="button" class="pd-btn sm" data-act="iids">ปิด ▲</button></div>'
+    + '<div class="pd-igrid">' + M.items.map(function(it, j){ return '<label class="pd-ichip" title="' + esc(it.oid) + '"><input class="pd-in" data-p="multi.items.' + j + '.text" value="' + esc(itIds(it).join(', ')) + '" aria-label="Item ID ของ ' + esc(it.oid) + '"><span class="pd-note">' + esc(shortOid(it.oid)) + '</span></label>'; }).join('') + '</div></div>';
+  return '<div class="pd-ipan"><div class="pd-sech"><b>Item ID ในล็อตนี้ · ' + ids.length + ' รายการ</b><span class="pd-note">ดึงจากข้อมูล Order อัตโนมัติ · ลบ × / เพิ่มเองได้ · ไม่เกี่ยวกับจำนวนไม้ (ไม้อยู่ที่ Lot)</span><span class="pd-sp"></span>'
+    + ((FM.oid === curOid() && !mbOn()) ? '<button type="button" class="pd-btn sm" data-act="iidPull">↻ ดึงจาก Order ใหม่</button>' : '')
+    + '<button type="button" class="pd-btn sm" data-act="iidCopy">⧉ คัดลอก</button><button type="button" class="pd-btn sm" data-act="iids">ปิด ▲</button></div>'
+    + '<div class="pd-igrid">' + ids.map(function(id, k){ return '<span class="pd-ichip"><code>' + esc(id) + '</code><button type="button" class="x" data-act="iidDel" data-i="' + k + '" aria-label="ลบ ' + esc(id) + '">×</button></span>'; }).join('') + '</div>'
+    + '<div class="pd-row" style="margin-top:8px"><textarea class="pd-in" id="pdIidAdd" rows="1" placeholder="เพิ่ม Item ID — วางหลายรายการได้ (คั่นด้วยขึ้นบรรทัด หรือ ,) · Enter = เพิ่ม" style="flex:1;min-width:200px;resize:vertical;font-family:inherit" aria-label="เพิ่ม Item ID"></textarea><button type="button" class="pd-btn sm" data-act="iidAdd">＋ เพิ่ม</button></div></div>';   /* textarea: วางทั้งคอลัมน์จาก Excel แล้วยังขึ้นบรรทัดอยู่ (ช่อง input ตัดบรรทัดทิ้ง) */
+}
+function iidAdd(){
+  var el = FM && FM.el ? FM.el.querySelector('#pdIidAdd') : null;
+  if(!el || FM.multi) return;
+  var a = FM.head.itemIds = Array.isArray(FM.head.itemIds) ? FM.head.itemIds : [], n0 = a.length;
+  splitIds(el.value).forEach(function(v){ if(a.indexOf(v) < 0) a.push(v); });
+  if(a.length === n0){ el.value = ''; return; }
+  FM.dirty = true; fmRender();
+  var e2 = FM.el.querySelector('#pdIidAdd'); if(e2) e2.focus();
+}
+function fmNote(l){ var M = FM.multi; return M ? byNote(byOfQ(l.byq || [], M.oids), M.items, 'แผ่น') : ''; }
+function fmIidPaint(){   /* แก้ Item ID ของ Order (ใบรวม) → ชิปหัวฟอร์ม + โน้ต Item ใต้ไม้ */
+  if(!FM || !FM.el || !FM.multi) return;
+  var bx = FM.el.querySelector('.pd-iidbox'); if(bx) bx.innerHTML = iidChips(fmIds());
+  FM.lines.forEach(function(l, i){ var e = FM.el.querySelector('[data-itn="' + i + '"]'); if(e) e.textContent = fmNote(l) || '—'; });
+}
+/* แถว Item ใต้ไม้ (ใบรวม): โน้ต Item ไหนกี่แผ่น · ✎ แยกจำนวน → ช่องราย Item (ยอดรวม = ผลรวม) */
+function itRow(l, i){
+  var M = FM.multi, H = '<tr class="pd-itrow' + (l.on ? '' : ' off') + '"><td></td><td colspan="6">';
+  if(!l.byOpen) return H + '<b>Item</b> <span class="pd-itn" data-itn="' + i + '">' + esc(fmNote(l) || '—') + '</span><button type="button" class="pd-btn sm" data-act="split" data-i="' + i + '">✎ แยกจำนวน</button></td></tr>';
+  var labs = shortLabs(M.items.map(itLab));
+  return H + '<div class="pd-sph"><b>แยกจำนวนราย Item</b><span class="pd-note" data-itsum="' + i + '">รวม ' + num(l.qty) + ' แผ่น · แก้ช่องไหน ยอดรวมเปลี่ยนตาม</span><span class="pd-sp"></span><button type="button" class="pd-btn sm" data-act="split" data-i="' + i + '">ย่อ ▲</button></div>'
+    + '<div class="pd-split">' + M.items.map(function(it, j){ return '<label title="' + esc(itFull(it)) + '">' + esc(labs[j]) + inp('lines.' + i + '.byq.' + j, num(l.byq[j]), { w:'64px', num:true, aria:'จำนวน ' + l.code + ' · ' + itFull(it) }) + '</label>'; }).join('') + '</div></td></tr>';
+}
 function fmRender(){
   var b = FM.el.querySelector('#pdFormBody'), h = FM.head, t = FM.type, H = '';
   if(t === 'lm'){   /* v129 */
     H += '<div class="pd-grid">'
       + '<label>LOT <span style="display:flex;gap:4px">' + inp('head.lot', h.lot, { w:'100%', aria:'LOT' }) + '<button type="button" class="pd-btn sm" data-act="lotAuto" title="ตั้งใหม่ = ItemID + วันที่วันนี้">↻</button></span></label>'
-      + lab('ItemID (ใช้ตั้ง LOT)', 'head.itemId', h.itemId)
+      + iidCell(h)   /* v138: + Item ID ในล็อต (ใบรวม / Order เดียวที่มีหลาย Item ID) */
       + '<div class="pd-dates">' + lab('วันกำหนดเสร็จ(ปิดผิว)', 'head.due', h.due, { type:'date' })   /* v136: End Date ใต้วันกำหนดเสร็จ */
       + '<label title="ใส่ End Date แล้ว วันกำหนดเสร็จ(ปิดผิว) = นับย้อน 14 วัน ไม่นับวันอาทิตย์ (นับ End Date เป็นวันที่ 1) · แก้วันกำหนดเสร็จเองได้"><span>End Date <span class="pd-hint">→ ย้อน 14 วัน (ไม่นับอาทิตย์)</span></span>'
       + inp('head.endDate', h.endDate, { type:'date', aria:'End Date' }) + '</label></div>'
@@ -25389,9 +25750,10 @@ function fmRender(){
       + lab('PD Pool (ตั้งต้นทุกแถว)', 'head.pdPool', h.pdPool, { ph:'เช่น SP302', list:'pdPdPoolsF' })
       + lab('ผู้จัดทำ', 'head.who', h.who)
       + lab('รายละเอียด (บรรทัดกลางใบ)', 'head.project', h.project, { wide:true, ph:'เช่น BU3.2_โครงการ The Forest TYPE J แปลง D3 บ้านตัวอย่าง BR2 BR3 BR4' })
-      + lab('หมายเหตุ', 'head.note', h.note, { wide:true }) + '</div>';
+      + lab('หมายเหตุ', 'head.note', h.note, { wide:true }) + '</div>' + iidPanel();
     var nDup = FM.edit ? 0 : FM.lines.filter(function(l){ return +l.opened > 1e-9; }).length;   /* v131 */
     H += '<div class="pd-sec"><div class="pd-sech"><b>ส่วนที่ 1 · ไม้ปิดผิว</b><span class="pd-note">' + (FM.edit ? 'ติ๊กไม้ที่จะออกใบ · จำนวน = แผ่น' : 'ติ๊กไว้ให้ทุกไม้ (ตัวไหนไม่สั่งปิดผิวให้ติ๊กออก) · จำนวน = แผ่น · ตั้งต้น = ยอดเต็มใน BOM Fitting') + '</span>'
+      + (FM.multi ? '<span class="pd-note">· ไม้รหัสเดียวกันรวมยอดทุก Order · แถว Item = Item ไหนกี่แผ่น (✎ แยกจำนวน)</span>' : '')
       + (nDup ? '<span class="pd-note pd-dup">⚠ ' + nDup + ' ไม้เคยเปิดใบไปแล้ว — ดูแถวสีส้ม</span>' : '') + '</div>'
       + '<table class="pd-tbl"><thead><tr><th><input type="checkbox" data-all="lines"' + (allOn(FM.lines) ? ' checked' : '') + ' aria-label="เลือกทั้งหมด"></th><th>รหัสไม้ปิดผิว</th><th>รายละเอียด</th><th class="n">ต้องใช้</th><th class="n">เปิดแล้ว</th><th class="n">จำนวน (แผ่น)</th><th>PD Pool</th></tr></thead><tbody>'
       + FM.lines.map(function(l, i){
@@ -25399,10 +25761,12 @@ function fmRender(){
           var dup = !FM.edit && +l.opened > 1e-9;   /* v131: ไม้นี้เปิดใบไปแล้ว (ใบที่ยังไม่ยกเลิก) */
           return '<tr' + (l.on ? '' : ' class="off"') + '><td><input type="checkbox" data-p="lines.' + i + '.on"' + (l.on ? ' checked' : '') + ' aria-label="เลือก ' + esc(l.code) + '"></td><td><code>' + esc(l.code) + '</code>' + tag + '</td>'
             + '<td style="min-width:220px">' + inp('lines.' + i + '.name', l.name, { w:'100%' }) + '</td><td class="n">' + (l.need == null ? '—' : num(l.need)) + '</td><td class="n">' + (l.opened == null ? '—' : (dup ? '<span class="pd-dup">' + num(l.opened) + '</span>' : num(l.opened))) + '</td>'
-            + '<td class="n">' + inp('lines.' + i + '.qty', num(l.qty), { w:'76px', num:true, aria:'จำนวน ' + l.code }) + '</td>'
+            + '<td class="n">' + (FM.multi ? '<input class="pd-in pd-ro" data-qro="' + i + '" value="' + num(l.qty) + '" readonly tabindex="-1" style="width:76px" aria-label="จำนวนรวม ' + esc(l.code) + '" title="ยอดรวมทุก Item — แก้ที่ ✎ แยกจำนวน">'
+              : inp('lines.' + i + '.qty', num(l.qty), { w:'76px', num:true, aria:'จำนวน ' + l.code })) + '</td>'
             + '<td>' + inp('lines.' + i + '.pool', l.pool, { w:'86px', ph:h.pdPool || '', aria:'PD Pool ' + l.code, list:'pdPdPoolsF' }) + '</td></tr>'
             + (dup ? '<tr class="pd-duprow' + (l.on ? '' : ' off') + '"><td></td><td colspan="6" style="white-space:normal;max-width:none;padding-top:0"><span class="pd-dup">⚠ ไม้นี้เปิดใบไปแล้ว ' + num(l.opened) + ' แผ่น'
-              + ((l.openedIn || []).length ? ' (' + l.openedIn.map(function(n){ return esc(n); }).join(', ') + ')' : '') + ' — ถ้าไม่สั่งปิดผิวซ้ำ ให้ติ๊กออก หรือแก้จำนวน</span></td></tr>' : '');
+              + ((l.openedIn || []).length ? ' (' + l.openedIn.map(function(n){ return esc(n); }).join(', ') + ')' : '') + ' — ถ้าไม่สั่งปิดผิวซ้ำ ให้ติ๊กออก หรือแก้จำนวน</span></td></tr>' : '')
+            + (FM.multi ? itRow(l, i) : '');   /* v138: แถว Item (ใบรวม) */
         }).join('') + (FM.lines.length ? '' : '<tr><td colspan="7" class="pd-empty">ไม่มีไม้ที่ต้องปิดผิว</td></tr>') + '</tbody></table></div>';
     H += poolLists('F');
     H += '<div class="pd-sec"><div class="pd-sech"><b>ส่วนที่ 2 · แตก BOM</b><span class="pd-note">' + (FM.edit && !lmNew(FM.edit) ? 'ใบนี้ออกก่อน v129 — แก้แล้วยังพิมพ์แบบเดิม (Master Plan) · ส่วนนี้แสดงให้ดูเท่านั้น ไม่บันทึกลงใบ' : 'วัสดุของไม้ที่ติ๊ก × จำนวนแผ่น จาก BOM ตอนนี้ (AX / BOM ใส่เอง) — บันทึกลงใบตอนกดบันทึก') + '</span></div><div id="pdBom"></div></div>';
@@ -25529,6 +25893,7 @@ function fmNotes(){
     var kd = FM.edit ? 0 : ko.filter(function(l){ return +l.opened > 1e-9; }).length; if(kd) t += ' · ⚠ ในนี้มี ' + kd + ' ไม้ที่เคยเปิดใบไปแล้ว'; }   /* v131 */
   else if(FM.type === 'rq'){ var sN = FM.secs.filter(function(s){ return s.lines.some(function(l){ return l.on && +l.qty > 0; }); }).length; t = 'จะได้ใบเบิก ' + sN + ' ใบ'; }
   else t = 'ติ๊ก ' + FM.lines.filter(function(l){ return l.on; }).length + ' รายการ';
+  if(FM.type === 'lm' && FM.multi) t += ' · ใบรวม ' + FM.multi.oids.length + ' Order';   /* v138 */
   n.textContent = t;
 }
 function getPath(o, p){ return p.split('.').reduce(function(a, k){ return a == null ? a : a[k]; }, o); }
@@ -25544,17 +25909,36 @@ function fmInput(ev){
     if(FM.type === 'lm') fmMsg('');
     fmRender(); return;   /* ส่วนที่ 2 วาดใหม่ใน fmRender */
   }
+  if(t.id === 'pdIidAdd'){ FM.dirty = true; FM.arm = 0; return; }   /* v138: พิมพ์ Item ID ค้างไว้ (ยังไม่กดเพิ่ม) = มีที่แก้ → ปิดฟอร์มแล้วถามก่อน */
   var p = t.getAttribute('data-p');
   if(!p) return;
   FM.dirty = true; FM.arm = 0;
   if(FM.type === 'lm') fmMsg('');   /* v129: แก้ฟอร์มแล้ว ข้อความเตือนเก่าหายไป */
+  var mbq = /^lines\.(\d+)\.byq\.(\d+)$/.exec(p);   /* v138: ใบรวม — จำนวนราย Item → ยอดรวมของไม้ */
+  if(mbq && FM.multi){
+    var lq = FM.lines[+mbq[1]], vq = numIn(t.value);
+    if(!lq) return;
+    t.classList.toggle('bad', t.value !== '' && !(vq >= 0));
+    lq.byq[+mbq[2]] = (vq >= 0) ? vq : 0;
+    lq.qty = r4(lq.byq.reduce(function(a, q){ return a + (+q || 0); }, 0));
+    var ro = FM.el.querySelector('[data-qro="' + mbq[1] + '"]'); if(ro) ro.value = num(lq.qty);
+    var su = FM.el.querySelector('[data-itsum="' + mbq[1] + '"]'); if(su) su.textContent = 'รวม ' + num(lq.qty) + ' แผ่น · แก้ช่องไหน ยอดรวมเปลี่ยนตาม';
+    bomRender(); fmNotes();
+    return;
+  }
+  if(/^multi\.items\.\d+\.text$/.test(p) && FM.multi){   /* v138: แก้ Item ID ของ Order (ใช้แสดงในใบ) */
+    var itm = getPath(FM, p.replace(/\.text$/, ''));
+    if(itm){ var ia = splitIds(t.value); itm.ids = ia.length ? ia : [itm.oid]; }
+    fmIidPaint();
+    return;
+  }
   var isNum = /\.(qty|price)$/.test(p) || /^head\.(discount|expense|vat)$/.test(p);
   if(t.type === 'checkbox'){
     setPath(FM, p, !!t.checked);
     var m = /^pair\.lines\.(\d+)\.on$/.exec(p);
     if(m){ var pl = FM.pair.lines[+m[1]]; FM.pair.ov[pl.code.toUpperCase()] = Object.assign(FM.pair.ov[pl.code.toUpperCase()] || {}, { on:!!t.checked }); }
     var tr = t.closest('tr'); if(tr && p !== 'pair.on'){ tr.classList.toggle('off', !t.checked);
-      var nx = tr.nextElementSibling; if(nx && nx.classList.contains('pd-duprow')) nx.classList.toggle('off', !t.checked); }   /* v131: แถวเตือนจางตามแถวไม้ */
+      for(var nx = tr.nextElementSibling; nx && (nx.classList.contains('pd-duprow') || nx.classList.contains('pd-itrow')); nx = nx.nextElementSibling) nx.classList.toggle('off', !t.checked); }   /* v131: แถวเตือนจางตามแถวไม้ · v138: + แถว Item (ใบรวม) */
     if(FM.type === 'lm' && FM.pair && /^lines\./.test(p)){ pairCalc(); pairRender(); }
     if(FM.type === 'lm' && /^lines\./.test(p)) bomRender();
     if(p === 'pair.on') pairRender();
@@ -25611,11 +25995,20 @@ function fmClick(ev){
     FM.dirty = true; fmRender();
     var ins = FM.el.querySelectorAll('input[data-p$=".code"]'); if(ins.length) ins[ins.length - 1].focus();
   }
+  else if(act === 'split'){ var ls = FM.lines[+b.getAttribute('data-i')]; if(ls){ ls.byOpen = !ls.byOpen; fmRender(); } }   /* v138: ใบรวม — แยกจำนวนราย Item */
+  else if(act === 'iids'){ FM.iidOpen = !FM.iidOpen; fmRender(); }
+  else if(act === 'iidDel'){ var ik = +b.getAttribute('data-i'), ia = FM.head.itemIds || []; if(ik >= 0 && ik < ia.length){ ia.splice(ik, 1); FM.dirty = true; fmRender(); } }
+  else if(act === 'iidAdd') iidAdd();
+  else if(act === 'iidPull'){ FM.head.itemIds = rawIds(); FM.dirty = true; fmRender(); }
+  else if(act === 'iidCopy'){
+    var cp = fmIds(), ok = function(){ fmMsg('✓ คัดลอก Item ID ' + cp.length + ' รายการ', 'ok'); }, no = function(){ fmMsg('คัดลอกไม่ได้ (เบราว์เซอร์ไม่อนุญาต)', 'bad'); };
+    try{ var pc = navigator.clipboard && navigator.clipboard.writeText(cp.join('\n')); if(pc && pc.then) pc.then(ok, no); else no(); }catch(e){ no(); }
+  }
   else if(act === 'save' || act === 'savePrint') fmSave(act === 'savePrint');
 }
-function lineOut(type, l, h){
+function lineOut(type, l, h, M){
   var code = norm(l.code), o = { code:code, name:norm(l.name) || fgName(code), qty:r4(l.qty), unit:norm(l.unit) || fgUnit(code) || 'EA' };
-  if(type === 'lm' && h.fmt === 2){ o.unit = l.unit || 'แผ่น'; o.kind = l.has ? 'bom' : (l.kind || 'nobom'); o.pool = norm(l.pool) || norm(h.pdPool); o.bom = bomFor(code, o.qty, l.prevBom); if(norm(l.pd)) o.pd = norm(l.pd); }   /* v129: สำเนาแตก BOM ลงใบ */
+  if(type === 'lm' && h.fmt === 2){ o.unit = l.unit || 'แผ่น'; o.kind = l.has ? 'bom' : (l.kind || 'nobom'); o.pool = norm(l.pool) || norm(h.pdPool); o.bom = bomFor(code, o.qty, l.prevBom); if(norm(l.pd)) o.pd = norm(l.pd); if(M && l.byq) o.by = byOfQ(l.byq, M.oids); }   /* v129: สำเนาแตก BOM ลงใบ · v138: ใบรวม by = แผ่นของแต่ละ Order */
   else if(type === 'lm'){ o.unit = l.unit || 'แผ่น'; o.pd = norm(l.pd); o.due = l.due || h.lineDue || ''; o.pool = norm(l.pool) || norm(h.pdPool); }
   else if(type === 'rq'){ o.group = l.group || ''; o.loc = norm(l.loc); o.toLoc = norm(l.toLoc); }
   else { o.group = norm(l.group); o.bom = l.need; o.price = r4(l.price); o.need = l.needDate || h.needDate || ''; }
@@ -25626,6 +26019,7 @@ function fmSave(andPrint){
   var h = clone(FM.head), type = FM.type, docs = [], bad = '';
   if(type === 'lm' && h.fmt === 2 && !FM.edit && h.lotAuto) h.lot = lotOf(h.itemId, FM.oid);   /* v129: LOT อัตโนมัติ = วันที่บันทึก/พิมพ์ */
   if(type === 'lm') delete h.lotAuto;   /* สถานะของฟอร์มเท่านั้น ไม่เก็บลงใบ */
+  if(type === 'lm' && Array.isArray(h.itemIds) && h.itemIds.length < 2) delete h.itemIds;   /* v138: Item ID ในล็อต — เหลือไม่ถึง 2 ตัว = ใบ Item เดียวตามเดิม */
   var pick = function(arr){ return arr.filter(function(l){ return l.on && norm(l.code) && +l.qty > 0; }); };
   var zero = function(arr){ return arr.some(function(l){ return l.on && norm(l.code) && !(+l.qty > 0); }); };
   var noCode = function(arr){ return arr.some(function(l){ return l.on && !norm(l.code); }); };
@@ -25641,10 +26035,29 @@ function fmSave(andPrint){
     if(noCode(FM.lines)) bad = 'มีแถวที่ติ๊กแต่ยังไม่ใส่รหัส';
     if(zero(FM.lines) && !bad) bad = 'มีแถวที่ติ๊กแต่จำนวนเป็น 0';
     var ls2 = pick(FM.lines);
-    if(ls2.length) docs.push({ type:type, head:h, lines:ls2.map(function(l){ return lineOut(type, l, h); }) });
+    if(ls2.length) docs.push({ type:type, head:h, lines:ls2.map(function(l){ return lineOut(type, l, h, FM.multi); }) });
   }
   if(bad){ fmMsg(bad, 'bad'); return; }
   if(!docs.length){ fmMsg('ยังไม่ได้ติ๊กรายการ (หรือจำนวนเป็น 0)', 'bad'); return; }
+  var oid = FM.oid, moids = null;
+  if(type === 'lm' && FM.multi){   /* v138: ใบรวม — Order ที่ไม่มีแผ่นเลยไม่อยู่ในใบ · เหลือ Order เดียว = ใบ Order เดียว (เก็บที่ Order นั้น) · เก็บที่ Order แรก */
+    var MM = FM.multi, mits = MM.items.map(function(it){ return { oid:it.oid, ids:itIds(it).slice() }; });
+    var keep = FM.edit ? MM.oids.slice() : MM.oids.filter(function(o){ return docs[0].lines.some(function(l){ return l.by && +l.by[o] > 1e-9; }); });
+    if(keep.length > 1 || FM.edit){
+      docs[0].multi = { oids:keep, items:mits.filter(function(it){ return keep.indexOf(it.oid) >= 0; }) };
+      if(MM.lot) docs[0].multi.lot = MM.lot;
+      if(!FM.edit){ oid = keep[0]; moids = keep; }
+    } else if(keep.length === 1){
+      oid = keep[0];
+      docs[0].lines.forEach(function(l){ delete l.by; });
+      var one = mits.filter(function(it){ return it.oid === oid; })[0];
+      if(one && one.ids.length > 1) h.itemIds = one.ids.slice();
+      if(one && norm(FM.head.itemId) === norm(FM.lidAuto)){   /* ItemID ยังเป็นค่าตั้งต้นของใบรวม → ใช้ Item ID ของ Order ที่เหลือ (LOT อัตโนมัติตั้งใหม่ตาม) */
+        h.itemId = one.ids.length === 1 ? one.ids[0] : oid;
+        if(FM.head.lotAuto) h.lot = lotOf(h.itemId, oid);
+      }
+    }
+  }
   var pairDocs = [];
   if(type === 'lm' && FM.pair && FM.pair.on && !FM.edit){
     var pl = FM.pair.lines.filter(function(l){ return l.on && +l.qty > 0; });
@@ -25666,8 +26079,8 @@ function fmSave(andPrint){
   FM.busy = true; whoSet(h.who);
   Array.prototype.forEach.call(FM.el.querySelectorAll('.pd-ft .pd-btn'), function(b){ b.disabled = true; });
   fmMsg('กำลังบันทึก…', '');
-  var edit = FM.edit, oid = FM.oid, fm = FM;
-  var p = edit ? saveEdit(edit, docs[0]) : saveNew(oid, docs, pairDocs, type, h, FM.known);
+  var edit = FM.edit, fm = FM;
+  var p = edit ? saveEdit(edit, docs[0]) : saveNew(oid, docs, pairDocs, type, h, FM.known, moids);
   p.then(function(nos){
     fm.dirty = false;
     closeModal(fm.el); if(FM === fm) FM = null;
@@ -25680,16 +26093,34 @@ function fmSave(andPrint){
     if(FM === fm) fmMsg('บันทึกไม่สำเร็จ: ' + errText(e), 'bad');
   });
 }
-function saveNew(oid, docs, pairDocs, type, h, known){
+/* v138: ใบรวม — ก่อนออกเลขที่ อ่านเอกสารล่าสุดของทุก Order ในใบ · มีใบใหม่ที่ฟอร์มยังไม่เห็น (เครื่องอื่นเพิ่งออก) → ไม่บันทึก */
+function freshCheck(oids, known){
+  var d = dbNow();
+  if(!d) return Promise.reject(Error('ยังไม่ได้เชื่อมไฟล์กลาง'));
+  return freshScan(null).then(function(){ return d.from('app_settings').select('key,value').like('key', DK + '%'); }).then(function(r){
+    if(r && r.error) throw r.error;
+    var fresh = [];
+    ((r && r.data) || []).forEach(function(row){
+      var o = String(row.key || '').slice(DK.length), mine = oids.indexOf(o) >= 0;
+      normRec(row.value, o).docs.forEach(function(y){
+        if(y.status === 'cancel' || !(mine || oids.some(function(q){ return inMulti(y, q); }))) return;
+        if(known.indexOf(y.no + '@' + (+y.at || 0)) < 0 && fresh.indexOf(y.no) < 0) fresh.push(y.no);
+      });
+    });
+    if(fresh.length) throw Error('มีเครื่องอื่นเพิ่งเปิดเอกสารของ Order ในใบรวม (' + fresh.join(', ') + ') — ปิดฟอร์มแล้วเปิดใหม่เพื่อดูยอดล่าสุด');
+  });
+}
+function saveNew(oid, docs, pairDocs, type, h, known, moids){
   var need = {}, all = docs.concat(pairDocs);
   all.forEach(function(d){ need[d.type] = (need[d.type] || 0) + 1; });
   var nos = {}, chain = Promise.resolve();
-  Object.keys(need).forEach(function(t){ chain = chain.then(function(){ return nextNos(t, need[t], oid).then(function(a){ nos[t] = a; }); }); });
+  Object.keys(need).forEach(function(t){ chain = chain.then(function(){ return nextNos(t, need[t], moids || oid).then(function(a){ nos[t] = a; }); }); });
+  if(moids) chain = chain.then(function(){ return freshCheck(moids, known || []); });   /* v138: ใบรวม → ตรวจเอกสารล่าสุดของทุก Order ในใบ ก่อนเขียน (หลังออกเลขที่ · ใกล้เวลาเขียนที่สุด) */
   return chain.then(function(){
     var idx = {}, now = Date.now(), by = machine();
     all.forEach(function(d){ var i = idx[d.type] || 0; d.no = nos[d.type][i]; idx[d.type] = i + 1; });
     var mainNos = docs.map(function(d){ return d.no; }), pairNos = pairDocs.map(function(d){ return d.no; });
-    var mk = function(d, pair){ return { no:d.no, type:d.type, oid:oid, status:'open', at:now, by:by, who:d.head.who || '', ax:'', axAt:0, pair:pair, head:d.head, lines:d.lines, note:d.head.note || '', log:[{ at:now, by:by, t:'สร้าง' }] }; };
+    var mk = function(d, pair){ var o = { no:d.no, type:d.type, oid:oid, status:'open', at:now, by:by, who:d.head.who || '', ax:'', axAt:0, pair:pair, head:d.head, lines:d.lines, note:d.head.note || '', log:[{ at:now, by:by, t:'สร้าง' }] }; if(d.multi) o.multi = d.multi; return o; };   /* v138: + multi (ใบรวม) */
     return mutateRec(oid, function(rec){
       var fresh = known ? rec.docs.filter(function(y){ return isDoc(y) && y.status !== 'cancel' && known.indexOf(y.no + '@' + (+y.at || 0)) < 0; }) : [];
       if(fresh.length) throw Error('มีเครื่องอื่นเพิ่งเปิดเอกสารของ Order นี้ (' + fresh.map(function(y){ return y.no; }).join(', ') + ') — ปิดฟอร์มแล้วเปิดใหม่เพื่อดูยอดล่าสุด');
@@ -25717,6 +26148,7 @@ function saveEdit(old, d){
     if(x.status === 'cancel') throw Error('เอกสารนี้ถูกยกเลิกแล้ว');
     if(old.type === 'rq'){ ['from', 'fromName', 'fromLoc', 'to', 'toName', 'toLoc'].forEach(function(k){ d.head[k] = d.head[k] != null ? d.head[k] : x.head[k]; }); }
     x.head = d.head; x.lines = d.lines; x.who = d.head.who || x.who; x.note = d.head.note || '';
+    if(d.multi) x.multi = d.multi;   /* v138: ใบรวม — รายชื่อ Order / Item ID */
     (x.log = x.log || []).push({ at:now, by:by, t:'แก้ไข' });
     return [x.no];
   });
@@ -25767,6 +26199,7 @@ function openCancel(no, oid){
   var ov = modal('__pdocCancel', x.type, 'ยกเลิก ' + T[x.type].label + ' ' + esc(no), 'ยกเลิกแล้วยอดในใบนี้ไม่นับเป็น "เปิดไปแล้ว" · ใบยังอยู่ในประวัติ (พิมพ์ซ้ำได้ มีคำว่า ยกเลิก) · ลบออกจากประวัติได้ภายหลัง (ปุ่ม 🗑 ลบ)',
     '<label style="display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12px">เหตุผล<input class="pd-in" id="pdCxWhy" placeholder="เช่น เปิดผิด / เปลี่ยนแบบ"></label>'
     + (pd.length ? '<label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-weight:700"><input type="checkbox" id="pdCxPair" checked> ยกเลิกใบคู่กันด้วย (' + pd.map(function(y){ return esc(y.no); }).join(', ') + ')</label>' : '')
+    + (isMulti(x) ? '<div class="pd-note" style="margin-top:8px">ใบรวม ' + x.multi.oids.length + ' Order — ยกเลิกครั้งเดียวมีผลกับทุก Order ในใบ (' + esc(x.multi.oids.join(', ')) + ')</div>' : '')   /* v138 */
     + '<div id="pdCxMsg" class="pd-msg"></div>',
     '<span class="pd-sp"></span><button type="button" class="pd-btn" data-act="x">ไม่ยกเลิก</button><button type="button" class="pd-btn danger" data-act="ok">ยกเลิกเอกสาร</button>', '560px');
   var armed = 0;
@@ -25831,7 +26264,7 @@ function openDelete(no, oid){
   if(x.status !== 'cancel'){ alertBox('ลบได้เฉพาะใบที่ยกเลิกแล้ว — กด "ยกเลิก" ก่อน'); return; }
   var tq = r4(x.lines.reduce(function(a, l){ return a + (+l.qty || 0); }, 0));
   var ov = modal('__pdocDel', x.type, '🗑 ลบ ' + T[x.type].label + ' ' + esc(no) + ' ออกจากประวัติ', 'ใบนี้ยกเลิกแล้ว · ลบแล้วหายจากประวัติเอกสารถาวร (เปิดดู / พิมพ์ซ้ำไม่ได้อีก) · ทุกเครื่องเห็นผลเหมือนกัน',
-    '<div style="font-size:13px;line-height:1.7">Order <code>' + esc(x.oid) + '</code> · ' + x.lines.length + ' รายการ (' + num(tq) + (x.type === 'lm' ? ' แผ่น' : '') + ')'
+    '<div style="font-size:13px;line-height:1.7">' + (isMulti(x) ? 'ใบรวม ' + x.multi.oids.length + ' Order (เก็บที่ <code>' + esc(x.oid) + '</code>)' : 'Order <code>' + esc(x.oid) + '</code>') + ' · ' + x.lines.length + ' รายการ (' + num(tq) + (x.type === 'lm' ? ' แผ่น' : '') + ')'
     + ((x.head && x.head.lot) ? ' · LOT <code>' + esc(x.head.lot) + '</code>' : '') + ' · ยกเลิกเมื่อ ' + esc(dmyhm(x.cancelAt || x.at)) + (x.cancelWhy ? ' · เหตุผล: ' + esc(x.cancelWhy) : '') + '</div>'
     + '<div class="pd-note" style="margin-top:6px">ไม่กระทบยอด "เปิดไปแล้ว" (ใบที่ยกเลิกไม่นับอยู่แล้ว) · ถ้าเป็นเลขที่ล่าสุด ใบใหม่อาจได้เลขนี้อีกครั้ง</div>'
     + '<div id="pdDelMsg" class="pd-msg"></div>',
@@ -25898,10 +26331,15 @@ function lmPrintCSS(){
     + '.lmp table.t tr.band td{background:#e8edf8;border-top:1.5px solid #4f6aa5;font-weight:700;padding:5px 6px}.lmp table.t tr.band td .c{font-family:Menlo,Consolas,monospace;font-size:11px}'
     + '.lmp table.t tr.tot td{font-weight:700;border-top:1.5px solid #4f6aa5;background:#f6f8fc}.lmp .via{color:#666;font-size:9.5px}.lmp .nob{color:#9a3412;font-style:italic}'
     + '.lmp .note{margin-top:10px;font-size:11px}.lmp .signs{display:flex;gap:18px;margin-top:46px}.lmp .sig{flex:1;text-align:center;font-size:12px}'
-    + '.lmp .sig .dots{border-bottom:1px dotted #333;height:22px;margin:0 10px 4px;font-size:11.5px}.lmp .sig .dt{margin-top:5px;font-size:10.5px;color:#333}';
+    + '.lmp .sig .dots{border-bottom:1px dotted #333;height:22px;margin:0 10px 4px;font-size:11.5px}.lmp .sig .dt{margin-top:5px;font-size:10.5px;color:#333}'
+    /* v138: แถบ "Item ในล็อตนี้" + บรรทัดโน้ต Item ใต้ไม้ (ใบรวม) */
+    + '.lmp .its{margin:6px 0 4px;padding:5px 10px 6px;border:1px solid #c7d0e4;border-radius:4px}.lmp .its .ith{font-weight:700;font-size:11px;margin-bottom:3px}'
+    + '.lmp .its ol{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(4,1fr);gap:1px 12px}'
+    + '.lmp .its li{font:400 9.5px/1.45 Menlo,Consolas,monospace;word-break:break-all}.lmp .its li span{color:#777}'
+    + '.lmp table.t tr.hasn td{border-bottom:none}.lmp table.t tr.itn td{padding:0 6px 4px;font-size:9.5px;color:#333;border-left:none}.lmp table.t tr.itn td b{font-weight:700}';
 }
 function lmPrintBody(x, sel){
-  var h = x.head || {}, S = lmSel(x, sel), L = S.L, sheets = 0;
+  var h = x.head || {}, S = lmSel(x, sel), L = S.L, sheets = 0, mu = isMulti(x), its = docItems(x);   /* v138: ใบรวม / Item ในล็อต */
   L.forEach(function(l){ sheets += (+l.qty || 0); });
   var q2 = function(v){ return qfmt(v).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1'); };
   var nobTxt = function(l){ return l.kind === 'keep' ? 'ตั้งไว้ไม่แตก BOM' : 'ไม่มี BOM'; };
@@ -25911,12 +26349,17 @@ function lmPrintBody(x, sel){
     + (h.due ? '<div class="due">วันกำหนดเสร็จ(ปิดผิว) <b>' + esc(dmy(h.due)) + '</b></div>' : '') + (h.endDate ? '<div>End Date ' + esc(dmy(h.endDate)) + '</div>' : '')   /* v136: วันกำหนดเสร็จ ตัวใหญ่ในกรอบเน้น · End Date ตัวเล็ก */
     + (h.prodPool ? '<div class="pool">Prod Pool <b>' + esc(h.prodPool) + '</b></div>' : '') + '</div></div>'
     + (h.project ? '<div class="proj">' + esc(h.project) + '</div>' : '')
-    + '<div class="info"><span><b>Order</b> ' + esc(x.oid) + '</span>' + (h.itemId ? '<span><b>Item Id</b> ' + esc(h.itemId) + '</span>' : '')
-    + '<span><b>ไม้ปิดผิว</b> ' + L.length + ' รายการ · ' + q2(sheets) + ' แผ่น</span>' + (h.pdPool ? '<span><b>PD Pool</b> ' + esc(h.pdPool) + '</span>' : '') + '</div>';
+    + '<div class="info">' + (mu ? '<span><b>Order</b> รวม ' + x.multi.oids.length + ' Order</span><span><b>Item Id</b> ' + its.length + ' รายการ (ดูด้านล่าง)</span>'
+      : '<span><b>Order</b> ' + esc(x.oid) + '</span>' + (h.itemId ? '<span><b>Item Id</b> ' + esc(h.itemId) + '</span>' : ''))
+    + '<span><b>ไม้ปิดผิว</b> ' + L.length + ' รายการ · ' + q2(sheets) + ' แผ่น</span>' + (h.pdPool ? '<span><b>PD Pool</b> ' + esc(h.pdPool) + '</span>' : '') + '</div>'
+    + (its.length > 1 ? '<div class="its"><div class="ith">Item ในล็อตนี้ (' + its.length + ' Item' + (mu ? ' · ' + x.multi.oids.length + ' Order' : '') + ')</div><ol>'
+      + its.map(function(it, i){ return '<li>' + (i + 1) + '. ' + esc(it.id) + (it.oid ? ' <span>(' + esc(shortOid(it.oid)) + ')</span>' : '') + '</li>'; }).join('') + '</ol></div>' : '');   /* v138 */
   /* ส่วนที่ 1 */
   if(S.secs[1]) H += '<h2>ส่วนที่ 1 · ไม้ปิดผิว <small>รหัสไม้ที่ต้องปิดผิว · จำนวนแผ่น</small></h2>'
     + '<table class="t"><thead><tr><th style="width:5%" class="n">#</th><th style="width:27%">รหัสไม้ปิดผิว</th><th>รายละเอียด</th><th style="width:8%" class="n">จำนวน</th><th style="width:6%">หน่วย</th><th style="width:9%">PD Pool</th></tr></thead><tbody>'
-    + L.map(function(l, i){ return '<tr><td class="n">' + (i + 1) + '</td><td class="c">' + esc(l.code) + '</td><td>' + esc(l.name || '') + (l.bom && l.bom.length ? '' : ' <span class="nob">(' + nobTxt(l) + ')</span>') + '</td><td class="n">' + q2(l.qty) + '</td><td>' + esc(l.unit || 'แผ่น') + '</td><td>' + esc(l.pool || h.pdPool || '') + '</td></tr>'; }).join('')
+    + L.map(function(l, i){ var nt = mu ? byNote(l.by, mItems(x), l.unit || 'แผ่น') : '';   /* v138: ใบรวม → บรรทัดโน้ต Item ใต้ไม้ */
+        return '<tr' + (nt ? ' class="hasn"' : '') + '><td class="n">' + (i + 1) + '</td><td class="c">' + esc(l.code) + '</td><td>' + esc(l.name || '') + (l.bom && l.bom.length ? '' : ' <span class="nob">(' + nobTxt(l) + ')</span>') + '</td><td class="n">' + q2(l.qty) + '</td><td>' + esc(l.unit || 'แผ่น') + '</td><td>' + esc(l.pool || h.pdPool || '') + '</td></tr>'
+          + (nt ? '<tr class="itn"><td></td><td colspan="5"><b>Item</b> ' + esc(nt) + '</td></tr>' : ''); }).join('')
     + '<tr class="tot"><td></td><td colspan="2">รวม ' + L.length + ' รายการ</td><td class="n">' + q2(sheets) + '</td><td>แผ่น</td><td></td></tr></tbody></table>';
   /* ส่วนที่ 2 */
   if(S.secs[2]){
@@ -25956,7 +26399,7 @@ function lmTotals(L){
   }); });
   return out;
 }
-function footer(x, note){ return '<div class="foot"><span>เลขที่ในโปรแกรม ' + esc(x.no) + (x.ax ? ' · AX ' + esc(x.ax) : '') + ' · Order ' + esc(x.oid) + (note ? ' · เลือกพิมพ์: ' + esc(note) : '') + '</span><span>พิมพ์ ' + esc(dmyhm(Date.now())) + ' · Production V2</span></div>'; }
+function footer(x, note){ return '<div class="foot"><span>เลขที่ในโปรแกรม ' + esc(x.no) + (x.ax ? ' · AX ' + esc(x.ax) : '') + ' · ' + esc(ordTxt(x)) + (note ? ' · เลือกพิมพ์: ' + esc(note) : '') + '</span><span>พิมพ์ ' + esc(dmyhm(Date.now())) + ' · Production V2</span></div>'; }
 function docHTML(x, sel){   /* v129: sel = ส่วน/ไม้ที่เลือกพิมพ์ (เฉพาะรายการไม้ปิดผิว · ไม่ส่ง = ทั้งหมด) */
   var h = x.head || {}, body = '', css2 = '', land = false, title = x.no, fnote = '';
   if(lmNew(x)){ css2 = lmPrintCSS(); body = lmPrintBody(x, sel); fnote = lmSelNote(x, sel); }   /* v129: รายการไม้ปิดผิว (A4 แนวตั้ง) */
@@ -26131,7 +26574,7 @@ function openPreview(no, oid){
   var lm2 = lmNew(x), sel = lm2 ? lmSelDefault(x) : null, ed = (lm2 && x.status !== 'cancel') ? poolEd(x) : null;
   var log = (x.log || []).map(function(g){ return esc(dmyhm(g.at)) + ' ' + esc(g.t) + (g.by ? ' <span class="pd-note">(เครื่อง ' + esc(g.by) + ')</span>' : ''); }).join(' · ');
   var frame = '<iframe class="pd-frame" title="ตัวอย่างก่อนพิมพ์" sandbox="allow-same-origin allow-modals"></iframe>';
-  var ov = modal('__pdocPrint', x.type, T[x.type].icon + ' ' + T[x.type].long + ' · ' + esc(x.no), 'Order ' + esc(x.oid) + (lm2 && x.head.lot ? ' · LOT ' + esc(x.head.lot) : '') + ' · ' + (extraOn() ? statusChip(x) : (x.status === 'cancel' ? '<span class="pd-chip cancel">ยกเลิก</span>' : '<span class="pd-chip ok">ใช้งาน</span>')) + (log ? ' · ' + log : ''),
+  var ov = modal('__pdocPrint', x.type, T[x.type].icon + ' ' + T[x.type].long + ' · ' + esc(x.no), esc(ordTxt(x)) + (isMulti(x) ? ' (' + esc(x.multi.oids.slice(0, 3).join(', ') + (x.multi.oids.length > 3 ? ' …' : '')) + ')' : '') + (lm2 && x.head.lot ? ' · LOT ' + esc(x.head.lot) : '') + ' · ' + (extraOn() ? statusChip(x) : (x.status === 'cancel' ? '<span class="pd-chip cancel">ยกเลิก</span>' : '<span class="pd-chip ok">ใช้งาน</span>')) + (log ? ' · ' + log : ''),
     lm2 ? '<div class="pd-pwrap">' + lmOptHTML(x, sel, ed) + frame + '</div>' : frame,
     pd.map(function(y){ return '<button type="button" class="pd-btn sm" data-act="go" data-no="' + esc(y.no) + '" data-oid="' + esc(y.oid) + '">↪ ' + T[y.type].label + ' ' + esc(y.no) + '</button>'; }).join('')
     + '<span class="pd-sp"></span><button type="button" class="pd-btn" data-act="xlsx"' + (lm2 ? ' title="ออกตามส่วน/ไม้ที่เลือก"' : '') + '>' + (lm2 ? '⬇ Excel' : '⬇ Excel (คีย์ AX)') + '</button><button type="button" class="pd-btn" data-act="x">ปิด</button>'
@@ -26247,9 +26690,17 @@ function docAOA(x){
 }
 /* v129: Excel ของรายการไม้ปิดผิว — ชีตตามส่วนที่เลือก (ไม้ปิดผิว · แตก BOM · รวมวัสดุ) · เฉพาะไม้ที่ติ๊กพิมพ์ */
 function lmSheets(x, sel){
-  var h = x.head || {}, S = lmSel(x, sel), L = S.L, out = [];
-  if(S.secs[1]) out.push(['ไม้ปิดผิว', [['LotId', 'ItemId', 'Description', 'Qty', 'Unit', 'PDPool', 'ProdPool', 'Detail', 'DocNo', 'Order']].concat(L.map(function(l){ return [h.lot || '', l.code, l.name || '', +l.qty || 0, l.unit || 'แผ่น', l.pool || h.pdPool || '', h.prodPool || '', h.project || '', x.no, x.oid]; })),
-    [{ wch:24 }, { wch:26 }, { wch:44 }, { wch:8 }, { wch:7 }, { wch:9 }, { wch:10 }, { wch:40 }, { wch:15 }, { wch:24 }]]);
+  var h = x.head || {}, S = lmSel(x, sel), L = S.L, out = [], mu = isMulti(x);   /* v138: ใบรวม → + คอลัมน์ Items + ชีต "แยกราย Item" */
+  if(S.secs[1]){
+    out.push(['ไม้ปิดผิว', [['LotId', 'ItemId', 'Description', 'Qty', 'Unit', 'PDPool', 'ProdPool', 'Detail', 'DocNo', 'Order'].concat(mu ? ['Items'] : [])].concat(L.map(function(l){
+        return [h.lot || '', l.code, l.name || '', +l.qty || 0, l.unit || 'แผ่น', l.pool || h.pdPool || '', h.prodPool || '', h.project || '', x.no, mu ? x.multi.oids.join(', ') : x.oid].concat(mu ? [byNote(l.by, mItems(x), l.unit || 'แผ่น')] : []); })),
+      [{ wch:24 }, { wch:26 }, { wch:44 }, { wch:8 }, { wch:7 }, { wch:9 }, { wch:10 }, { wch:40 }, { wch:15 }, { wch:24 }].concat(mu ? [{ wch:60 }] : [])]);
+    if(mu){
+      var sI = [['LotId', 'WoodItemId', 'Description', 'Order', 'ItemIdSet', 'Qty', 'Unit', 'DocNo']];
+      L.forEach(function(l){ mItems(x).forEach(function(it){ var q = +(l.by && l.by[it.oid]) || 0; if(q > 1e-9) sI.push([h.lot || '', l.code, l.name || '', it.oid, itIds(it).join(', '), q, l.unit || 'แผ่น', x.no]); }); });
+      out.push(['แยกราย Item', sI, [{ wch:24 }, { wch:26 }, { wch:40 }, { wch:28 }, { wch:24 }, { wch:8 }, { wch:7 }, { wch:15 }]]);
+    }
+  }
   if(S.secs[2]){
     var s2 = [['LotId', 'WoodItemId', 'WoodQty', 'ComponentItemId', 'ComponentName', 'PerSheet', 'Qty', 'Unit', 'DocNo']];
     L.forEach(function(l){ (l.bom || []).forEach(function(b){ s2.push([h.lot || '', l.code, +l.qty || 0, b.code, b.name || '', +b.per || 0, +b.qty || 0, b.unit || '', x.no]); }); });
@@ -26286,19 +26737,21 @@ function histXlsx(){
   });
 }
 
-function histXlsxLm(){   /* v129: ประวัติรายการไม้ปิดผิว — ส่วนที่ 1 + ส่วนที่ 2 */
-  var rows = histRowsLm(curOid());
+function histXlsxLm(){   /* v129: ประวัติรายการไม้ปิดผิว — ส่วนที่ 1 + ส่วนที่ 2 · v138: ตามแท็บที่เลือก + คอลัมน์ใบรวม (Order ในใบ · Item) เมื่อมีใบรวม */
+  var rows = histRowsLm(curOid(), CTX_MI);
   withXLSX(function(){
-    var aoa = [['เลขที่', 'LOT', 'Order', 'วันที่', 'ผู้จัดทำ', 'สถานะ', 'ส่วน', 'รหัสไม้', 'รหัสวัสดุ', 'ชื่อ', 'ต่อ 1 แผ่น', 'จำนวน', 'หน่วย']];
+    var anyMu = rows.some(isMulti), ext = function(a, b){ return anyMu ? [a, b] : []; };   /* มีใบรวมในรายการ → + คอลัมน์ใบรวม (ใบ Order เดียวล้วน = รูปแบบเดิม) */
+    var aoa = [['เลขที่', 'LOT', 'Order', 'วันที่', 'ผู้จัดทำ', 'สถานะ', 'ส่วน', 'รหัสไม้', 'รหัสวัสดุ', 'ชื่อ', 'ต่อ 1 แผ่น', 'จำนวน', 'หน่วย'].concat(ext('ใบรวม (Order ในใบ)', 'Item (ใบรวม)'))];
     rows.forEach(function(x){
+      var mu = isMulti(x), mo = mu ? x.multi.oids.join(', ') : '';
       var hd = [x.no, (x.head && x.head.lot) || '', x.oid, dmyhm(x.at), x.who || '', x.status === 'cancel' ? 'ยกเลิก' : 'ใช้งาน'];
       x.lines.forEach(function(l){
-        aoa.push(hd.concat(['1 ไม้ปิดผิว', l.code, '', l.name || '', '', +l.qty || 0, l.unit || 'แผ่น']));
-        (l.bom || []).forEach(function(b){ aoa.push(hd.concat(['2 แตก BOM', l.code, b.code, b.name || '', +b.per || 0, +b.qty || 0, b.unit || ''])); });
+        aoa.push(hd.concat(['1 ไม้ปิดผิว', l.code, '', l.name || '', '', +l.qty || 0, l.unit || 'แผ่น']).concat(ext(mo, mu ? byNote(l.by, mItems(x), l.unit || 'แผ่น') : '')));
+        (l.bom || []).forEach(function(b){ aoa.push(hd.concat(['2 แตก BOM', l.code, b.code, b.name || '', +b.per || 0, +b.qty || 0, b.unit || '']).concat(ext(mo, ''))); });
       });
     });
     var wb = XLSX.utils.book_new(), ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch:14 }, { wch:24 }, { wch:24 }, { wch:16 }, { wch:14 }, { wch:9 }, { wch:12 }, { wch:26 }, { wch:28 }, { wch:44 }, { wch:9 }, { wch:9 }, { wch:7 }];
+    ws['!cols'] = [{ wch:14 }, { wch:24 }, { wch:24 }, { wch:16 }, { wch:14 }, { wch:9 }, { wch:12 }, { wch:26 }, { wch:28 }, { wch:44 }, { wch:9 }, { wch:9 }, { wch:7 }].concat(anyMu ? [{ wch:40 }, { wch:50 }] : []);
     XLSX.utils.book_append_sheet(wb, ws, 'รายการไม้ปิดผิว');
     XLSX.writeFile(wb, 'ประวัติเอกสาร_' + isoToday() + '.xlsx');
   });
@@ -26454,7 +26907,7 @@ setInterval(function(){
 injectTab(); wrapSwitch();
 
 window.PDOC_state = function(){ return { ok:DC.ok, err:DC.err, orders:Object.keys(DC.map).length, docs:allDocs().length, on:ON, settings:clone(SET) }; };
-window.PDOC_need = function(){ var nd = need(), oid = curOid(); return { oid:oid, items:nd.items, lam:nd.lam.map(function(L){ return { code:L.code, sheets:L.sheets, kind:L.kind, src:L.src, hasBom:!!L.hasBom }; }), opened:oid ? openedOf(oid) : null }; };
+window.PDOC_need = function(){ var nd = need(), oid = curOid(); return { oid:oid, items:nd.items, lam:nd.lam.map(function(L){ return Object.assign({ code:L.code, sheets:L.sheets, kind:L.kind, src:L.src, hasBom:!!L.hasBom }, L.by ? { by:clone(L.by) } : {}); }), opened:oid ? openedOf(oid) : null }; };
 window.PDOC_list = function(oid){ return clone(allDocs().filter(function(x){ return !oid || x.oid === oid; })); };
 window.PDOC_open = function(type, no){ openForm(type, no); return !!FM; };
 window.PDOC_html = function(no, oid, sel){ var x = findDoc(no, oid); return x ? docHTML(x, sel) : null; };   /* v129: sel = { secs:{1,2,3}, skip:{รหัส:1} } */
@@ -26463,6 +26916,9 @@ window.PDOC_setAX = setAX;
 window.PDOC_cancel = cancelDoc;
 window.PDOC_dueFromEnd = dueFromEnd;   /* v136: End Date (YYYY-MM-DD) → วันกำหนดเสร็จ(ปิดผิว) */
 window.PDOC_pdfName = function(no, oid){ var x = findDoc(no, oid); return x ? pdfName(x) : ''; };   /* v136: ชื่อไฟล์ตอน Save as PDF */
+window.PDOC_mb = function(){ var nd = need(); return mbMerged() ? clone(mbInfo(nd)) : null; };   /* v138: โหมดรวม — Order ที่รวม · Item ID · Order ที่มีไม้ */
+window.PDOC_lots = function(){ return lotScan(true).then(function(m){ return clone(m || {}); }); };   /* v138: Lot ที่ปันไม้แล้ว → Order ของ Type */
+window.PDOC_note = function(by, items, unit){ return byNote(by, items, unit); };   /* v138: โน้ต Item ใต้ไม้ (ทดสอบ) */
 })();
 </script>
 
