@@ -14294,7 +14294,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '146', D = '05/10/2026';
+  var V = '147', D = '05/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -31457,6 +31457,186 @@ window.FA_state = function(){
 };
 window.FA_select = function(oids){ if(FA.busy) return false; (oids || []).forEach(addSel); selChanged(); render(); return true; };
 window.FA_lib = { dueAuto:dueAuto, endAuto:endAuto, mergeDocs:mergeDocs, scopeCss:scopeCss, makePdf:makePdf, fitRowsOf:fitRowsOf, targetOf:targetOf };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v147 — อ่าน "ของที่บันทึกไว้" ในไฟล์กลาง (_changes) เร็วขึ้น · ไม่แตะไฟล์บน Server
+     ผู้ใช้ 05/10/2026 12:05 "ทำไมดูช้าแปลก ๆ เวลาโหลด" (ภาพ: อ่านของที่บันทึกไว้ · app_settings 339/482)
+     เดิม (sxlScanOver): อ่านไฟล์ใน _changes/<ตาราง>/ ทีละไฟล์ต่อกัน — ผ่านเครือข่ายไฟล์ละหลายสิบมิลลิวินาที ไฟล์ยิ่งเยอะยิ่งช้า
+     ใหม่ (ห่อแทนตัวเดิม · ผลเหมือนเดิมทุกอย่าง):
+       1) อ่านพร้อมกันครั้งละ 8 ไฟล์
+       2) จำเนื้อไฟล์ที่อ่านสำเร็จไว้ในเครื่องนี้ (IndexedDB "pv2_sxl_over") — ชื่อไฟล์มีเวลาบันทึก + เลขสุ่ม
+          ไฟล์ชื่อเดิม = เนื้อเดิมเสมอ (บันทึกใหม่ = ไฟล์ชื่อใหม่ · ไฟล์ไม่ถูกเขียนทับ) → เปิดครั้งต่อไปอ่านจาก Server เฉพาะไฟล์ใหม่
+          จำเฉพาะไฟล์ที่อ่านแล้วแปลงได้ครบ · ไฟล์ที่อ่านไม่ได้ไม่จำ (รอบหน้าลองใหม่แบบเดิม)
+          รุ่นเก่าที่ไม่ใช้แล้ว (Server เก็บ 3 รุ่นล่าสุด) ลบออกจากที่จำเองตอนอ่านครบทั้งตาราง
+     ไฟล์ / โฟลเดอร์บน Server ไม่ถูกเขียน ไม่ถูกลบ ไม่ถูกเปลี่ยนชื่อ (StarNexus / เครื่องอื่นอ่านได้เหมือนเดิม)
+     ปิดได้ทันทีถ้าสงสัย: localStorage pv2_sxl_cache = 'off' (อ่านพร้อมกันอย่างเดียว) · 'orig' (กลับไปอ่านทีละไฟล์แบบเดิมทุกอย่าง)
+     ตรวจใน Console: SXL_overCache() → จำนวนที่อ่านจาก Server / จากที่จำ / เวลา
+     ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+if(typeof sxlScanOver !== 'function' || typeof sxlOverDir !== 'function' || typeof sxlVer !== 'function' || typeof sxlTsOf !== 'function'
+   || typeof sxlFileToRaw !== 'function' || typeof sxlRebuild !== 'function' || typeof SXL === 'undefined') return;
+if(sxlScanOver.__v147) return;
+var orig = sxlScanOver;
+var CONC = 8, DBN = 'pv2_sxl_over', STN = 'f', VER = 'v1';
+var ST = { scans:0, files:0, read:0, hit:0, fail:0, ms:0, last:null, cacheErr:'' };
+var dead = false;   /* ที่จำไม่ตอบภายใน 8 วินาที → เลิกใช้ที่จำในรอบเปิดโปรแกรมนี้ (อ่านจาก Server ตามปกติ · ไม่ค้าง) */
+function limit(pr, ms, fb){
+  return new Promise(function(res){
+    var done = false, tm = setTimeout(function(){ if(done) return; done = true; dead = true; ST.cacheErr = 'ที่จำไม่ตอบ — อ่านจาก Server แทน'; res(fb); }, ms);
+    pr.then(function(v){ if(done) return; done = true; clearTimeout(tm); res(v); }, function(){ if(done) return; done = true; clearTimeout(tm); res(fb); });
+  });
+}
+
+function mode(){ try{ var v = localStorage.getItem('pv2_sxl_cache'); return (v === 'off' || v === 'orig') ? v : 'on'; }catch(e){ return 'on'; } }
+
+/* ── ที่จำในเครื่อง (IndexedDB) — ใช้ไม่ได้ = อ่านจาก Server ตามปกติ (ไม่มีข้อผิดพลาดหลุดออกไป) ── */
+var dbP = null;
+function db(){
+  if(dbP) return dbP;
+  dbP = new Promise(function(res){
+    try{
+      if(typeof indexedDB === 'undefined' || !indexedDB){ res(null); return; }
+      var rq = indexedDB.open(DBN, 1);
+      rq.onupgradeneeded = function(e){ try{ var d = e.target.result; if(!d.objectStoreNames.contains(STN)) d.createObjectStore(STN); }catch(x){} };
+      rq.onsuccess = function(e){ var d = e.target.result; try{ d.onversionchange = function(){ try{ d.close(); }catch(x){} dbP = null; }; }catch(x){} res(d); };
+      rq.onerror = function(){ ST.cacheErr = 'เปิดที่จำไม่ได้'; res(null); };
+      rq.onblocked = function(){ ST.cacheErr = 'ที่จำถูกบล็อก'; res(null); };
+    }catch(e){ ST.cacheErr = String((e && e.message) || e); res(null); }
+  });
+  return dbP;
+}
+function getMany(keys){
+  if(dead) return Promise.resolve(new Map());
+  return limit(getMany0(keys), 8000, new Map());
+}
+function getMany0(keys){
+  return db().then(function(d){
+    var out = new Map();
+    if(!d || !keys.length) return out;
+    return new Promise(function(res){
+      try{
+        var tx = d.transaction(STN, 'readonly'), os = tx.objectStore(STN);
+        keys.forEach(function(k){ var r = os.get(k); r.onsuccess = function(){ if(r.result !== undefined) out.set(k, r.result); }; });
+        tx.oncomplete = function(){ res(out); };
+        tx.onerror = tx.onabort = function(){ ST.cacheErr = 'อ่านที่จำไม่ได้'; res(new Map()); };
+      }catch(e){ ST.cacheErr = String((e && e.message) || e); res(new Map()); }
+    });
+  }, function(){ return new Map(); });
+}
+/* จำทีละ 50 ไฟล์ต่อหนึ่งรายการบันทึก (ที่เก็บเต็มกลางทาง = ส่วนที่จำได้แล้วยังใช้ได้) · สร้างทุกรายการพร้อมกัน → การอ่านครั้งถัดไปรอให้จำเสร็จก่อนเสมอ */
+function putMany(list){
+  if(dead || !list.length) return Promise.resolve();
+  return db().then(function(d){
+    if(!d) return;
+    var all = [];
+    for(var i = 0; i < list.length; i += 50) all.push(putPart(d, list.slice(i, i + 50)));
+    return Promise.all(all);
+  }, function(){});
+}
+function putPart(d, list){
+  return new Promise(function(res){
+    try{
+      var tx = d.transaction(STN, 'readwrite'), os = tx.objectStore(STN);
+      list.forEach(function(p){ try{ os.put(p[1], p[0]); }catch(x){} });
+      tx.oncomplete = function(){ res(); };
+      tx.onerror = tx.onabort = function(){ ST.cacheErr = 'จำไม่ได้ (ที่เก็บเต็ม?)'; res(); };
+    }catch(e){ res(); }
+  });
+}
+/* ลบที่จำของตารางนี้ที่ไม่ใช่รุ่นล่าสุดแล้ว (เรียกเฉพาะตอนอ่านครบทั้งตาราง) */
+var pruned = {};   /* รายชื่อรุ่นล่าสุดที่ลบที่จำตามไปแล้ว (ต่อตาราง) — ไม่เปลี่ยน = ไม่ต้องไล่ลบซ้ำทุก 10 วินาที */
+function prune(pre, keep){
+  if(dead) return Promise.resolve();
+  var sig = Array.from(keep).sort().join('\n');
+  if(pruned[pre] === sig) return Promise.resolve();
+  pruned[pre] = sig;
+  return db().then(function(d){
+    if(!d) return;
+    return new Promise(function(res){
+      try{
+        var tx = d.transaction(STN, 'readwrite'), os = tx.objectStore(STN);
+        var rq = os.openKeyCursor ? os.openKeyCursor(IDBKeyRange.bound(pre, pre + '￿')) : os.openCursor(IDBKeyRange.bound(pre, pre + '￿'));
+        rq.onsuccess = function(){ var c = rq.result; if(!c) return; if(!keep.has(String(c.key))){ try{ os.delete(c.key); }catch(x){} } c.continue(); };
+        tx.oncomplete = function(){ res(); };
+        tx.onerror = tx.onabort = function(){ res(); };
+      }catch(e){ res(); }
+    });
+  }, function(){});
+}
+function prefix(T){ var n = ''; try{ n = (SXL.dir && SXL.dir.name) || ''; }catch(e){} return VER + '|' + n + '|' + T.t + '|'; }
+
+/* อ่านพร้อมกันครั้งละ n งาน */
+async function pool(list, n, fn){
+  var i = 0;
+  var worker = async function(){ while(i < list.length){ var k = list[i++]; await fn(k); } };
+  var ws = []; for(var w = 0; w < Math.min(n, list.length); w++) ws.push(worker());
+  await Promise.all(ws);
+}
+
+/* ตัวใหม่ — ขั้นตอน/ผลเหมือน sxlScanOver เดิมทุกอย่าง ต่างแค่วิธีอ่านเนื้อไฟล์ */
+var scan = async function(T, S, only){
+  var md = mode();
+  if(md === 'orig') return orig.apply(this, arguments);
+  var t0 = Date.now();
+  var d = await sxlOverDir(T.t, false); if(!d) return false;
+  var latest = {}, all = {};
+  for await (var ent of d.entries()){
+    if(ent[1].kind !== 'file') continue;
+    var v = sxlVer(ent[0]); if(!v) continue;
+    (all[v.key] = all[v.key] || []).push(ent[0]);
+    var L0 = latest[v.key];
+    if(!L0 || v.ts > L0.ts || (v.ts === L0.ts && L0.plus && !v.plus)) latest[v.key] = { name:ent[0], ts:v.ts, plus:v.plus };
+  }
+  S.names = all;
+  var ch = false, todo = [], done = 0;
+  for(var bf in latest){
+    if(only && !only.has(bf)) continue;
+    var cur = S.over.get(bf), L = latest[bf];
+    if(cur && sxlTsOf(cur.name) >= L.ts) continue;
+    todo.push(bf);
+  }
+  var tick = function(){ if(SXL.onOver){ try{ SXL.onOver(T.t, ++done, todo.length); }catch(e){} } };
+  var pre = prefix(T), useC = (md === 'on');
+  var got = new Map(), puts = [], nRead = 0, nHit = 0, nFail = 0;
+  /* แปลงเป็นแถวในหน่วยความจำ — แบบเดียวกับตัวเดิม (แปลงไม่ได้ = ข้ามไฟล์นั้น รอบหน้าลองใหม่) */
+  var entry = function(b, o){ return { bucket:o.bucket, name:latest[b].name, at:o.at || '', by:o.by || '', rows:(o.rows || []).map(function(x){ return sxlFileToRaw(T, x); }) }; };
+  if(todo.length){
+    var cached = useC ? await getMany(todo.map(function(b){ return pre + latest[b].name; })) : new Map();
+    var need = [];
+    todo.forEach(function(b){
+      var c = cached.get(pre + latest[b].name), e1 = null;
+      if(c && c.o && typeof c.o === 'object'){ try{ e1 = entry(b, c.o); }catch(e){ e1 = null; } }
+      if(e1){ got.set(b, e1); nHit++; tick(); }
+      else need.push(b);
+    });
+    await pool(need, CONC, async function(b){
+      var Lb = latest[b];
+      try{
+        var f = await (await d.getFileHandle(Lb.name)).getFile(), o = JSON.parse(await f.text());
+        got.set(b, entry(b, o)); nRead++;
+        if(useC) puts.push([pre + Lb.name, { o:o, t:T.t, at:Date.now() }]);
+      }catch(e){ nFail++; console.warn('[ไฟล์กลาง] อ่าน', T.t, Lb.name, 'ไม่ได้ — รอบหน้าลองใหม่', e && e.message); }
+      tick();
+    });
+    /* ใส่ตามลำดับเดิม (ผลเหมือนอ่านทีละไฟล์) */
+    todo.forEach(function(b){ var e2 = got.get(b); if(!e2) return; S.over.set(b, e2); ch = true; });
+  }
+  if(useC && puts.length) putMany(puts);
+  if(useC && !only){ var keep = new Set(); Object.keys(latest).forEach(function(b){ keep.add(pre + latest[b].name); }); prune(pre, keep); }
+  if(ch) sxlRebuild(T, S);
+  ST.scans++; ST.files += todo.length; ST.read += nRead; ST.hit += nHit; ST.fail += nFail; ST.ms += Date.now() - t0;
+  if(todo.length) ST.last = { table:T.t, files:todo.length, read:nRead, hit:nHit, fail:nFail, ms:Date.now() - t0, at:new Date().toISOString() };
+  return ch;
+};
+scan.__v147 = true;
+sxlScanOver = scan;
+window.SXL_overCache = function(){ return { mode:mode(), conc:CONC, scans:ST.scans, files:ST.files, fromServer:ST.read, fromCache:ST.hit, failed:ST.fail, ms:ST.ms, last:ST.last, err:ST.cacheErr }; };
+window.SXL_overCacheClear = function(){ return db().then(function(d){ if(!d) return false; return new Promise(function(res){ try{ var tx = d.transaction(STN, 'readwrite'); tx.objectStore(STN).clear(); tx.oncomplete = function(){ res(true); }; tx.onerror = tx.onabort = function(){ res(false); }; }catch(e){ res(false); } }); }); };
+window.SXL_scanOrig = orig;   /* ชุดทดสอบ: เทียบผลกับตัวเดิม */
 })();
 </script>
 
