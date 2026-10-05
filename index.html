@@ -14294,7 +14294,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '144', D = '05/10/2026';
+  var V = '145', D = '05/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -28731,6 +28731,8 @@ html[data-theme="dark"] .fa-tbl tr.fa-sub td,html[data-theme="dark"] .fa-outs tr
 #faReveal button.stop{background:#fff;color:#b91c1c;border-color:#fff}
 #faRevealBg{position:fixed;inset:0;z-index:2147483299;background:rgba(15,23,42,.6)}
 .fa-docs td{font-size:11.5px}
+/* v145: แท็บทำทั้งชุด — ไม่แสดงแถบ Order ที่เปิดอยู่ในหน้า AX Detail (คลิกแถบซ้ายในแท็บนี้ = ติ๊กเลือก ไม่ได้เปิด Order → แถบค้างเลข Order เดิม ดูเหมือนเลือกผิด) */
+body.fa-tab #ibar{display:none!important}
 </style>
 <script>
 (function(){
@@ -28937,26 +28939,35 @@ function addSel(oid){
   if(!oid || FA.sel.indexOf(oid) >= 0) return;
   FA.sel.push(oid);
   if(!FA.per[oid]) FA.per[oid] = { head:'', pd:'', keep:'keep' };
-  var st = FA.per[oid], lib = L();
-  /* หัวที่โปรแกรมแนะนำไว้ (ไม่ได้พิมพ์เอง) แล้วตอนนี้ชนกับ Order อื่นที่เลือก / ใช้ไปแล้ววันนี้ → แนะนำใหม่ */
-  var clash = st.head && FA.sel.some(function(o){ return o !== oid && FA.per[o] && String(FA.per[o].head || '').toUpperCase() === String(st.head).toUpperCase(); });
-  var usedNow = st.head && lib && lib.usedLetters()[String(st.head).toUpperCase()];
-  if(!st.head || (st.headAuto && (clash || usedNow))){ st.head = suggestHead(oid); st.headAuto = true; }
+  var st = FA.per[oid];
+  if(!st.head) st.headAuto = true;
+  refreshAutoHeads();   /* v145: หัวที่โปรแกรมแนะนำ คิดใหม่ทุกครั้ง (ไม่ค้างค่าจากครั้งก่อน) */
   if(!FA.mach[oid]) machLoad(oid);
 }
 function remSel(oid){
   var i = FA.sel.indexOf(oid); if(i < 0) return;
   FA.sel.splice(i, 1);
+  refreshAutoHeads();
+}
+/* v145: หัว Shelf ที่โปรแกรมแนะนำ (ไม่ได้พิมพ์เอง) คิดใหม่ทุกครั้ง แบบแท็บ SAW / NC — ตามลำดับที่เลือก ·
+   ข้ามตัวที่ใช้ไปแล้ววันนี้ (ncp_shelf_used) / หัวที่พิมพ์เองของ Order อื่น / หัวเลขชั้นวางเดิมจากไฟล์
+   ผู้ใช้ 05/10/2026 10:53: "แท็บ SAW / NC 676 ได้ A แต่ทำทั้งชุดขึ้น C — กด รีเซต Shelf แล้ว" (เดิมจำหัวที่แนะนำไว้ตั้งแต่ก่อนรีเซต) */
+function refreshAutoHeads(){
+  var lib = L(); if(!lib) return false;
+  var list = stampOids(), taken = {}, ch = false;
+  FA.sel.forEach(function(o){ var st = FA.per[o]; if(st && st.head && !st.headAuto) taken[String(st.head).toUpperCase()] = 1; });
+  try{ Object.keys(keptHeads()).forEach(function(h){ taken[h] = 1; }); }catch(e){}
+  var cand = lib.pickLetters(FA.sel.length + 30).filter(function(x){ return !taken[x]; }), k = 0;
+  list.forEach(function(o){
+    var st = FA.per[o]; if(!st || !(st.headAuto || !st.head)) return;
+    var h = cand[k++]; if(!h) return;
+    if(st.head !== h){ st.head = h; ch = true; }
+    st.headAuto = true;
+  });
+  return ch;
 }
 /* หลังโหลดข้อมูล: หัวที่โปรแกรมตั้งให้ (ไม่ได้พิมพ์เอง) ชนกับหัวของ Order ที่ใช้เลขชั้นวางเดิม → ตั้งใหม่ให้เอง */
-function autoHeads(){
-  var kept = {}; try{ kept = keptHeads(); }catch(e){ kept = {}; }
-  if(!Object.keys(kept).length) return;
-  stampOids().forEach(function(o){
-    var st = FA.per[o]; if(!st || !st.headAuto) return;
-    if(kept[String(st.head || '').toUpperCase()]) st.head = suggestHead(o);
-  });
-}
+function autoHeads(){ refreshAutoHeads(); }
 function selChanged(){ FA.lmActive = null; autoCheckSoon(); }   /* "ไม่ออกใบปิดผิวรอบนี้" ค้างไว้จนจบรอบ / เริ่มชุดใหม่ */
 function toggleSel(oid){
   if(FA.busy || loadingNow()){ toast('รอสักครู่ — กำลังทำงานอยู่'); return; }
@@ -29549,6 +29560,7 @@ function hook(){
     var a = q('faArea'), b = q('faTabBtn');
     if(a) a.classList.toggle('on', on);
     if(b) b.classList.toggle('active', on);
+    try{ document.body.classList.toggle('fa-tab', on); }catch(e){}   /* v145: ในแท็บนี้ไม่แสดงแถบ Order ที่เปิดอยู่ใน AX Detail (CSS body.fa-tab #ibar) */
     if(on){
       try{ ['tabAX', 'tabIMOS', 'tabSAW'].forEach(function(id){ var e = q(id); if(e) e.classList.remove('active'); }); }catch(e){}
       try{ var s = q('sawArea'); if(s) s.classList.remove('on'); }catch(e){}
@@ -29568,9 +29580,19 @@ function render(){
   var wrap = q('faWrap'); if(!wrap) return;
   if(FA.view === 'run') wrap.innerHTML = runHTML();
   else if(FA.view === 'done') wrap.innerHTML = doneHTML();
-  else { wrap.innerHTML = formHTML(); renderOuts(); renderChecks(); paintDirRow(); }
+  else { refreshAutoHeads(); wrap.innerHTML = formHTML(); renderOuts(); renderChecks(); paintDirRow(); }
   decorate();
 }
+/* v145: ปลดล็อก / รีเซ็ตตัวอักษรชั้นวางในหน้าต่าง SAW / NC ระหว่างเปิดแท็บนี้ → หัวที่โปรแกรมแนะนำตามทันที (ไม่วาดใหม่ระหว่างพิมพ์) */
+try{
+  window.addEventListener('storage', function(e){
+    if(!e || e.key !== 'ncp_shelf_used' || FA.view !== 'form' || FA.busy) return;
+    var a = q('faArea'); if(!a || !a.classList.contains('on')) return;
+    var ae = document.activeElement;
+    if(ae && a.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+    render();
+  });
+}catch(e){}
 
 function formHTML(){
   return '<div class="fa-head"><div><h2>🧰 ทำทั้งชุด</h2>'
