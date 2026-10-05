@@ -14294,7 +14294,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '145', D = '05/10/2026';
+  var V = '146', D = '05/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -28733,6 +28733,10 @@ html[data-theme="dark"] .fa-tbl tr.fa-sub td,html[data-theme="dark"] .fa-outs tr
 .fa-docs td{font-size:11.5px}
 /* v145: แท็บทำทั้งชุด — ไม่แสดงแถบ Order ที่เปิดอยู่ในหน้า AX Detail (คลิกแถบซ้ายในแท็บนี้ = ติ๊กเลือก ไม่ได้เปิด Order → แถบค้างเลข Order เดิม ดูเหมือนเลือกผิด) */
 body.fa-tab #ibar{display:none!important}
+/* v146: ขนาดตัด (.SAW) ต่อ Order ใต้ปุ่ม SAW · ตั้งเอง (ไม่ตามค่าตั้ง) = กรอบสีม่วง */
+#faArea .fa-dimsel{font-size:10.5px;padding:2px 4px;max-width:150px;font-weight:700}
+#faArea .fa-dimsel.set{border-color:#8b5cf6;background:#f5f3ff;color:#5b21b6}
+html[data-theme="dark"] #faArea .fa-dimsel.set{border-color:#a78bfa!important;color:#ddd6fe!important}
 </style>
 <script>
 (function(){
@@ -28902,14 +28906,22 @@ function machMem(){ var o = lsGet(LS_MACH, {}); return (o && typeof o === 'objec
 function machLoad(oid){
   var m = machMem()[oid];
   FA.mach[oid] = { m:(m && m.m === 'cnc') ? 'cnc' : 'saw', set:!!(m && (m.set != null ? m.set : m.m === 'cnc')),
-                   mats:(m && m.mats && typeof m.mats === 'object') ? JSON.parse(JSON.stringify(m.mats)) : {} };
+                   mats:(m && m.mats && typeof m.mats === 'object') ? JSON.parse(JSON.stringify(m.mats)) : {}, dim:(m && DIMS[m.dim]) ? m.dim : '' };
 }
 function machSave(oid){
   var all = machMem(), M = FA.mach[oid]; if(!M) return;
-  all[oid] = { m:M.m, set:M.set, mats:M.mats, at:Date.now() };
+  all[oid] = { m:M.m, set:M.set, mats:M.mats, dim:M.dim || '', at:Date.now() };
   var ks = Object.keys(all);
   if(ks.length > 300) ks.sort(function(a, b){ return ((all[a] && all[a].at) || 0) - ((all[b] && all[b].at) || 0); }).slice(0, ks.length - 300).forEach(function(k){ delete all[k]; });
   lsSet(LS_MACH, all);
+}
+/* v146: ขนาดตัด (.SAW) ต่อ Order — ช่อง 📐 ใต้ปุ่ม SAW (จำต่อ Order ในเครื่องนี้) · ว่าง = ตามค่าตั้ง (ค่าตั้งของแท็บนี้ / โปรแกรม SAW / NC) */
+function ordDimSet(oid){ var M = FA.mach[oid]; return (M && DIMS[M.dim]) ? M.dim : ''; }
+function ordDim(oid){ return ordDimSet(oid) || effDim(); }
+function hasSaw(oid){
+  var d = FA.data[oid], M = FA.mach[oid];
+  if(d && d.mats && d.mats.length) return d.mats.some(function(x){ return machOf(oid, x.code) === 'saw'; });
+  return !M || M.m === 'saw' || Object.keys(M.mats || {}).some(function(k){ return M.mats[k] === 'saw'; });
 }
 function learned(code){ return !!(FA.cfg.matMach && FA.cfg.matMach[code] === 'cnc'); }
 function baseMach(oid, code){ var M = FA.mach[oid]; if(!M) return 'saw'; if(M.set) return M.m; return learned(code) ? 'cnc' : M.m; }
@@ -29458,6 +29470,13 @@ function checks(){
       s:esc(act.slice(0, 4).map(function(x){ return x.no + ' (' + (x.multi ? 'รวม ' + x.multi.length + ' Order' : x.oid) + (x.lot ? ' · LOT ' + x.lot : '') + ')'; }).join(' · ')) + ' — ทำต่อ = ออกใบใหม่อีกใบ',
       btn:[{ a:'noLm', l:'ไม่ออกใบปิดผิวรอบนี้' }], ack:'ออกใบใหม่อีกใบ' });
   } else if(o.lm && FA.skipLm) I.push({ k:'skiplm', t:'รอบนี้<b>ไม่ออกใบปิดผิว</b>', s:'', btn:[{ a:'yesLm', l:'ออกใบปิดผิวด้วย' }] });
+  /* v146: ขนาดตัดต่อ Order — รวมงานแต่ขนาดตัดต่างกัน → แยกไฟล์ .saw ตามขนาดตัด (บอกให้รู้) */
+  if(FA.cfg.combine && FA.sel.length > 1){
+    var dmz = {}, dkz = [];
+    FA.sel.forEach(function(o2){ if(!hasSaw(o2)) return; var k = ordDim(o2); if(!dmz[k]){ dmz[k] = []; dkz.push(k); } dmz[k].push(o2); });
+    if(dkz.length > 1) I.push({ k:'dimsplit', t:'ขนาดตัดต่างกัน → ไฟล์ .saw แยกตามขนาดตัด ' + dkz.length + ' ไฟล์',
+      s:esc(dkz.map(function(k){ return DIMS[k].replace(/ \(.*$/, '') + ': ' + dmz[k].length + ' Order'; }).join(' · ')) + ' — งานเดียวกัน โฟลเดอร์เดียวกัน · ใบปิดผิว / BOM Fitting รวมเหมือนเดิม' });
+  }
   try{ var mb = window.MBOM_state ? window.MBOM_state() : null; if(mb && mb.on) I.push({ k:'mb', t:'หน้า AX Detail เปิดโหมดรวม BOM อยู่', s:'ระหว่างทำจะปิดโหมดรวมให้ (BOM Fitting / ใบปิดผิว ต้องอ่านทีละ Order)' }); }catch(e){}
   return { E:E, W:W, OK:OK, I:I };
 }
@@ -29609,6 +29628,13 @@ function machSeg(oid, code){
   return '<span class="fa-seg"><button type="button" data-act="mach" data-o="' + esc(oid) + '"' + a + ' data-m="saw" class="' + (cur === 'saw' ? 'fa-on' : '') + '">SAW</button>'
     + '<button type="button" data-act="mach" data-o="' + esc(oid) + '"' + a + ' data-m="cnc" class="cnc ' + (cur === 'cnc' ? 'fa-on' : '') + '">CNC</button></span>';
 }
+function dimSel(oid){
+  var v = ordDimSet(oid), dn = function(k){ return DIMS[k].replace(/ \(.*$/, ''); };
+  return '<div style="margin-top:4px"><select class="fa-sel fa-dimsel' + (v ? ' set' : '') + '" data-f="odim" data-o="' + esc(oid) + '" title="ขนาดที่ส่งเข้า .saw ของ Order นี้ (แบบช่อง 📐 ขนาดตัด (.SAW) ในโปรแกรม SAW / NC) — ว่าง = ตามค่าตั้ง">'
+    + '<option value="">📐 ตามค่าตั้ง · ' + esc(dn(effDim())) + '</option>'
+    + Object.keys(DIMS).map(function(k){ return '<option value="' + k + '"' + (v === k ? ' selected' : '') + '>📐 ' + esc(DIMS[k]) + '</option>'; }).join('')
+    + '</select></div>';
+}
 function statusChip(oid){
   var d = FA.data[oid];
   if(FA.loading && FA.loading.oid === oid) return '<span class="fa-chip idle">กำลังตรวจ…</span>';
@@ -29638,7 +29664,8 @@ function ordersCard(){
       + '<td><div class="fa-oid">' + esc(oid) + '</div><div class="fa-set">' + (d ? esc(d.set) + (d.sets && d.sets.length > 1 ? ' +' + (d.sets.length - 1) + ' Item' : '') + (nMat ? ' · ' + nMat + ' วัสดุ' : '') : '—') + '</div></td>'
       + '<td>' + (d ? (d.err ? '—' : d.rows.length) : '—') + '</td>'
       + '<td>' + machSeg(oid) + (mix ? '<span class="fa-mix">ผสม</span>' : '')
-      + (nMat ? '<div><button type="button" class="fa-btn sm" style="margin-top:4px" data-act="mats" data-o="' + esc(oid) + '">วัสดุ ' + nMat + ' ' + (FA.open[oid] ? '▴' : '▾') + '</button>' + (nL ? ' <span class="fa-chip learn" title="วัสดุที่เคยตั้งเป็น CNC — จำไว้ให้เอง">CNC จำไว้ ' + nL + '</span>' : '') + '</div>' : '') + '</td>'
+      + (nMat ? '<div><button type="button" class="fa-btn sm" style="margin-top:4px" data-act="mats" data-o="' + esc(oid) + '">วัสดุ ' + nMat + ' ' + (FA.open[oid] ? '▴' : '▾') + '</button>' + (nL ? ' <span class="fa-chip learn" title="วัสดุที่เคยตั้งเป็น CNC — จำไว้ให้เอง">CNC จำไว้ ' + nL + '</span>' : '') + '</div>' : '')
+      + (hasSaw(oid) ? dimSel(oid) : '') + '</td>'
       + '<td>' + (keep
           ? '<div style="font-size:11px;font-weight:700;color:#0f7a35">ใช้เลขเดิม<br><span style="font-family:Menlo,monospace">' + esc(d.keepMap && d.keepMap.letter || '') + '</span></div>'
           : '<input class="fa-in hd' + (headErrOf(oid) ? ' bad' : '') + '" data-f="head" data-o="' + esc(oid) + '" maxlength="12" value="' + esc(st.head || '') + '" title="หัว Shelf — A–Z 0–9 ไม่เกิน 6 ตัว เช่น A · FR17 · 0855 · โปรแกรมรันเลข 4 หลักต่อท้าย (ตั้งให้เองแล้ว แก้ได้)" aria-label="หัว Shelf ' + esc(oid) + '">')
@@ -29897,6 +29924,7 @@ function onChange(ev){
   else if(f === 'cncSmall'){ FA.cfg.cnc.small = !!t.checked; saveCfg(); render(); }
   else if(f === 'cncMin'){ var n = Math.round(+t.value); if(n > 0 && n < 2000){ FA.cfg.cnc.smallMin = n; saveCfg(); } else t.value = FA.cfg.cnc.smallMin; }
   else if(f === 'lmDue' || f === 'lmEnd') lmEdit(f, t);
+  else if(f === 'odim' && oid){ if(!FA.mach[oid]) machLoad(oid); FA.mach[oid].dim = DIMS[t.value] ? t.value : ''; machSave(oid); render(); }
   else if(f === 'keep' && FA.per[oid]){ FA.per[oid].keep = t.value === 'new' ? 'new' : 'keep'; FA.per[oid].keepSeen = true; if(FA.per[oid].keep === 'new' && !FA.per[oid].head){ FA.per[oid].head = suggestHead(oid); FA.per[oid].headAuto = true; } render(); }
 }
 /* ช่องวันที่ใบปิดผิว: ไม่วาดฟอร์มใหม่ระหว่างพิมพ์ (Chrome ส่ง change ทุกครั้งที่ครบวัน เช่น ปี 0002 ตอนพิมพ์ "2") ·
@@ -30482,23 +30510,31 @@ async function runAll(){
       stepSet('saw', 'run', 'เปิดโปรแกรม SAW / NC (ตัวซ่อน)…');
       var w = await ncEnsure(R);
       var lines = [];
-      for(var ji = 0; ji < sawJobs.length; ji++){
+      /* v146: ขนาดตัดเลือกได้ต่อ Order — งานที่รวมกันแต่ขนาดตัดต่างกัน แยกเป็นไฟล์ .saw ตามขนาดตัด (งานเดียวกัน · โฟลเดอร์เดียวกัน · ใบปิดผิว / BOM Fitting รวมเหมือนเดิม) */
+      var units = [];
+      sawJobs.forEach(function(J){
+        var by = {}, ks = [];
+        J.gs.forEach(function(g){ if(!g.saw.length) return; var k = ordDim(g.oid); if(!by[k]){ by[k] = []; ks.push(k); } by[k].push(g); });
+        ks.forEach(function(k){ units.push({ J:J, gs:by[k], dim:k, split:ks.length > 1 }); });
+      });
+      for(var ji = 0; ji < units.length; ji++){
         chk();
-        var J = sawJobs[ji], tag = (sawJobs.length > 1 ? 'งาน ' + (ji + 1) + '/' + sawJobs.length + ': ' : '');
-        var rows = []; J.gs.forEach(function(g){ g.saw.forEach(function(r){ rows.push(r); }); });
+        var U = units[ji], J = U.J, uo = U.gs.map(function(g){ return g.oid; });
+        var tag = (units.length > 1 ? 'งาน ' + (ji + 1) + '/' + units.length + (U.split ? ' · ' + DIMS[U.dim].replace(/ \(.*$/, '') : '') + ': ' : '');
+        var rows = []; U.gs.forEach(function(g){ g.saw.forEach(function(r){ rows.push(r); }); });
         stepSet('saw', 'run', lines.concat([tag + 'ส่ง ' + rows.length + ' ชิ้นเข้าโปรแกรม SAW / NC…']).join('\n'));
         await sleep(30);
-        var lr = loadInto(w, rows, J.oids.join(', '));
+        var lr = loadInto(w, rows, uo.join(', '));
         stepSet('saw', 'run', lines.concat([tag + 'จัดวาง ' + lr.parts + ' ชิ้น…']).join('\n'));
         await sleep(30);
         var pl = null, fgOk = await fgReady(R, 'saw', lines.concat([tag + 'จัดวาง ' + lr.parts + ' ชิ้น…']));
         for(var bt = 0; bt < 3; bt++){
-          pl = w.SAWNC_AUTO.plan({ goal:cfg.goal || undefined, sawMode:cfg.sawMode || undefined, dim:cfg.dim || undefined });
+          pl = w.SAWNC_AUTO.plan({ goal:cfg.goal || undefined, sawMode:cfg.sawMode || undefined, dim:U.dim });
           if(!pl || !pl.ok) throw new Error('จัดวางไม่สำเร็จ: ' + ((pl && pl.error) || ''));
           /* v144: ขนาดบอร์ดที่จัดผังต้องมีไม้ขนาดนั้นใน Fitting Global (เช่น มีแต่ P68 แต่จัด 4×8) — ห้ามปล่อยผ่าน · แก้ขนาดแล้วจัดผังใหม่ทันที
                    ตรวจก่อนเรื่องชิ้นใหญ่กว่าแผ่น (บอร์ดผิดขนาดอาจเป็นต้นเหตุ) */
           if(!fgOk) break;
-          var bmr = boardMis(pl.mats.map(function(m){ return { mat:m.mat, w:+m.boardW, l:+m.boardL, cnc:false, oids:J.oids }; }));
+          var bmr = boardMis(pl.mats.map(function(m){ return { mat:m.mat, w:+m.boardW, l:+m.boardL, cnc:false, oids:uo }; }));
           if(!bmr.length) break;
           if(bt === 2) throw new Error('แก้ขนาดบอร์ดแล้วยังไม่ตรงกับ Fitting Global: ' + bmr.map(function(x){ return x.mat; }).join(', '));
           var fixable = bmr.every(function(x){ return !!x.to; });
@@ -30556,7 +30592,7 @@ async function runAll(){
         if(o.sumax) setL.push({ parts:base.concat('Excel'), name:function(x){ return pl.job + x + '_สรุปงาน_AX.xlsx'; } });
         if(o.cut) setL.push({ parts:base.concat('Excel'), name:function(x){ return pl.job + x + '_ใบสั่งตัด.xlsx'; } });
         var sfx = setL.length ? await freeSet(setL) : '', jn = pl.job + sfx;
-        var grp = 'SAW · ' + pl.job + (J.oids.length > 1 ? ' (' + J.oids.length + ' Order)' : '');
+        var grp = 'SAW · ' + pl.job + (uo.length > 1 ? ' (' + uo.length + ' Order)' : '') + (U.split ? ' · ' + DIMS[U.dim].replace(/ \(.*$/, '') : '');
         if(o.saw){
           stepSet('saw', 'run', lines.concat([tag + 'เขียน ' + jn + '.saw…']).join('\n'));
           await put('saw', base.concat('SAW'), jn + '.saw', new TextEncoder().encode(sw.text), grp, 'ไฟล์เลื่อย .saw', pl.boards + ' แผ่น · ' + pl.placed + ' ชิ้น · ' + gl + (gk.ok ? ' · ตรวจผังผ่าน' : ' · ⚠ ตรวจผังไม่ผ่าน'));
@@ -30589,13 +30625,13 @@ async function runAll(){
           if(!co) throw new Error('สร้าง Excel ใบสั่งตัดไม่ได้');
           await put('saw', base.concat('Excel'), jn + '_ใบสั่งตัด.xlsx', xlsxBlob(co.buf), grp, 'ใบสั่งตัด SAW (Excel)', pl.boards + ' แผ่น');
         }
-        if(o.blf) J.saw = { job:pl.job, payload:w.SAWNC_AUTO.boards() };
+        if(o.blf){ var sp = { job:pl.job, payload:w.SAWNC_AUTO.boards() }; (J.saws = J.saws || []).push(sp); if(!J.saw) J.saw = sp; }
         if(wantDocs(cfg)){
           var sd = null; try{ sd = w.SAWNC_AUTO.sawDocs(); }catch(e){ sd = null; }
           if(sd && sd.cut) R.docs.push({ t:'ใบสั่งตัด SAW · ' + pl.job, html:sd.cut, j:J.i, ord:1 });
           if(sd && sd.pattern && cfg.docPat) R.docs.push({ t:'ผังการตัด SAW · ' + pl.job, html:sd.pattern, j:J.i, ord:2 });
         }
-        lines.push(tag + pl.job + ' — ' + pl.boards + ' แผ่น · ' + pl.placed + ' ชิ้น · ' + gl);
+        lines.push(tag + pl.job + ' — ' + pl.boards + ' แผ่น · ' + pl.placed + ' ชิ้น · ' + gl + ' · ' + DIMS[U.dim].replace(/ \(.*$/, ''));
         stepSet('saw', 'run', lines.join('\n'));
       }
       if(R.log.length) R.notes.push('ข้อความจากโปรแกรม SAW / NC (ตัวซ่อน) ' + R.log.length + ' ข้อความ: ' + R.log.slice(0, 3).join(' · ') + (R.log.length > 3 ? ' …' : ''));
@@ -30821,7 +30857,7 @@ async function stepBlf(R){
   var ex = explodeOn(), allC = [];
   jobs.forEach(function(J){
     J.conv = [];
-    [J.saw && J.saw.payload, J.cnc && J.cnc.payload].forEach(function(msg){
+    (J.saws || (J.saw ? [J.saw] : [])).map(function(s){ return s.payload; }).concat([J.cnc && J.cnc.payload]).forEach(function(msg){
       if(!msg) return;
       (msg.rows || []).forEach(function(r){ var c = B.conv(r, msg); if(!c) return; c.alloc = r.alloc || {}; c.mach = msg.ncOnly ? 'CNC' : 'SAW'; J.conv.push(c); allC.push(c); });
     });
@@ -30863,7 +30899,7 @@ async function stepBlf(R){
   /* รวมยอดของทุกงานก่อน แล้วบันทึกครั้งเดียวต่อ Order (แยกทีละ Order แล้ว 2 งานลง Order เดียวกัน เช่น Lot + Order ของ Type นั้นเอง → ไม่ทับกัน) */
   var lines = [], anyFail = false, G = {}, gOrd = [];
   jobs.forEach(function(J){
-    var label = (J.saw && J.saw.job) || J.folder, mine = [];
+    var label = ((J.saws && J.saws.length) ? J.saws.map(function(s){ return s.job; }).join(' + ') : (J.saw && J.saw.job)) || J.folder, mine = [];
     J.conv.forEach(function(c){
       var sh = B.allocRound(c.n, c.alloc), ks = Object.keys(sh).filter(function(k){ return sh[k] > 0; });
       if(!ks.length){ sh = { '':c.n }; ks = ['']; }
