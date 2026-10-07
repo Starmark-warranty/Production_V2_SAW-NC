@@ -12304,6 +12304,7 @@ try{
   window.IMP_asmProv   = _asmProv;     window.IMP_asmSamples  = _asmSamples;
   window.IMP_asmWhen   = _asmWhen;
   /* v114: Order แม่ของ Item Id Set (ใช้ปันยอดไม้เข้าแต่ละ Type) — ตัวที่น่าจะใช่ที่สุดมาก่อน */
+  window.IMP_motherReset = function(){ _asmIdx = null; };   /* v152 */
   window.IMP_motherList = function(set){
     return _asmMotherIndex().then(function(idx){
       return ((idx && idx.bySet[String(set == null ? '' : set).trim()]) || []).map(function(c){ return c.oid; });
@@ -14301,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '151', D = '07/10/2026';
+  var V = '152', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -32106,6 +32107,23 @@ window.SXL_markBusy = function(oid, txt){
          ต้นฉบับไม่ถูกแตะ · ใช้ชื่อนั้นโคลนใหม่ได้อีก
        • เปลี่ยนชื่อตัวโคลน → ป้าย clone ย้ายตามชื่อใหม่
      ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v152 — Save As / Rename ของเมนูคลิกขวา พาค่าของ Order ไปครบ (ผู้ใช้ 07/10/2026 11:03 "มันต้องมาทั้งหมดจากตัวแม่")
+       เดิม (head) คัดลอก / ย้ายแค่แถว imos_orders → BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ ค้างอยู่ที่ชื่อเดิม
+       ใหม่ (แทนที่ orderSaveAs / orderRename ทั้งตัว · กล่องถาม / ข้อความเดิม):
+         Save As → คัดลอก iids / bom_edits / extra_fit / bomline_wood แบบเดียวกับ 🧬 โคลน + ป้าย COPY (via saveas)
+         Rename  → ย้าย iids / bom_edits / extra_fit / bomline_wood / ป้าย clone ไปชื่อใหม่ · ลบของชื่อเดิม (เฉพาะที่ยังเป็นค่าที่ย้ายไป)
+                   · Order ของ Type ที่ปันไม้จาก Lot ชื่อเดิม (bomline_wood order = ชื่อเดิม) → ชี้ชื่อใหม่ · ค่าในเครื่องนี้ (เครื่องตัด/ชื่อ .saw · PD · ไม่เจาะ) ย้ายตาม
+         เขียนทับ Order ที่มีอยู่ (ยืนยันแล้ว) → ค่าของชื่อปลายทางถูกแทนด้วยของต้นทางทั้งชุด (ที่ต้นทางไม่มี = เอาออก ไม่ปนกัน)
+         ชื่อที่มีค่าค้างของ Order ที่เคยลบ → ถามก่อนแทนที่ · บันทึกไม่สำเร็จ → คืนค่าเดิมของปลายทาง
+         ไม่ย้าย / ไม่คัดลอก: เอกสาร / ใบปิดผิวที่ออกแล้ว (อยู่ในประวัติชื่อเดิม — ใบที่พิมพ์ไปมีชื่อเดิม · Rename Order ที่มีเอกสาร = ถามก่อน)
+                              · ภาพถ่ายตรวจ "ต้นทางแก้" (ของชื่อเดิม / ของปลายทางที่ถูกเขียนทับ = ลบแบบตอนลบ Order · ชื่อใหม่เก็บใหม่เงียบ ๆ ตอนเปิด)
+         ปลายทางที่มีเอกสารออกแล้ว / เป็น Lot ที่ปันไม้เข้า Type แล้ว → เขียนทับไม่ได้ (ประวัติเอกสาร / ไม้ของ Type จะปนกัน)
+         ไฟล์กลาง: อ่านไฟล์ล่าสุดของเครื่องอื่นก่อนทำ · Windows 7 ที่ยังไม่เห็นเครื่องช่วยแปลง → ไม่ Rename / ไม่เขียนทับ
+         ชื่อที่บันทึกใหม่ (insert) — เครื่องอื่นสร้างชื่อเดียวกันตัดหน้า = ล้ม ไม่เขียนทับของเขา
+         กำลังแก้ไข / มีที่แก้ยังไม่บันทึก → ไม่ทำ (บอกเหตุ — เปิด Order ใหม่จะล้างงานแก้ที่ยังไม่บันทึก)
+         ชื่อมีเครื่องหมาย ' " \ < > ` & → ไม่รับ (ชื่อ Order ถูกฝังใน onclick ของรายการซ้าย)
+     ══════════════════════════════════════════════════════════════════════════ -->
 <style>
 #orderList .order-item .ocl-tag{display:inline-block;margin-left:5px;font-size:9px;font-weight:800;letter-spacing:.3px;color:#0e7490;background:#ecfeff;border:1px solid #a5f3fc;border-radius:5px;padding:0 5px;line-height:14px;vertical-align:middle}
 #oclBg{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
@@ -32196,7 +32214,7 @@ function paint(){
     var oid = itemOid(it), v = oid && CL.map[oid], tag = it.querySelector('.ocl-tag');
     if(v){
       if(!tag){ tag = document.createElement('span'); tag.className = 'ocl-tag'; tag.textContent = 'COPY'; (it.querySelector('.order-meta') || it).appendChild(tag); }   /* ไม่ใส่ใน .order-name */
-      tag.title = 'โคลนจาก ' + (v.from || '?') + (v.at ? ' เมื่อ ' + dmy(v.at) : '') + ' — ข้อมูลยึดตามต้นฉบับ ณ ตอนโคลน ไม่เปลี่ยนตามต้นฉบับ';
+      tag.title = (v.via === 'saveas' ? 'สำเนา (Save As) จาก ' : 'โคลนจาก ') + (v.from || '?') + (v.at ? ' เมื่อ ' + dmy(v.at) : '') + (v.renamedFrom ? ' · เปลี่ยนชื่อจาก ' + v.renamedFrom : '') + ' — ข้อมูลยึดตามต้นฉบับ ณ ตอนนั้น ไม่เปลี่ยนตามต้นฉบับ';
     } else if(tag && tag.parentNode) tag.parentNode.removeChild(tag);
   });
 }
@@ -32208,90 +32226,273 @@ var _pT = 0;
   loadMarks(true).then(paint);
 })();
 
-/* ── โคลน ── */
-/* ถอนค่าที่เพิ่งเขียน (บันทึกไม่สำเร็จ): ลบเฉพาะคีย์ที่ค่ายังตรงกับที่ตัวโคลนเขียนเป๊ะ — ของคนอื่นที่เขียนทับแล้วไม่แตะ */
+/* ── คัดลอก / ย้าย Order (🧬 โคลน · Save As · Rename ใช้ตัวเดียวกัน) ── */
+var MOVE = KEYS.concat(['clone:']);                                  /* ค่าของ Order ที่ตามชื่อไป (รวมป้าย clone) */
 function canon(v){   /* JSON เทียบได้แม้ลำดับคีย์ต่างกัน (Supabase jsonb เรียงคีย์ใหม่) */
   if(v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
   if(Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
   return '{' + Object.keys(v).sort().filter(function(k){ return v[k] !== undefined; }).map(function(k){ return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}';
 }
-async function undo(d, rows){
+function deep(v){ return (v === null || typeof v !== 'object') ? v : JSON.parse(JSON.stringify(v)); }
+function asObj(v){ if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ return null; } } return (v && typeof v === 'object') ? v : null; }
+/* ค่าของ Order (MOVE) → { 'iids:':ค่า, ... } */
+async function readK(d, oid){
+  var r = await d.from('app_settings').select('key,value').in('key', MOVE.map(function(p){ return p + oid; }));
+  if(r && r.error) throw r.error;
+  var out = {};
+  ((r && r.data) || []).forEach(function(x){ MOVE.forEach(function(p){ if(x && x.key === p + oid && x.value != null) out[p] = x.value; }); });
+  return out;
+}
+/* ลบเฉพาะคีย์ที่ค่ายังตรงกับ rows เป๊ะ (ของคนอื่นที่เขียนทับแล้วไม่แตะ) · คืน false = ทำไม่สำเร็จ */
+async function undo(d, rows, info){
   try{
+    if(!rows.length) return true;
     var r = await d.from('app_settings').select('key,value').in('key', rows.map(function(x){ return x.key; }));
-    if(r && r.error) return;
+    if(r && r.error) return false;
     var mine = {}, isStr = {}; rows.forEach(function(x){ mine[x.key] = canon(x.value); isStr[x.key] = typeof x.value === 'string'; });
     var del = ((r && r.data) || []).filter(function(x){
       if(mine[x.key] == null) return false;
       var v = x.value; if(typeof v === 'string' && !isStr[x.key]){ try{ v = JSON.parse(v); }catch(e){} }
-      return canon(v) === mine[x.key];
+      var same = canon(v) === mine[x.key];
+      if(!same && info) (info.skipped = info.skipped || []).push(x.key);
+      return same;
     }).map(function(x){ return x.key; });
-    if(del.length) await d.from('app_settings').delete().in('key', del);
-  }catch(e){}
+    if(del.length){ var w = await d.from('app_settings').delete().in('key', del); if(w && w.error) return false; }
+    return true;
+  }catch(e){ return false; }
 }
-async function cloneOrder(oid, nid){
+/* บันทึกไม่สำเร็จ → คืนค่าเดิมของปลายทาง (ที่เดิมไม่มี = ถอนของที่เพิ่งเขียน) · คืน false = คืนไม่ครบ */
+async function restore(d, nid, rows, tK){
+  var back = [], gone = [], ok = true;
+  rows.forEach(function(r){ var p = r.key.slice(0, r.key.length - nid.length); if(tK[p] != null) back.push({ key:r.key, value:tK[p] }); else gone.push(r); });
+  try{ if(back.length){ var w = await d.from('app_settings').upsert(back, { onConflict:'key' }); if(w && w.error) ok = false; } }catch(e){ ok = false; }
+  if(!(await undo(d, gone))) ok = false;
+  return ok;
+}
+/* จำนวนแผ่นไม้: คัดลอก = เป็นของ Order ใหม่เอง (ไม่ผูก Lot) · ย้ายชื่อ = เหมือนเดิม แค่ชื่อที่ชี้ตัวเองเปลี่ยนตาม */
+function woodOf(v, oid, nid, mode){
+  v = asObj(deep(v));
+  if(!v || !Array.isArray(v.rows) || !v.rows.length) return null;
+  if(mode === 'rename'){ if(v.order === oid) v.order = nid; return v; }
+  if(v.alloc){ delete v.alloc; v.order = nid; }                     /* ไม้ที่ปันมาจาก Lot → เป็นของ Order ใหม่เอง (ไม่เข้าไปเป็น Type ของ Lot) */
+  else if(!v.order || v.order === oid) v.order = nid;
+  return v;
+}
+/* ค่าในเครื่องนี้ที่ผูกกับชื่อ Order (ไม่เจาะ · เครื่องตัด/ชื่อ .saw · PD)
+   move = ย้ายชื่อ · over = เขียนทับ Order ที่มีอยู่ (ค่าเดิมของปลายทางเป็นของเนื้อหาเก่า → เอาออก) */
+function lsMap(k){ try{ var o = JSON.parse(localStorage.getItem(k) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null; }catch(e){ return null; } }
+function localCopy(oid, nid, move, over){
+  try{
+    var nd = 'nodrill_dismissed:';
+    if(localStorage.getItem(nd + oid)){ localStorage.setItem(nd + nid, '1'); if(move) localStorage.removeItem(nd + oid); }
+    else if(move || over) localStorage.removeItem(nd + nid);
+  }catch(e){}
+  if(!move && !over) return;
+  ['pv2_fa_mach', 'sawb_pd_by_order'].forEach(function(k){
+    try{
+      var o = lsMap(k); if(!o) return;
+      if(move && (oid in o)){ o[nid] = o[oid]; delete o[oid]; }
+      else if(nid in o) delete o[nid];
+      else return;
+      localStorage.setItem(k, JSON.stringify(o));
+    }catch(e){}
+  });
+}
+/* อ่านทีละหน้า (Supabase ให้ครั้งละ 1000 แถว) */
+async function allRows(mk){
+  var out = [], STEP = 1000;
+  for(var a = 0; a < 200000; a += STEP){
+    var r = await mk().range(a, a + STEP - 1);
+    if(r && r.error) throw r.error;
+    var dd = (r && r.data) || []; out = out.concat(dd);
+    if(dd.length < STEP) break;
+  }
+  return out;
+}
+/* Order อื่นที่ปันไม้จาก Lot ชื่อนี้ (bomline_wood.order = ชื่อนี้ · alloc) */
+async function lotTypesOf(d, lot){
+  var rows = await allRows(function(){ return d.from('app_settings').select('key,value').like('key', 'bomline_wood:%').order('key'); });
+  var out = [];
+  rows.forEach(function(x){
+    var k = String((x && x.key) || ''); if(k.indexOf('bomline_wood:') !== 0 || k === 'bomline_wood:' + lot) return;
+    var v = asObj(x.value); if(v && v.alloc && v.order === lot) out.push(k.slice(13));
+  });
+  return { list:out, rows:rows };
+}
+/* เอกสาร / ใบปิดผิวที่ออกแล้วของชื่อนี้ (ใบของตัวเอง + ใบรวมที่มีชื่อนี้) */
+async function docsOfName(d, oid){
+  var rows = await allRows(function(){ return d.from('app_settings').select('key,value').like('key', 'pdoc:%').order('key'); });
+  var own = 0, multi = 0;
+  rows.forEach(function(x){
+    var k = String((x && x.key) || ''), v = asObj(x.value); if(!v || !Array.isArray(v.docs)) return;
+    if(k === 'pdoc:' + oid) own += v.docs.filter(function(y){ return y && y.no; }).length;
+    else v.docs.forEach(function(y){ var m = y && y.multi; if(m && ((Array.isArray(m.oids) && m.oids.indexOf(oid) >= 0) || (m.lot && m.lot === oid))) multi++; });
+  });
+  return { own:own, multi:multi, n:own + multi };
+}
+/* ย้ายชื่อแล้ว: Order อื่นที่ชี้มาที่ชื่อเดิม (ไม้ที่ปันจาก Lot ชื่อเดิม / ไม้ที่ส่งมาจากชื่อเดิม) → ชี้ชื่อใหม่ · คืนจำนวน หรือ -1 = ไม่สำเร็จ */
+async function refFix(d, oid, nid){
+  try{
+    var rows = await allRows(function(){ return d.from('app_settings').select('key,value').like('key', 'bomline_wood:%').order('key'); });
+    var up = [];
+    rows.forEach(function(x){
+      var k = String((x && x.key) || '');
+      if(k.indexOf('bomline_wood:') !== 0 || k === 'bomline_wood:' + oid || k === 'bomline_wood:' + nid) return;
+      var v = asObj(x.value); if(!v || v.order !== oid) return;
+      v = deep(v); v.order = nid; up.push({ key:k, value:v });
+    });
+    if(up.length){ var w = await d.from('app_settings').upsert(up, { onConflict:'key' }); if(w && w.error) return -1; }
+    return up.length;
+  }catch(e){ return -1; }
+}
+/* ภาพถ่ายตรวจ "ต้นทางแก้" (RevGuard) ของชื่อนี้ — เป็นของเนื้อหาเก่า → ลบ (แบบตอนลบ Order) แล้วให้ RevGuard อ่านใหม่ */
+var ORVK = ['order_base:', 'order_base_data:', 'order_rev:', 'order_rev_data:', 'order_rev_skip:'];
+async function orvClear(d, oid){
+  try{ var w = await d.from('app_settings').delete().in('key', ORVK.map(function(p){ return p + oid; })); if(w && w.error) return false; }catch(e){ return false; }
+  try{ var O = window.__ORV; if(O){ if(O.base) delete O.base[oid]; if(O.changed) delete O.changed[oid]; } }catch(e){}
+  return true;
+}
+/* โหมดไฟล์กลาง: อ่านไฟล์ที่เครื่องอื่นเพิ่งบันทึกก่อน (ไม่รอรอบตรวจ 10 วินาที) — แบบเดียวกับตอนออกเลขเอกสาร */
+function sxlMode(){ try{ return typeof SXL !== 'undefined' && SXL && SXL.dir && typeof SXL_DB !== 'undefined' && D() === SXL_DB && typeof sxlScanOver === 'function' && typeof sxlCfg === 'function'; }catch(e){ return false; } }
+async function fresh(appKeys, ordIds){
+  if(!sxlMode()) return;
+  var job = async function(){
+    var T1 = sxlCfg('app_settings'), S1 = SXL.s && SXL.s.app_settings, T2 = sxlCfg('imos_orders'), S2 = SXL.s && SXL.s.imos_orders;
+    var only = function(T, col, list){ if(!list) return null; var s = new Set(); list.forEach(function(k){ var o = {}; o[col] = k; s.add(sxlBf(sxlBucketOf(T, o))); }); return s; };
+    if(T1 && S1 && S1.ready){ if(await sxlScanOver(T1, S1, only(T1, 'key', appKeys))) SXL.extChanged.add('app_settings'); }
+    if(ordIds && T2 && S2 && S2.ready){ if(await sxlScanOver(T2, S2, only(T2, 'order_id', ordIds))) SXL.extChanged.add('imos_orders'); }
+  };
+  try{ await (typeof sxlLocked === 'function' ? sxlLocked(job) : job()); }catch(e){}
+}
+/* Chrome บน Windows 7 ที่ยังไม่เห็นเครื่องช่วยแปลงไฟล์ → ยังไม่เห็นของเครื่องอื่นล่าสุด (กติกาเดียวกับการบันทึกเอกสาร) */
+function w7Why(){
+  try{
+    if(!sxlMode() || SXL.plus !== true) return '';
+    var st = window.W7_state ? window.W7_state() : null, w = st && st.win7;
+    if(w && w.lastChange && Date.now() - w.lastChange < 5 * 60000) return '';
+    return 'เครื่องนี้ใช้ Chrome ที่เปิดไฟล์ชื่อมี ~ ไม่ได้ (เช่น Windows 7) และยังไม่เห็นสัญญาณจากเครื่องช่วยแปลงไฟล์ — ยังไม่เห็นค่าล่าสุดของเครื่องอื่น'
+      + ' · ต้องมีเครื่อง Windows 10/11 เปิด Production ค้างไว้ · ไม่ทำ เพื่อไม่ให้ค่าของเครื่องอื่นหาย';
+  }catch(e){ return ''; }
+}
+var CANCEL = {};   /* ชื่อที่กำลังเขียนใหม่ → ตัวเฝ้าลบ (watchGone) ของชื่อนั้นหยุด */
+/* mode: 'clone' (ชื่อใหม่เท่านั้น) · 'saveas' · 'rename'
+   o.overwrite = ผู้ใช้ยืนยันเขียนทับ Order ที่มีอยู่ · o.replace = ผู้ใช้ยืนยันแทนที่ค่าค้างของ Order ที่เคยลบ */
+async function transfer(oid, nid, mode, o){
+  o = o || {};
   var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
   oid = String(oid == null ? '' : oid); nid = String(nid == null ? '' : nid).trim();   /* ชื่อมีช่องว่างหัว/ท้าย = ตัดออก · ช่องว่างล้วน = ชื่อว่าง */
   var bad = badName(nid); if(bad) throw new Error(bad);
   if(nid === oid) throw new Error('ชื่อใหม่ต้องไม่ซ้ำกับต้นฉบับ');
-  if(await exists(nid)) throw new Error('มี Order ชื่อ "' + nid + '" อยู่แล้ว — ตั้งชื่ออื่น (โคลนไม่เขียนทับ Order ที่มีอยู่)');
-  var lo = await leftovers(nid);
-  if(lo.length) throw new Error('ชื่อ "' + nid + '" ยังมีข้อมูลค้างของ Order ชื่อนี้ที่เคยลบไป (' + lo.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ตั้งชื่ออื่น');
+  if(mode !== 'clone') await fresh(MOVE.concat(ORVK, ['pdoc:']).reduce(function(a, p){ a.push(p + oid, p + nid); return a; }, []), [oid, nid]);
+  var ex = await exists(nid);
+  if(ex && (mode === 'clone' || !o.overwrite)) throw new Error('มี Order ชื่อ "' + nid + '" อยู่แล้ว — ตั้งชื่ออื่น' + (mode === 'clone' ? ' (โคลนไม่เขียนทับ Order ที่มีอยู่)' : ''));
+  var lo = ex ? [] : await leftovers(nid);
+  var loM = lo.filter(function(k){ return MOVE.some(function(p){ return k === p + nid; }); });
+  if(lo.length && mode === 'clone') throw new Error('ชื่อ "' + nid + '" ยังมีข้อมูลค้างของ Order ชื่อนี้ที่เคยลบไป (' + lo.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ตั้งชื่ออื่น');
+  if(loM.length && !o.replace) throw new Error('ชื่อ "' + nid + '" ยังมีค่าค้างของ Order ชื่อนี้ที่เคยลบไป (' + loM.map(function(k){ return k.split(':')[0]; }).join(', ') + ')');
+  var repl = ex || lo.length > 0;                                 /* ชื่อปลายทางมีของเดิม (Order / ค่าค้าง) → แทนที่ */
+  if(repl || mode === 'rename'){ var w7 = w7Why(); if(w7) throw new Error(w7); }
+  {
+    /* ชื่อปลายทางอาจถูกอ้างจาก Order อื่น (ใบรวม / Type ของ Lot) แม้ไม่มีค่าเอง (Order ที่เคยลบ) → ตรวจทุกครั้ง */
+    if(mode !== 'clone') await fresh(null, null);                 /* ไฟล์กลาง: อ่านค่าทุกตัวล่าสุดก่อนตรวจ Lot / เอกสาร */
+    var dn = await docsOfName(d, nid);
+    if(dn.n) throw new Error('ชื่อ "' + nid + '" มีเอกสาร / ใบปิดผิวที่ออกไปแล้ว ' + dn.n + ' ใบ — ' + (ex ? 'เขียนทับ' : 'ใช้ชื่อนี้') + 'ไม่ได้ (ประวัติเอกสารจะปนกับข้อมูลใหม่) · ตั้งชื่ออื่น');
+    var lt = await lotTypesOf(d, nid);
+    if(lt.list.length) throw new Error('ชื่อ "' + nid + '" เป็น Lot ที่ปันไม้เข้า Type แล้ว (' + lt.list.slice(0, 5).join(', ') + (lt.list.length > 5 ? ' …' : '') + ') — ' + (ex ? 'เขียนทับ' : 'ใช้ชื่อนี้') + 'ไม่ได้ (ไม้ของ Type จะปนกับ Lot ใหม่) · ตั้งชื่ออื่น');
+  }
   var src = await d.from('imos_orders').select('order_id,data,loaded_at').eq('order_id', oid).limit(1);
   if(src && src.error) throw src.error;
   if(!src || !src.data || !src.data.length) throw new Error('ไม่พบ Order ' + oid + ' (อาจถูกลบไปแล้ว)');
-  var data = src.data[0].data;
-  if(typeof data === 'string'){ try{ data = JSON.parse(data); }catch(e){ data = null; } }
-  if(!data || typeof data !== 'object') throw new Error('อ่านข้อมูล Order ' + oid + ' ไม่ได้');
-  data = JSON.parse(JSON.stringify(data));                    /* สำเนาลึก — ไม่ใช้วัตถุร่วมกับต้นฉบับ */
+  var data = asObj(src.data[0].data);
+  if(!data) throw new Error('อ่านข้อมูล Order ' + oid + ' ไม่ได้');
+  data = deep(data);                                              /* สำเนาลึก — ไม่ใช้วัตถุร่วมกับต้นฉบับ */
   var now = new Date().toISOString(), by = mach();
-  data.orderID = nid;                                          /* แบบ Save As เดิม */
-  data.cloneOf = { oid:oid, at:now, by:by };
-  var st = await d.from('app_settings').select('key,value').in('key', KEYS.map(function(p){ return p + oid; }));
-  if(st && st.error) throw st.error;
+  data.orderID = nid;                                             /* แบบ Save As เดิม */
+  if(mode === 'clone') data.cloneOf = { oid:oid, at:now, by:by };
+  var sK = await readK(d, oid), tK = (ex || loM.length) ? await readK(d, nid) : {};
   var rows = [], got = [];
-  ((st && st.data) || []).forEach(function(r){
-    var p = KEYS.filter(function(k){ return r && r.key === k + oid; })[0]; if(!p) return;
-    var v = r.value; if(v == null) return;
-    v = JSON.parse(JSON.stringify(v));
-    if(p === 'bomline_wood:'){
-      if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ return; } }
-      if(!v || typeof v !== 'object' || !Array.isArray(v.rows) || !v.rows.length) return;
-      if(v.alloc){ delete v.alloc; v.order = nid; }            /* ไม้ที่ปันมาจาก Lot → เป็นของตัวโคลนเอง (ไม่เข้าไปเป็น Type ของ Lot) */
-      else if(!v.order || v.order === oid) v.order = nid;
-    }
+  KEYS.forEach(function(p){
+    if(sK[p] == null) return;
+    var v = (p === 'bomline_wood:') ? woodOf(sK[p], oid, nid, mode) : deep(sK[p]);
+    if(v == null) return;
     rows.push({ key:p + nid, value:v }); got.push(p.slice(0, -1));
   });
-  var mark = { from:oid, at:now, by:by, src:String(data.source || '') };
-  rows.push({ key:'clone:' + nid, value:mark });
-  /* 1) ค่าของ Order ก่อน (insert = มีอยู่แล้วไม่เขียนทับ) 2) ตัว Order */
-  var w1 = null, e1 = null;
-  try{ w1 = await d.from('app_settings').insert(rows); }catch(e){ e1 = e; }
-  if(e1 || (w1 && w1.error)){
-    var x1 = e1 || w1.error;
-    if(!(x1 && x1.code === '23505')) await undo(d, rows);         /* ชื่อซ้ำ = ไม่ได้เขียนอะไร · อย่างอื่น (เขียนได้บางไฟล์) → ถอนของตัวเอง */
-    throw new Error('บันทึกค่าของ Order ไม่สำเร็จ: ' + ((x1 && x1.message) || x1));
+  var mk = null;
+  if(mode === 'clone') mk = { from:oid, at:now, by:by, src:String(data.source || '') };
+  else if(mode === 'saveas'){ mk = { from:oid, at:now, by:by, src:String(data.source || ''), via:'saveas' }; if(ex) mk.over = true; }
+  else if(sK['clone:'] != null){ mk = asObj(deep(sK['clone:'])) || {}; mk.renamedFrom = oid; delete mk.over; }
+  if(mk) rows.push({ key:'clone:' + nid, value:mk });
+  if(WATCHING[nid]) CANCEL[nid] = true;                           /* ตัวเฝ้าลบของชื่อนี้ (ถ้ามี) ห้ามลบค่าที่กำลังเขียน */
+  var pre = function(r){ return r.key.slice(0, r.key.length - nid.length); };
+  var rowsNew = rows.filter(function(r){ return ex ? false : tK[pre(r)] == null; }), rowsOld = rows.filter(function(r){ return rowsNew.indexOf(r) < 0; });
+  var fail = async function(msg){
+    var ok1 = await undo(d, rowsNew), ok2 = await restore(d, nid, rowsOld, tK), ok = ok1 && ok2;
+    throw new Error(msg + (ok ? '' : ' · คืนค่าเดิมไม่ครบ — ตรวจค่าของ "' + nid + '" ก่อนใช้งาน'));
+  };
+  /* 1) ค่าของ Order ก่อน (ชื่อที่ยังไม่มีค่า = insert · มีอยู่แล้วเครื่องอื่นสร้างตัดหน้า = ล้ม ไม่เขียนทับของเขา) 2) ตัว Order */
+  if(rowsNew.length){
+    var w1 = null, e1 = null;
+    try{ w1 = await d.from('app_settings').insert(rowsNew); }catch(e){ e1 = e; }
+    if(e1 || (w1 && w1.error)){
+      var x1 = e1 || w1.error;
+      if(!(x1 && x1.code === '23505')) await undo(d, rowsNew);     /* ชื่อซ้ำ = ไม่ได้เขียนอะไร */
+      throw new Error('บันทึกค่าของ Order ไม่สำเร็จ: ' + msgOf(x1));
+    }
   }
-  var w2 = null, e2 = null;
-  try{ w2 = await d.from('imos_orders').insert({ order_id:nid, data:data, loaded_at:now }); }catch(e){ e2 = e; }
+  if(rowsOld.length){
+    var w1b = null, e1b = null;
+    try{ w1b = await d.from('app_settings').upsert(rowsOld, { onConflict:'key' }); }catch(e){ e1b = e; }
+    if(e1b || (w1b && w1b.error)) await fail('บันทึกค่าของ Order ไม่สำเร็จ: ' + msgOf(e1b || w1b.error));
+  }
+  var w2 = null, e2 = null, row = { order_id:nid, data:data, loaded_at:(mode === 'rename' ? (src.data[0].loaded_at || now) : now) };
+  try{ w2 = ex ? await d.from('imos_orders').upsert(row, { onConflict:'order_id' }) : await d.from('imos_orders').insert(row); }catch(e){ e2 = e; }
   if(e2 || (w2 && w2.error)){
-    /* เน็ตหลุดตอนตอบกลับ แต่บันทึกไปแล้ว? → ดูก่อน · เป็นของตัวโคลนนี้ (cloneOf.at ตรง) = สำเร็จ */
+    /* เน็ตหลุดตอนตอบกลับ แต่บันทึกไปแล้ว? → ดูก่อน · ข้อมูลตรงกับที่เพิ่งส่ง = สำเร็จ */
     var mineRow = false;
     try{
       var chk = await d.from('imos_orders').select('order_id,data').eq('order_id', nid).limit(1);
-      var cd = chk && chk.data && chk.data[0] && chk.data[0].data;
-      if(typeof cd === 'string'){ try{ cd = JSON.parse(cd); }catch(x){ cd = null; } }
-      mineRow = !!(cd && cd.cloneOf && cd.cloneOf.at === now && cd.cloneOf.oid === oid);
+      var cd = asObj(chk && chk.data && chk.data[0] && chk.data[0].data);
+      mineRow = !!cd && canon(cd) === canon(data);
     }catch(x){}
-    if(!mineRow){
-      await undo(d, rows);
-      var x2 = e2 || w2.error;
-      throw new Error('บันทึก Order ไม่สำเร็จ: ' + ((x2 && x2.message) || x2));
-    }
+    if(!mineRow) await fail('บันทึก Order ไม่สำเร็จ: ' + msgOf(e2 || w2.error));
   }
-  try{ if(localStorage.getItem('nodrill_dismissed:' + oid)) localStorage.setItem('nodrill_dismissed:' + nid, '1'); }catch(e){}
-  CL.map[nid] = mark;
-  return { got:got, isImport:String(data.source || '') === 'import' };
+  var res = { got:got, isImport:String(data.source || '') === 'import', ex:ex, repl:repl, mk:mk, warn:[] };
+  /* 3) ปลายทางเป็นชุดเดียวกับต้นทาง — ค่าเดิมของปลายทางที่ต้นทางไม่มี เอาออก (ไม่ปนกัน) */
+  var drop = MOVE.filter(function(p){ return tK[p] != null && !rows.some(function(r){ return r.key === p + nid; }); }).map(function(p){ return p + nid; });
+  if(drop.length){
+    var okD = true; try{ var wd = await d.from('app_settings').delete().in('key', drop); if(wd && wd.error) okD = false; }catch(e){ okD = false; }
+    if(!okD) res.warn.push('เอาค่าเดิมของ "' + nid + '" ที่ต้นทางไม่มีออกไม่สำเร็จ (' + drop.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ตรวจ BOM Fitting / Fitting เพิ่มเติม / Item Id Set ก่อนใช้งาน');
+  }
+  /* ภาพถ่ายตรวจ "ต้นทางแก้" ของชื่อปลายทางเป็นของเนื้อหาเก่า → ลบ · เปิดครั้งหน้าเก็บใหม่เงียบ ๆ (ไม่ฟ้องต้นทางแก้ / ไม่เสนอย้อนกลับเป็นของเก่า) */
+  if(repl && !(await orvClear(d, nid))) res.warn.push('ลบภาพถ่ายตรวจต้นทางแก้เดิมของ "' + nid + '" ไม่สำเร็จ — ถ้าเด้งถาม "ต้นทางแก้" ให้กด รับข้อมูลใหม่');
+  if(mode !== 'clone'){ try{ if(window.__ORV && window.__ORV.skipOnce) window.__ORV.skipOnce[nid] = true; }catch(e){} }
+  if(mk) CL.map[nid] = mk; else delete CL.map[nid];
+  if(mode === 'rename'){
+    var del = null, e3 = null;
+    try{ del = await d.from('imos_orders').delete().eq('order_id', oid); }catch(e){ e3 = e; }
+    if(e3 || (del && del.error)){ res.partial = 'สร้างชื่อใหม่แล้ว แต่ลบชื่อเดิมไม่สำเร็จ: ' + msgOf(e3 || del.error); localCopy(oid, nid, false, repl); }
+    else {
+      /* ชื่อเดิม: ลบเฉพาะค่าที่ยังเป็นค่าที่ย้ายไป (ถ้ามีคนแก้ระหว่างนี้ ไม่ลบของเขา) */
+      await fresh(MOVE.map(function(p){ return p + oid; }), null);
+      var uinf = {};
+      if(!(await undo(d, MOVE.filter(function(p){ return sK[p] != null; }).map(function(p){ return { key:p + oid, value:sK[p] }; }), uinf)))
+        res.warn.push('ลบค่าของชื่อเดิม "' + oid + '" ไม่สำเร็จ (ค่าอยู่ที่ชื่อใหม่ครบแล้ว)');
+      if(uinf.skipped && uinf.skipped.length)
+        res.warn.push('ค่าของชื่อเดิมถูกแก้ระหว่างเปลี่ยนชื่อ (' + uinf.skipped.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ค่าที่แก้ล่าสุดยังอยู่ที่ "' + oid + '" · ชื่อใหม่ได้ค่าก่อนแก้ ตรวจก่อนใช้งาน');
+      await orvClear(d, oid);                                    /* แบบตอนลบ Order */
+      await fresh(null, null);
+      res.refs = await refFix(d, oid, nid);
+      if(res.refs < 0) res.warn.push('Order ของ Type ที่ปันไม้จาก "' + oid + '" ยังชี้ชื่อเดิม (แก้ชี้ชื่อใหม่ไม่สำเร็จ)');
+      localCopy(oid, nid, true, repl);
+      delete CL.map[oid];
+    }
+  } else localCopy(oid, nid, false, repl);
+  try{ if(typeof window.IMP_motherReset === 'function') window.IMP_motherReset(); }catch(e){}
+  try{ if(repl || mode === 'rename') await window.ORV_reload(); }catch(e){}
+  try{ if((mode === 'rename' || repl) && typeof window.PDOC_lots === 'function') window.PDOC_lots(); }catch(e){}   /* Lot map อ่านใหม่ */
+  return res;
 }
+async function cloneOrder(oid, nid){ return transfer(oid, nid, 'clone'); }
 async function afterClone(nid, isImport){
   try{ if(isImport && typeof window.IMPB_reload === 'function') await window.IMPB_reload(); }catch(e){}
   try{ if(typeof refreshStatus === 'function') await refreshStatus(); }catch(e){}
@@ -32302,13 +32503,15 @@ async function afterClone(nid, isImport){
   var mb = null; try{ mb = (typeof window.MBOM_state === 'function') ? window.MBOM_state() : null; }catch(e){}
   if((!tab || tab === 'ax' || tab === 'imos') && !(mb && mb.on) && !busyWhy(nid) && typeof selectOrder === 'function'){ try{ selectOrder(nid); }catch(e){} }
 }
-function busyWhy(oid){
+function busyWhy(oid, act){
+  act = act || 'โคลน';
   var open = null; try{ open = currentOrder; }catch(e){}
   try{ if(window.SAWB_busy && window.SAWB_busy()) return 'แท็บ SAW / NC กำลังส่งข้อมูลอยู่ — รอให้เสร็จก่อน'; }catch(e){}
   try{ if(window.MBOM_busy && window.MBOM_busy()) return 'กำลังรวม BOM อยู่ — รอให้เสร็จก่อน'; }catch(e){}
-  try{ if(axEditMode || bomEditMode) return 'หน้า AX Detail / BOM Fitting อยู่ในโหมดแก้ไข — บันทึกหรือยกเลิกก่อน แล้วค่อยโคลน'; }catch(e){}
-  try{ if(axEdits && Object.keys(axEdits).length) return (open === oid ? 'Order นี้' : 'Order ที่เปิดอยู่ (' + open + ')') + ' มีที่แก้ใน AX Detail ยังไม่บันทึก — บันทึกก่อน แล้วค่อยโคลน (โคลนจากข้อมูลที่บันทึกแล้ว · เปิดตัวโคลนจะล้างงานแก้ที่ยังไม่บันทึก)'; }catch(e){}
-  try{ var xs = window.XC_state && window.XC_state(); if(xs && xs.dirty && Object.keys(xs.dirty).length) return 'มีที่แก้ยังไม่บันทึก (' + Object.keys(xs.dirty).map(function(k){ return k + ': ' + xs.dirty[k]; }).join(' · ') + ') — บันทึกก่อน แล้วค่อยโคลน'; }catch(e){}
+  try{ var fs = window.FA_state && window.FA_state(); if(fs && (fs.busy || fs.view === 'run')) return 'แท็บทำทั้งชุดกำลังทำงานอยู่ — รอให้เสร็จก่อน'; }catch(e){}
+  try{ if(axEditMode || bomEditMode) return 'หน้า AX Detail / BOM Fitting อยู่ในโหมดแก้ไข — บันทึกหรือยกเลิกก่อน แล้วค่อย' + act; }catch(e){}
+  try{ if(axEdits && Object.keys(axEdits).length) return (open === oid ? 'Order นี้' : 'Order ที่เปิดอยู่ (' + open + ')') + ' มีที่แก้ใน AX Detail ยังไม่บันทึก — บันทึกก่อน แล้วค่อย' + act + ' (ใช้ข้อมูลที่บันทึกแล้ว · เปิด Order ใหม่จะล้างงานแก้ที่ยังไม่บันทึก)'; }catch(e){}
+  try{ var xs = window.XC_state && window.XC_state(); if(xs && xs.dirty && Object.keys(xs.dirty).length) return 'มีที่แก้ยังไม่บันทึก (' + Object.keys(xs.dirty).map(function(k){ return k + ': ' + xs.dirty[k]; }).join(' · ') + ') — บันทึกก่อน แล้วค่อย' + act; }catch(e){}
   return '';
 }
 
@@ -32411,11 +32614,12 @@ function watchGone(oid, n, gone){
   if(n === 0){ if(WATCHING[oid]) return; WATCHING[oid] = 1; }
   if(n > 30){ delete WATCHING[oid]; return; }
   setTimeout(function(){
+    if(CANCEL[oid]){ delete CANCEL[oid]; delete WATCHING[oid]; return; }   /* ชื่อนี้กำลังถูกใช้ใหม่ (Save As / Rename / โคลน) → ไม่ลบ */
     exists(oid).then(function(ex){
       if(ex) return watchGone(oid, n + 1, 0);
       if(gone < 1) return watchGone(oid, n + 1, gone + 1);
-      var d = D(); if(!d){ delete WATCHING[oid]; return; }
-      var ks = KEYS.concat(['clone:']).map(function(p){ return p + oid; });
+      var d = D(); if(!d || CANCEL[oid]){ delete CANCEL[oid]; delete WATCHING[oid]; return; }
+      var mk0 = CL.map[oid], ks = ((mk0 && mk0.over) ? ['clone:'] : MOVE).map(function(p){ return p + oid; });   /* เขียนทับ Order ที่มีอยู่ = ค่าเป็นของชื่อนั้น → ลบแค่ป้าย */
       return Promise.resolve(d.from('app_settings').delete().in('key', ks)).then(function(r){
         if(r && r.error) throw r.error;
         delete CL.map[oid]; delete WATCHING[oid]; paint();
@@ -32438,52 +32642,103 @@ function hookDel(){
   window.delOrder = w;
   return true;
 }
-/* ── เปลี่ยนชื่อตัวโคลน → ป้าย clone ย้ายตามชื่อใหม่ (ชื่อใหม่ = ที่พิมพ์ในกล่อง Rename ของเดิม) ── */
+/* ── Save As / Rename (แทนที่ของเดิมทั้งตัว — กล่องถาม / ข้อความเดิม · พาค่าของ Order ไปครบ) ── */
+function msgOf(e){ return (e && e.message) || String(e); }
+async function askTarget(nid, oid, verb){
+  var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
+  await fresh(verb === 'เปลี่ยนชื่อ' ? null : MOVE.concat(ORVK, ['pdoc:']).map(function(p){ return p + nid; }), [oid, nid]);   /* ไฟล์กลาง: ถามจากค่าล่าสุด */
+  if(verb === 'เปลี่ยนชื่อ'){
+    var w7 = w7Why(); if(w7) throw new Error(w7);
+    var dn = await docsOfName(d, oid);
+    if(dn.n && !confirm('Order "' + oid + '" มีเอกสาร / ใบปิดผิวที่ออกไปแล้ว ' + dn.n + ' ใบ\n\n'
+         + 'เอกสารผูกกับชื่อเดิม (ใบที่พิมพ์มีชื่อเดิม) — ไม่ย้ายตามชื่อใหม่ · ประวัติเอกสาร / ยอดที่เปิดใบไปแล้ว ดูได้ที่ชื่อเดิมในหน้ารวมเอกสาร\n'
+         + 'ชื่อใหม่ "' + nid + '" จะเริ่มนับเอกสารใหม่ (ระวังออกใบซ้ำ)\n\nเปลี่ยนชื่อต่อไหม?')) return null;
+  }
+  var ex = await exists(nid);
+  var note = '\n\n(ข้อมูล Order + BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ ของ "' + nid + '" จะถูกแทนด้วยของ "' + oid + '" ทั้งชุด)';
+  if(ex) return confirm('Order "' + nid + '" มีอยู่แล้ว — เขียนทับ?' + note) ? { overwrite:true, replace:true } : null;
+  var lo = await leftovers(nid), loM = lo.filter(function(k){ return MOVE.some(function(p){ return k === p + nid; }); });
+  if(loM.length && !confirm('ชื่อ "' + nid + '" มีค่าค้างของ Order ชื่อนี้ที่เคยลบไป (' + loM.map(function(k){ return k.split(':')[0]; }).join(', ') + ')\n\n'
+       + verb + ' แล้วใช้ค่าของ "' + oid + '" แทนทั้งชุด?')) return null;
+  return { overwrite:false, replace:loM.length > 0 };
+}
+async function afterMove(nid, r, oldOid){
+  /* Order นำเข้า: ล้างแถวที่จำไว้ของชื่อปลายทาง / ชื่อเดิม แล้วอ่านรายการใหม่ (ไม่ใช้แถวเก่าของ Order ที่ถูกเขียนทับ) */
+  var I = window.IMPB, wasImp = false;
+  try{ wasImp = !!(I && I.store && (I.store[nid] || (oldOid && I.store[oldOid]))); }catch(e){}
+  if((r.isImport || wasImp) && typeof window.IMPB_reload === 'function'){
+    try{ if(I && I.store){ if(I.active === nid || (oldOid && I.active === oldOid)) I.active = null; delete I.store[nid]; if(oldOid) delete I.store[oldOid]; } }catch(e){}
+    try{ await window.IMPB_reload([nid]); }catch(e){}
+    try{ if(typeof window.IMPB_forget === 'function') window.IMPB_forget(nid); }catch(e){}
+  }
+  /* แถวไม้ใน BOM Fitting ที่ถืออยู่ของชื่อปลายทาง (ก่อนถูกเขียนทับ) → ทิ้ง ให้อ่านของใหม่ */
+  try{ if(typeof window.BLF_owner === 'function' && window.BLF_owner() === nid && typeof window.BLF_clear === 'function') window.BLF_clear(); }catch(e){}
+  try{ if(typeof refreshStatus === 'function') await refreshStatus(); }catch(e){}
+  try{ if(typeof renderSidebar === 'function') await renderSidebar(); }catch(e){}
+  paint();
+  if(r.warn && r.warn.length) alert('⚠ ' + r.warn.join('\n⚠ '));
+  var why = busyWhy(nid, 'เปิด');
+  if(why){ try{ if(typeof sxlToast === 'function') sxlToast('บันทึก "' + nid + '" แล้ว — ยังไม่เปิดให้ เพราะ' + why); }catch(e){} return; }
+  try{ selectOrder(nid); }catch(e){}                                /* แบบเดิม: เปิด Order ชื่อใหม่ (ไม่รอ) */
+}
+async function saveAs(oid){
+  var why = busyWhy(oid, ' Save As'); if(why){ alert('📄 Save As\n\n' + why); return; }
+  var nid = window.prompt('Save As — ตั้งชื่อ Order ใหม่ (คัดลอกจาก ' + oid + '):', oid + '_copy');
+  if(nid === null || nid === undefined) return;
+  nid = String(nid).trim();
+  if(!nid){ alert('ชื่อว่างไม่ได้'); return; }
+  if(nid === oid){ alert('ชื่อใหม่ต้องไม่ซ้ำกับเดิม'); return; }
+  var bad = badName(nid); if(bad){ alert(bad); return; }
+  var r = null;
+  try{
+    var o = await askTarget(nid, oid, 'Save As'); if(!o) return;
+    r = await transfer(oid, nid, 'saveas', o);
+  }catch(e){ alert('บันทึกไม่สำเร็จ: ' + msgOf(e)); return; }
+  await afterMove(nid, r, null);
+}
+async function renameOrder(oid){
+  var why = busyWhy(oid, 'เปลี่ยนชื่อ'); if(why){ alert('✏️ Rename\n\n' + why); return; }
+  var nid = window.prompt('Rename — เปลี่ยนชื่อ Order (จาก ' + oid + '):', oid);
+  if(nid === null || nid === undefined) return;
+  nid = String(nid).trim();
+  if(!nid){ alert('ชื่อว่างไม่ได้'); return; }
+  if(nid === oid) return;
+  var bad = badName(nid); if(bad){ alert(bad); return; }
+  var r = null;
+  try{
+    var o = await askTarget(nid, oid, 'เปลี่ยนชื่อ'); if(!o) return;
+    r = await transfer(oid, nid, 'rename', o);
+  }catch(e){ alert('เปลี่ยนชื่อไม่สำเร็จ: ' + msgOf(e)); return; }
+  if(r.partial) alert(r.partial);
+  try{ if(currentOrder === oid) currentOrder = nid; }catch(e){}
+  await afterMove(nid, r, r.partial ? null : oid);
+}
+function hookSave(){
+  if(typeof window.orderSaveAs !== 'function' || window.orderSaveAs.__ocl) return !!(window.orderSaveAs && window.orderSaveAs.__ocl);
+  var w = function(oid){ return saveAs(oid); };
+  copyFlags(window.orderSaveAs, w); w.__ocl = true; w.__orig = window.orderSaveAs;
+  window.orderSaveAs = w;
+  return true;
+}
 function hookRename(){
   if(typeof window.orderRename !== 'function' || window.orderRename.__ocl) return !!(window.orderRename && window.orderRename.__ocl);
-  var orig = window.orderRename;
-  var w = function(oid){
-    var had = oid && CL.map[oid], typed = null, pre = false, P = window.prompt, r;
-    if(had) window.prompt = function(){
-      var v = P.apply(window, arguments);
-      if(typed === null){ typed = v; try{ var t = String(v == null ? '' : v).trim(); pre = !!t && (_sidebarOrders || []).some(function(o){ return o && o.oid === t; }); }catch(e){} }
-      return v;
-    };
-    try{ r = orig.apply(this, arguments); }   /* กล่อง Rename เด้งก่อน await แรก → คืน prompt เดิมได้ทันที */
-    finally{ if(had) window.prompt = P; }
-    if(!had) return r;
-    return Promise.resolve(r).then(async function(res){
-      try{
-        var nid = (typed == null) ? '' : String(typed).trim();
-        if(nid && nid !== oid && !(await exists(oid)) && (await exists(nid))){
-          var d = D();
-          if(!pre){
-            var mk = JSON.parse(JSON.stringify(had)); mk.renamedFrom = oid;
-            var u = await d.from('app_settings').upsert({ key:'clone:' + nid, value:mk }, { onConflict:'key' });
-            if(u && u.error) throw u.error;
-            CL.map[nid] = mk;
-          }
-          await d.from('app_settings').delete().eq('key', 'clone:' + oid);
-          delete CL.map[oid]; paint();
-        }
-      }catch(x){}
-      return res;
-    });
-  };
-  copyFlags(orig, w); w.__ocl = true;
+  var w = function(oid){ return renameOrder(oid); };
+  copyFlags(window.orderRename, w); w.__ocl = true; w.__orig = window.orderRename;
   window.orderRename = w;
   return true;
 }
+window.ORDER_saveAs = saveAs; window.ORDER_rename = renameOrder;
 var tries = 0, iv = setInterval(function(){
   tries++;
-  var a = false, b = false, c = false;
+  var a = false, b = false, c = false, e2 = false;
   try{ a = hookMenu(); }catch(e){}
   try{ b = hookDel(); }catch(e){}
   try{ c = hookRename(); }catch(e){}
-  if((a && b && c) || tries > 60) clearInterval(iv);
+  try{ e2 = hookSave(); }catch(e){}
+  if((a && b && c && e2) || tries > 60) clearInterval(iv);
 }, 1000);
 /* โมดูลอื่นห่อ delOrder ทับทีหลังได้ (ห่อซ้อนกัน) — ตรวจซ้ำห่าง ๆ ให้ป้ายตามการลบเสมอ */
-setInterval(function(){ try{ hookMenu(); hookDel(); hookRename(); }catch(e){} }, 15000);
+setInterval(function(){ try{ hookMenu(); hookDel(); hookRename(); hookSave(); }catch(e){} }, 15000);
 })();
 </script>
 </body>
