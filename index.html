@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '155', D = '07/10/2026';
+  var V = '156', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -33058,6 +33058,525 @@ function done(job, why){
   REP.last = { why:why, ms:Math.round(rt() - job.t0), lists:job.list.slice(), cache:oc ? { fromServer:oc.fromServer, fromCache:oc.fromCache, err:oc.err } : null, at:new Date().toISOString() };
 }
 window.SXL_loadReport = function(){ return REP.last ? JSON.parse(JSON.stringify(REP.last)) : null; };
+})();
+</script>
+<script>
+/* ══ v156 — AX Detail (BOM ไม้) โหมดแก้ไข ═══════════════════════════════════════════
+   1) กด 💾 บันทึก แล้วค่าที่แก้ต้องอยู่ครบทุกช่อง (เดิมหลายช่องหายเงียบ ๆ)
+      - EdgeCode1–4 ของ Order แบบ IMOS / StarNexus (มีแถวขอบ TYP7):
+        ตารางแสดงขอบจาก _e1.._e4 ของแถวชิ้น แต่ของเดิมแก้แค่แถว TYP7 → บันทึกแล้วค่ากลับเป็นค่าเดิม
+        ใหม่: แก้ _e1.._e4 ด้วย (แถว TYP7 ยังแก้ตามเดิม → BOM Fitting ขอบได้รหัสใหม่)
+        · ลบรหัสขอบ (ว่าง / 0) → เอาแถวขอบ TYP7 ด้านนั้นออกจาก BOM (เก็บไว้ที่แถวชิ้น ใส่รหัสกลับ = คืนแถวเดิม)
+          เดิมเหลือแถวขอบรหัสว่างใน BOM Fitting
+        · ใส่รหัสขอบด้านที่ไม่เคยมี → เพิ่มแถวขอบ (ยาวตามชิ้น · ขอบ 1/3 = ยาว · ขอบ 2/4 = กว้าง เหมือนสูตรของ Order ที่ไม่มี TYP7)
+          เฉพาะ Order ที่แถวขอบใช้รูปแบบ <PartID>_4.._7 ครบทุกแถว
+      - ช่องที่ของเดิมไม่บันทึกเลย: ProductArticle · Qty · Barcode · Barcode2 · Groove1/2/4 · PrepareWidth/Length · Assembly
+        (บันทึกเฉพาะช่องที่ค่าเปลี่ยนจริง — ช่องที่ไม่ได้แก้ไม่ถูกตรึงค่า)
+      - ช่องที่มีค่าแก้ไว้ (_overrides) ทับบนจอ: CutWidth/Length · Groove3 · Surface บน/ล่าง → แก้ค่าทับด้วย ไม่งั้นจอโชว์ค่าเก่า
+      - ช่องที่คำนวณจากข้อมูล Order (ProductID · PartID · ProductHeight/Width/Depth) → แสดงเป็นค่าอ่านอย่างเดียว (เดิมเป็นช่องกรอกแต่ไม่บันทึก)
+        Order นำเข้า (Lot) เหมือนเดิมทุกอย่าง — ทางบันทึกของ Lot ใส่ค่าลงแถวตรง ๆ อยู่แล้ว
+      - บันทึกสำเร็จ → ป้ายแจ้ง "บันทึกแล้ว" (ไม่บล็อกหน้าจอ)
+   2) 🔍 ค้นหา / แทนที่ (ปุ่มข้าง 💾 บันทึก ในโหมดแก้ไข · Ctrl+F ในแท็บ AX Detail)
+      - ค้นทุกแถวของ Order (ไม่ใช่เฉพาะแถวที่เห็น) · เลือกคอลัมน์ / กลุ่ม EdgeCode 1–4 / Surface บน+ล่าง
+      - ☐ ตรงทั้งช่อง (แนะนำสำหรับรหัส) · ไม่สนตัวพิมพ์เล็ก/ใหญ่
+      - แทนที่ทั้งหมด (ยังไม่บันทึก) · แทนที่ทั้งหมด + บันทึก 💾 (ถามยืนยันก่อน)
+      - PartID ซ้ำหลายแถว (เช่น Lot หลาย Type) และค่าไม่เหมือนกัน → ข้าม แจ้งจำนวน (ค่าที่แก้ใช้กับทุกแถวที่ PartID เดียวกัน)
+   ════════════════════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+if(window.__v156ax) return;
+window.__v156ax = true;
+
+var HIDDEN = { 'Item Id Set':1, 'ProductQuantitySequence':1, 'ProductQuantitySequenceTotal':1, 'PartQuantitySequence':1,
+               'PartQuantityTotal':1, 'PartQuantitySequenceTotal':1, 'CutRiteImportGrain':1 };
+var RO = { 'ProductID':1, 'PartID':1, 'ProductHeight':1, 'ProductWidth':1, 'ProductDepth':1 };
+var EDGE = { 'EdgeCode1':'4', 'EdgeCode2':'5', 'EdgeCode3':'6', 'EdgeCode4':'7' };
+var EKEY = { '4':'_e1', '5':'_e2', '6':'_e3', '7':'_e4' };
+var SURF = { 'SurfaceBeforeCutTopCode':1, 'SurfaceBeforeCutBottomCode':1 };
+var STAT = { saves:0, last:null };
+
+function q(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+function str(v){ return v == null ? '' : String(v); }
+function isImp(){
+  try{ var I = window.IMPB, o = window.currentOrder; return !!(I && I.store && o && I.store[o] && I.store[o].rows); }catch(e){ return false; }
+}
+function hiddenCol(c){ return !c || c.charAt(0) === '_' || !!HIDDEN[c]; }
+function editableCol(c, imp){ return !hiddenCol(c) && !(RO[c] && !imp); }
+function noEdge(v){ var s = str(v).trim(); return !s || /^0+$/.test(s) || /^no[_\s\-]?edge$/i.test(s); }
+function edits(){ try{ return (axEdits && typeof axEdits === 'object') ? axEdits : null; }catch(e){ return null; } }
+function editMode(){ try{ return !!axEditMode; }catch(e){ return false; } }
+function axRows(){ try{ return buildAXRows() || []; }catch(e){ return []; } }
+function cellCount(E){ var n = 0; Object.keys(E || {}).forEach(function(k){ if(E[k] && typeof E[k] === 'object') n += Object.keys(E[k]).length; }); return n; }
+
+function toast(msg, kind){
+  try{
+    var t = document.createElement('div');
+    t.className = 'ax156-toast' + (kind ? ' ' + kind : '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function(){ try{ t.remove(); }catch(e){} }, kind === 'err' ? 7000 : 4200);
+  }catch(e){}
+}
+
+/* ── CSS ── */
+(function(){
+  try{
+    var s = document.createElement('style');
+    s.textContent =
+      '.ax156-ro{color:var(--text3);font-size:10px;cursor:not-allowed}' +
+      '.ax156-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:9999;background:#16a34a;color:#fff;' +
+        'padding:9px 18px;border-radius:9px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.18);font-family:-apple-system,Sarabun,sans-serif}' +
+      '.ax156-toast.warn{background:#d97706}.ax156-toast.err{background:#e5484d}' +
+      '#frPanel.fr-panel{top:auto;bottom:64px}' +   /* เดิมบังแถบปุ่ม (💾 บันทึก) ด้านบน → ย้ายลงมุมขวาล่าง */
+      '#fr156Opt{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text2)}' +
+      '#fr156Opt label{display:flex;align-items:center;gap:4px;cursor:pointer}' +
+      '#fr156Msg{font-size:11px;color:var(--text2);min-height:14px}' +
+      '#fr156Msg.ok{color:#16a34a}#fr156Msg.warn{color:#b45309}';
+    document.head.appendChild(s);
+  }catch(e){}
+})();
+
+/* ══ 1) บันทึกครบทุกช่อง ═════════════════════════════════════════════════════ */
+
+/* ลิงก์ Assembly ที่แก้เอง (_overrides.Assembly) มาก่อนลิงก์จากต้นทาง */
+(function(){
+  var o = window.axCabUrl;
+  if(typeof o !== 'function' || o.__v156) return;
+  var w = function(p){
+    try{ if(p && p._overrides && typeof p._overrides === 'object' && typeof p._overrides.Assembly === 'string') return p._overrides.Assembly.trim(); }catch(e){}
+    return o.apply(this, arguments);
+  };
+  w.__v156 = true;
+  window.axCabUrl = w;
+})();
+
+/* ช่องที่คำนวณจากข้อมูล Order → ค่าอ่านอย่างเดียวในโหมดแก้ไข (Order นำเข้าแก้ได้ตามเดิม) */
+(function(){
+  var o = window.renderEditCell;
+  if(typeof o !== 'function' || o.__v156) return;
+  var w = function(partID, col, val){
+    if(RO[col] && !isImp()){
+      return '<span class="ax156-ro" title="ค่านี้มาจากข้อมูล Order — แก้ในตารางไม่ได้">' + esc(val) + '</span>';
+    }
+    return o.apply(this, arguments);
+  };
+  w.__v156 = true;
+  window.renderEditCell = w;
+})();
+
+function findIdx(rows, fn){ for(var i = 0; i < rows.length; i++) if(fn(rows[i])) return i; return -1; }
+
+/* วางแถวขอบต่อจากแถวสุดท้ายของชิ้นนั้น (<PartID>_n) — ไม่มีก็ต่อจากแถวชิ้น */
+function insertAfterPart(rows, r, pid, t){
+  var last = -1, pre = pid + '_';
+  for(var i = 0; i < rows.length; i++){
+    var x = rows[i];
+    if(x && x !== t && str(x.ID).indexOf(pre) === 0 && /^\d+$/.test(str(x.ID).slice(pre.length))) last = i;
+  }
+  if(last < 0) last = rows.indexOf(r);
+  rows.splice(last + 1, 0, t);
+}
+
+/* แถวขอบใหม่ (ด้านที่ไม่เคยมีขอบ) — ยาวตามชิ้นแบบเดียวกับสูตร Order ที่ไม่มี TYP7 */
+function mk7(r, sfx, val, pidStyle){
+  var L = parseFloat(r.LENGTH) || 0, W = parseFloat(r.WIDTH) || 0;
+  var t = { TYP:'7', _tp:7, ID:str(r.ID) + '_' + sfx, PARENTID:pidStyle ? str(r.ID) : (str(r.PARENTID) || str(r.ID)),
+            CNT:'1', NAME:val, NAME2:val, ARTICLE_ID:val, LENGTH:String((sfx === '4' || sfx === '6') ? L : W), EDGE_ID:String(+sfx - 3) };
+  if(r.ORDERID !== undefined) t.ORDERID = r.ORDERID;
+  if(r.ORDER_ID !== undefined) t.ORDER_ID = r.ORDER_ID;
+  return t;
+}
+
+/* ใส่ค่าที่ของเดิมไม่บันทึก/บันทึกไม่ครบ ลง currentData ก่อนส่งต่อให้ตัวบันทึกเดิม
+   (ตัวเดิมยังทำงานของมันครบเหมือนเดิม — ตรงนี้เติมเฉพาะส่วนที่ขาด) */
+function applyExtra(d, E){
+  var out = { cells:0, t7del:0, t7back:0, t7add:0 };
+  if(!d || !Array.isArray(d.groups) || !E) return out;
+  /* รูปแบบแถวขอบของ Order นี้ (รวมแถวที่เก็บไว้ตอนลบรหัสขอบ) */
+  var t3 = {}, t7 = [], kept = [];
+  d.groups.forEach(function(g){ ((g && g.rows) || []).forEach(function(r){
+    if(!r) return;
+    if(r._tp === 3){
+      t3[str(r.ID)] = 1;
+      if(r._t7off && typeof r._t7off === 'object') Object.keys(r._t7off).forEach(function(s){ var x = r._t7off[s]; if(x && typeof x === 'object') kept.push({ ID:str(r.ID) + '_' + s, PARENTID:str(x.PARENTID) }); });
+    } else if(r._tp === 7) t7.push(r);
+  }); });
+  var all7 = t7.concat(kept);
+  var std = all7.length > 0 && all7.every(function(x){ var m = /^(.+)_([4-7])$/.exec(str(x.ID)); return !!(m && t3[m[1]]); });
+  /* PARENTID ของแถวขอบ: IMOS = PartID ของชิ้น · StarNexus = รหัสตู้ (ตัดสินจากแถวขอบที่มีอยู่จริงก่อน) */
+  var pidStyle = false;
+  if(std){
+    var src7 = t7.length ? t7 : kept, nP = 0;
+    src7.forEach(function(x){ var m = /^(.+)_([4-7])$/.exec(str(x.ID)); if(m && str(x.PARENTID) === m[1]) nP++; });
+    pidStyle = nP * 2 > src7.length;
+  }
+
+  /* ค่าที่จอแสดงอยู่ก่อนบันทึก (ใช้ตัดสินว่าช่องไหนแก้จริง) */
+  var cur = {};
+  axRows().forEach(function(r){ if(r && !r._isPack){ var k = str(r.PartID); if(!(k in cur)) cur[k] = r; } });
+
+  d.groups.forEach(function(g){
+    var rows = (g && Array.isArray(g.rows)) ? g.rows : null;
+    if(!rows) return;
+    rows.slice().forEach(function(r){
+      if(!r || r._tp !== 3) return;
+      var pid = str(r.ID), ed = E[pid];
+      if(!ed || typeof ed !== 'object') return;
+      var ax = cur[pid] || {};
+      var has = function(k){ return ed[k] !== undefined; };
+      var chg = function(k){ return has(k) && str(ed[k]) !== str(ax[k]); };
+      var ov = function(){ if(!r._overrides || typeof r._overrides !== 'object') r._overrides = {}; return r._overrides; };
+      /* ช่องที่ของเดิมไม่บันทึก */
+      if(chg('ProductArticle')){ r.NAME2 = str(ed.ProductArticle); out.cells++; }
+      if(chg('Qty')){ r.CNT = str(ed.Qty); out.cells++; }
+      if(chg('Barcode')){ r.BARCODE = str(ed.Barcode); out.cells++; }
+      if(chg('Barcode2')){ r.BARCODE2 = str(ed.Barcode2); out.cells++; }
+      ['Groove1', 'Groove2', 'Groove4', 'PrepareWidth', 'PrepareLength', 'Assembly'].forEach(function(k){
+        if(chg(k)){ ov()[k] = str(ed[k]); out.cells++; }
+      });
+      /* ช่องที่มีค่าแก้ไว้ทับบนจอ → ให้ค่าทับเป็นค่าใหม่ด้วย */
+      ['CutWidth', 'CutLength', 'Groove3', 'SurfaceBeforeCutTopCode', 'SurfaceBeforeCutBottomCode'].forEach(function(k){
+        if(has(k) && r._overrides && typeof r._overrides === 'object' && r._overrides[k] !== undefined) r._overrides[k] = str(ed[k]);
+      });
+      /* EdgeCode1–4 */
+      Object.keys(EDGE).forEach(function(col){
+        if(!chg(col)) return;
+        var sfx = EDGE[col], val = str(ed[col]), tid = pid + '_' + sfx;
+        var ix = findIdx(rows, function(x){ return x && x._tp === 7 && str(x.ID) === tid; });
+        if(noEdge(val)){
+          if(ix >= 0){
+            var t = rows.splice(ix, 1)[0];
+            if(!r._t7off || typeof r._t7off !== 'object') r._t7off = {};
+            r._t7off[sfx] = t; out.t7del++;
+          }
+        } else if(ix < 0){
+          var back = (r._t7off && typeof r._t7off === 'object') ? r._t7off[sfx] : null;
+          var nt = null;
+          if(back && typeof back === 'object'){
+            nt = back; delete r._t7off[sfx];
+            if(!Object.keys(r._t7off).length) delete r._t7off;
+            nt.ID = tid;                                  /* แถวชิ้นที่คัดลอกมา (+Part / +ตู้) */
+            if(pidStyle || str(nt.PARENTID) === '' ) nt.PARENTID = pid;
+            nt.NAME = val; nt.NAME2 = val;
+            out.t7back++;
+          } else if(std){
+            nt = mk7(r, sfx, val, pidStyle); out.t7add++;
+          }
+          if(nt) insertAfterPart(rows, r, pid, nt);
+        }
+        r[EKEY[sfx]] = val;
+        out.cells++;
+      });
+    });
+  });
+  return out;
+}
+
+(function(){
+  var o = window.saveAxEdits;
+  if(typeof o !== 'function' || o.__v156) return;
+  var w = async function(silent){
+    var imp = isImp(), E = edits(), n = cellCount(E), rowsN = E ? Object.keys(E).length : 0, ex = null, hadData = false;
+    try{
+      hadData = !!(window.currentData);
+      if(!imp && hadData && E) ex = applyExtra(window.currentData, E);
+    }catch(e){ try{ console.warn('[v156] เติมค่าที่แก้ไม่สำเร็จ', e); }catch(x){} }
+    var r = await o.apply(this, arguments);
+    var ok = hadData && !editMode();
+    STAT.saves++; STAT.last = { ok:ok, imp:imp, cells:n, rows:rowsN, extra:ex, at:new Date().toISOString() };
+    if(ok && !silent && !imp) toast('✅ บันทึกแล้ว' + (n ? ' · แก้ ' + n + ' ช่อง (' + rowsN + ' แถว)' : ''));
+    syncBtn();
+    return r;
+  };
+  w.__v156 = true;
+  w.__impbWrap = o.__impbWrap;
+  window.saveAxEdits = w;
+})();
+
+/* ══ 2) ค้นหา / แทนที่ ═══════════════════════════════════════════════════════ */
+var FR = { timer:0, last:null };
+
+function frQ(){ return str((q('frSearch') || {}).value); }
+function frR(){ return str((q('frReplace') || {}).value); }
+function frF(){ return str((q('frColFilter') || {}).value); }
+function frWhole(){ var c = q('fr156Whole'); return !!(c && c.checked); }
+function frOpen(){ var p = q('frPanel'); return !!(p && p.classList.contains('visible')); }
+function colOk(col, f){
+  if(!f) return true;
+  if(f === '@edge') return !!EDGE[col];
+  if(f === '@surf') return !!SURF[col];
+  return col === f;
+}
+function reEsc(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function hit(v, qq, whole){
+  v = str(v);
+  return whole ? v.trim().toLowerCase() === qq.trim().toLowerCase() : v.toLowerCase().indexOf(qq.toLowerCase()) >= 0;
+}
+function repl(v, qq, rep, whole){
+  v = str(v);
+  if(whole) return rep;
+  return v.replace(new RegExp(reEsc(qq), 'gi'), function(){ return rep; });
+}
+function msg(t, cls){ var m = q('fr156Msg'); if(m){ m.textContent = t || ''; m.className = cls || ''; } }
+
+/* ช่องที่ตรงกับคำค้น — ทุกแถวของ Order (ไม่ใช่เฉพาะแถวที่เห็นบนจอ)
+   ค่าที่แก้ผูกกับ PartID → PartID ซ้ำหลายแถว ต้องค่าเหมือนกันทุกแถวถึงแทนที่ได้ */
+function scan(){
+  var qq = frQ(), whole = frWhole(), f = frF(), imp = isImp(), E = edits() || {};
+  var res = { list:[], cells:0, rows:0, skip:0, skipRows:0 };
+  if(!qq.trim()) return res;
+  var by = {}, order = [];
+  axRows().forEach(function(r){
+    if(!r || r._isPack) return;
+    var pid = str(r.PartID);
+    if(!by[pid]){ by[pid] = []; order.push(pid); }
+    by[pid].push(r);
+  });
+  var cols = (typeof AX_COLS !== 'undefined' && Array.isArray(AX_COLS)) ? AX_COLS : [];
+  var rowHit = {};
+  order.forEach(function(pid){
+    var rs = by[pid];
+    cols.forEach(function(col){
+      if(col === 'PartID' || !editableCol(col, imp) || !colOk(col, f)) return;
+      var ed = E[pid] && E[pid][col] !== undefined;
+      var vals = rs.map(function(r){ return ed ? str(E[pid][col]) : str(r[col]); });
+      var any = vals.some(function(v){ return hit(v, qq, whole); });
+      if(!any) return;
+      var same = vals.every(function(v){ return v === vals[0]; });
+      if(!same){ res.skip += vals.filter(function(v){ return hit(v, qq, whole); }).length; res.skipRows++; return; }
+      res.list.push({ pid:pid, col:col, cur:vals[0], n:rs.length });
+      res.cells += rs.length;
+      rowHit[pid] = rs.length;
+    });
+  });
+  Object.keys(rowHit).forEach(function(k){ res.rows += rowHit[k]; });
+  return res;
+}
+
+function badge(res){
+  var b = q('frMatchCount');
+  if(!b) return;
+  b.textContent = res.cells + ' ช่อง' + (res.rows ? ' · ' + res.rows + ' แถว' : '');
+  b.title = res.skip ? ('ข้าม ' + res.skip + ' ช่อง: PartID ซ้ำหลายแถวและค่าไม่เหมือนกัน') : '';
+}
+function countSoon(){
+  clearTimeout(FR.timer);
+  FR.timer = setTimeout(function(){
+    try{
+      if(!frOpen()) return;
+      var res = scan(); FR.last = res; badge(res);
+      if(res.skip) msg('⚠ ข้าม ' + res.skip + ' ช่อง — PartID ซ้ำหลายแถว (คนละตู้/Type) และค่าไม่เหมือนกัน ต้องแก้ทีละช่อง', 'warn');
+      else if(q('fr156Msg') && /ข้าม/.test(q('fr156Msg').textContent)) msg('');
+    }catch(e){}
+  }, 150);
+}
+
+/* ไฮไลต์ช่องที่ตรงบนจอ (แถวที่เห็น) + นับทั้ง Order แบบหน่วงเวลา */
+function frHighlight(){
+  var inputs = document.querySelectorAll('.ax-edit-input');
+  if(!frOpen()){
+    var old = document.querySelectorAll('.ax-edit-input.fr-match');
+    for(var j = 0; j < old.length; j++) old[j].classList.remove('fr-match', 'fr-cursor');
+    try{ frMatchKeys = []; }catch(e){}
+    return;
+  }
+  var qq = frQ(), whole = frWhole(), f = frF(), keys = [];
+  for(var i = 0; i < inputs.length; i++){
+    var inp = inputs[i];
+    inp.classList.remove('fr-match', 'fr-cursor');
+    if(!qq.trim()) continue;
+    var col = inp.dataset.col;
+    if(col === 'PartID' || !colOk(col, f)) continue;
+    if(hit(inp.value, qq, whole)){ inp.classList.add('fr-match'); keys.push(inp); }
+  }
+  try{ frMatchKeys = keys; frMatchCount = keys.length; }catch(e){}
+  var c = 0; try{ c = frCursor; }catch(e){}
+  if(c < keys.length) keys[c].classList.add('fr-cursor');
+  countSoon();
+}
+
+/* แทนที่ทีละช่อง (ช่องที่ไฮไลต์อยู่บนจอ) */
+function frReplaceOne(){
+  var qq = frQ(), rep = frR(), whole = frWhole();
+  if(!qq.trim()) return;
+  var keys = []; try{ keys = frMatchKeys || []; }catch(e){}
+  if(!keys.length){ frHighlight(); try{ keys = frMatchKeys || []; }catch(e){} }
+  if(!keys.length){ msg('ไม่พบคำที่ค้นบนจอ', 'warn'); return; }
+  var c = 0; try{ c = frCursor; }catch(e){}
+  if(c >= keys.length) c = 0;
+  var inp = keys[c];
+  var nv = repl(inp.value, qq, rep, whole);
+  if(nv !== inp.value){ inp.value = nv; try{ axSetEdit(inp); }catch(e){} }
+  try{ frCursor = (c + 1) % Math.max(keys.length, 1); }catch(e){}
+  frHighlight();
+  try{ var k2 = frMatchKeys || []; var c2 = frCursor; if(k2[c2]) k2[c2].scrollIntoView({ block:'center', behavior:'smooth' }); }catch(e){}
+}
+
+/* แทนที่ทั้งหมด (ทั้ง Order) → ใส่เป็นค่าที่แก้ (ยังไม่บันทึก) · คืนจำนวนช่องที่เปลี่ยน */
+function replaceAllCore(res){
+  var qq = frQ(), rep = frR(), whole = frWhole(), E = edits();
+  if(!E) return { cells:0, rows:0 };
+  var cells = 0, rowsHit = {};
+  res.list.forEach(function(m){
+    var nv = repl(m.cur, qq, rep, whole);
+    if(nv === m.cur) return;
+    if(!E[m.pid] || typeof E[m.pid] !== 'object') E[m.pid] = {};
+    E[m.pid][m.col] = nv;
+    cells += m.n; rowsHit[m.pid] = m.n;
+  });
+  var rows = 0; Object.keys(rowsHit).forEach(function(k){ rows += rowsHit[k]; });
+  return { cells:cells, rows:rows };
+}
+function afterReplace(){
+  try{ renderAX(); }catch(e){}
+  try{ var sb = q('saveEditsBtn'); var E = edits(); if(sb && E && Object.keys(E).length && !sb.disabled) sb.textContent = '💾 บันทึก (' + Object.keys(E).length + ' แถว)'; }catch(e){}
+  try{ frCursor = 0; }catch(e){}
+  frHighlight();
+}
+function frReplaceAll(){
+  if(!editMode()){ msg('เข้าโหมดแก้ไขก่อน', 'warn'); return; }
+  var qq = frQ();
+  if(!qq.trim()){ msg('พิมพ์คำที่ต้องการค้นก่อน', 'warn'); return; }
+  var res = scan();
+  var done = replaceAllCore(res);
+  afterReplace();
+  if(!done.cells){ msg(res.skip ? ('⚠ ไม่ได้แทนที่ — ข้าม ' + res.skip + ' ช่อง (PartID ซ้ำ ค่าไม่เหมือนกัน)') : 'ไม่พบคำที่ค้น', 'warn'); return; }
+  msg('✓ แทนที่แล้ว ' + done.cells + ' ช่อง (' + done.rows + ' แถว) — กด 💾 บันทึก เพื่อบันทึก' + (res.skip ? ' · ข้าม ' + res.skip + ' ช่อง' : ''), 'ok');
+}
+async function frReplaceAllSave(){
+  if(!editMode()){ msg('เข้าโหมดแก้ไขก่อน', 'warn'); return; }
+  var qq = frQ(), rep = frR();
+  if(!qq.trim()){ msg('พิมพ์คำที่ต้องการค้นก่อน', 'warn'); return; }
+  var res = scan();
+  var willCells = 0, willRows = {};
+  res.list.forEach(function(m){ if(repl(m.cur, qq, rep, frWhole()) !== m.cur){ willCells += m.n; willRows[m.pid] = m.n; } });
+  if(!willCells){ msg(res.skip ? ('⚠ ไม่ได้แทนที่ — ข้าม ' + res.skip + ' ช่อง (PartID ซ้ำ ค่าไม่เหมือนกัน)') : 'ไม่พบคำที่ค้น', 'warn'); return; }
+  var nr = 0; Object.keys(willRows).forEach(function(k){ nr += willRows[k]; });
+  var E0 = edits() || {}, pend = cellCount(E0);
+  var f = frF(), fl = f === '@edge' ? 'EdgeCode 1–4' : f === '@surf' ? 'Surface บน+ล่าง' : (f || 'ทุกคอลัมน์');
+  var txt = 'แทนที่ "' + qq + '" → "' + (rep === '' ? '(ว่าง)' : rep) + '"\n'
+    + 'คอลัมน์: ' + fl + (frWhole() ? ' · ตรงทั้งช่อง' : '') + '\n'
+    + 'จำนวน ' + willCells + ' ช่อง (' + nr + ' แถว)'
+    + (res.skip ? '\n⚠ ข้าม ' + res.skip + ' ช่อง (PartID ซ้ำ ค่าไม่เหมือนกัน)' : '')
+    + (pend ? '\n\nมีช่องที่แก้ค้างไว้ก่อนแล้ว ' + pend + ' ช่อง — จะบันทึกไปพร้อมกัน' : '')
+    + '\n\nแทนที่แล้วบันทึกทันที?';
+  if(!window.confirm(txt)) return;
+  replaceAllCore(res);
+  afterReplace();
+  msg('⏳ กำลังบันทึก...', '');
+  await window.saveAxEdits();
+  if(editMode()) msg('⚠ ยังบันทึกไม่สำเร็จ — ค่าที่แทนที่ยังอยู่บนจอ กด 💾 บันทึก อีกครั้ง', 'warn');
+}
+
+function colOptions(){
+  var sel = q('frColFilter');
+  if(!sel) return;
+  var keep = sel.value, imp = isImp();
+  var cols = (typeof AX_COLS !== 'undefined' && Array.isArray(AX_COLS)) ? AX_COLS : [];
+  var h = '<option value="">ทุกคอลัมน์ที่แก้ได้</option>'
+        + '<option value="@edge">EdgeCode 1–4 (ขอบทุกด้าน)</option>'
+        + '<option value="@surf">Surface บน + ล่าง</option>';
+  cols.forEach(function(c){ if(c !== 'PartID' && editableCol(c, imp)) h += '<option value="' + esc(c) + '">' + esc(c) + '</option>'; });
+  sel.innerHTML = h;
+  sel.value = keep;
+  if(sel.value !== keep) sel.value = '';
+}
+
+function buildPanel(){
+  var p = q('frPanel');
+  if(!p || p.__v156) return;
+  p.__v156 = true;
+  try{
+    var sp = p.querySelector('span[style*="font-weight:400"]');
+    if(sp) sp.textContent = '(BOM ไม้ — โหมดแก้ไข · ค้นทุกแถวของ Order)';
+  }catch(e){}
+  var rep = q('frReplace');
+  var opt = document.createElement('div');
+  opt.id = 'fr156Opt';
+  opt.innerHTML = '<label title="ค่าในช่องต้องตรงกับคำค้นทั้งหมด (ไม่สนตัวพิมพ์เล็ก/ใหญ่) — แนะนำสำหรับรหัสขอบ/รหัสไม้">'
+    + '<input type="checkbox" id="fr156Whole"> ตรงทั้งช่อง</label>'
+    + '<span style="color:var(--text3)">ไม่สนตัวพิมพ์เล็ก/ใหญ่</span>';
+  var rr = rep ? rep.closest('.fr-row') : null;
+  if(rr && rr.parentNode) rr.parentNode.insertBefore(opt, rr.nextSibling); else p.appendChild(opt);
+  var m = document.createElement('div');
+  m.id = 'fr156Msg';
+  p.appendChild(m);
+  try{
+    var btns = p.querySelectorAll('button');
+    var allBtn = null;
+    for(var i = 0; i < btns.length; i++) if(/แทนที่ทั้งหมด/.test(btns[i].textContent)) allBtn = btns[i];
+    if(allBtn){
+      var b = document.createElement('button');
+      b.id = 'fr156SaveAll';
+      b.type = 'button';
+      b.textContent = 'แทนที่ทั้งหมด + บันทึก 💾';
+      b.title = 'แทนที่ทุกช่องที่ตรง (ทั้ง Order) แล้วบันทึกทันที';
+      b.style.cssText = 'background:#16a34a;border:none;border-radius:7px;padding:5px 14px;font-size:11px;color:white;cursor:pointer;font-weight:600';
+      b.onclick = function(){ frReplaceAllSave(); };
+      allBtn.parentNode.insertBefore(b, allBtn.nextSibling);
+    }
+  }catch(e){}
+  var w = q('fr156Whole'); if(w) w.addEventListener('change', function(){ try{ frCursor = 0; }catch(e){} frHighlight(); });
+  var s = q('frColFilter'); if(s) s.addEventListener('change', function(){ try{ frCursor = 0; }catch(e){} frHighlight(); });
+}
+
+/* ปุ่ม 🔍 ข้าง 💾 บันทึก — โชว์ตามปุ่มบันทึก (โหมดแก้ไข) */
+function syncBtn(){
+  var b = q('fr156Btn'), s = q('saveEditsBtn');
+  if(!b) return;
+  var on = !!(s && s.style.display && s.style.display !== 'none' && editMode());
+  b.style.display = on ? 'flex' : 'none';
+}
+function buildBtn(){
+  var s = q('saveEditsBtn');
+  if(!s || q('fr156Btn')) return;
+  var b = document.createElement('button');
+  b.id = 'fr156Btn';
+  b.type = 'button';
+  b.title = 'ค้นหาคำ แล้วแทนที่ทั้งหมด (ทั้ง Order) · Ctrl+F';
+  b.textContent = '🔍 ค้นหา/แทนที่';
+  b.style.cssText = 'display:none;background:rgba(255,204,0,0.14);border:1px solid rgba(240,168,0,0.45);border-radius:7px;padding:5px 13px;font-size:11px;color:#9a6700;cursor:pointer;font-weight:600;align-items:center;gap:5px';
+  b.onclick = function(){ try{ toggleFR(); }catch(e){} };
+  s.parentNode.insertBefore(b, s.nextSibling);
+  try{ new MutationObserver(syncBtn).observe(s, { attributes:true, attributeFilter:['style'] }); }catch(e){}
+  syncBtn();
+}
+
+(function(){
+  buildPanel();
+  buildBtn();
+  window.frHighlight = frHighlight;
+  window.frReplaceOne = frReplaceOne;
+  window.frReplaceAll = frReplaceAll;
+  window.AX_frReplaceAllSave = frReplaceAllSave;
+  var oT = window.toggleFR;
+  if(typeof oT === 'function' && !oT.__v156){
+    var wT = function(){
+      var r = oT.apply(this, arguments);
+      try{ if(frOpen()){ colOptions(); msg(''); try{ frCursor = 0; }catch(e){} frHighlight(); } }catch(e){}
+      syncBtn();
+      return r;
+    };
+    wT.__v156 = true;
+    window.toggleFR = wT;
+  }
+  var oC = window.closeFR;
+  if(typeof oC === 'function' && !oC.__v156){
+    var wC = function(){ var r = oC.apply(this, arguments); try{ msg(''); clearTimeout(FR.timer); }catch(e){} return r; };
+    wC.__v156 = true;
+    window.closeFR = wC;
+  }
+  var oE = window.toggleEditMode;
+  if(typeof oE === 'function' && !oE.__v156){
+    var wE = function(){ var r = oE.apply(this, arguments); syncBtn(); return r; };
+    wE.__v156 = true;
+    window.toggleEditMode = wE;
+  }
+})();
+
+window.AX_saveState = function(){ return JSON.parse(JSON.stringify(STAT)); };
+window.AX_frScan = function(){ var r = scan(); return { cells:r.cells, rows:r.rows, skip:r.skip, list:r.list.map(function(m){ return { pid:m.pid, col:m.col, cur:m.cur, n:m.n }; }) }; };
 })();
 </script>
 </body>
