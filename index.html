@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '153', D = '07/10/2026';
+  var V = '154', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -17914,6 +17914,13 @@ window.ORV_sig = calcSig;
 window.ORV_makeDiff = makeDiff;   /* ให้ชุดทดสอบเรียกได้ */
 
 /* ══ 2) ที่เก็บ (Supabase app_settings) ═════════════════════════ */
+/* v154: บันทึกหลายค่าในคำสั่งเดียว (ไฟล์กลาง: อ่านรายชื่อไฟล์ / รอคิวบันทึกรอบเดียว) */
+async function putSettings(rows){
+  var d = D(); if (!d) throw new Error('ยังไม่ได้เชื่อม Supabase');
+  var r = await d.from('app_settings').upsert(rows, { onConflict:'key' });
+  if (r && r.error) throw new Error(r.error.message);
+  return true;
+}
 async function putSetting(key, value){
   var d = D(); if (!d) throw new Error('ยังไม่ได้เชื่อม Supabase');
   var r = await d.from('app_settings').upsert({ key:key, value:value }, { onConflict:'key' });
@@ -18735,10 +18742,10 @@ async function saveBase(oid, sig, data, quiet, accAlso){
   delete ORV.changed[oid];
   paint();
   try {
-    await putSetting(K_BASE + oid, rec);
-    await putSetting(K_BDATA + oid, { v:1, oid:oid, sig:sig, data:data });
+    await putSettings([{ key:K_BASE + oid, value:rec }, { key:K_BDATA + oid, value:{ v:1, oid:oid, sig:sig, data:data } }]);   /* v154: 2 ค่าในคำสั่งเดียว */
     if (!quiet) toast('📸 เก็บภาพถ่าย BOM ของ ' + oid + ' ไว้แล้ว\nครั้งหน้าถ้าต้นทางแก้มา จะเตือนให้ทันที', 'ok');
-  } catch(e){ console.warn(TAG + ' เก็บภาพถ่ายไม่ได้:', (e && e.message) || e); }
+  } catch(e){ console.warn(TAG + ' เก็บภาพถ่ายไม่ได้:', (e && e.message) || e); return false; }   /* v154: คืน false (เดิมไม่คืนค่า) */
+  return true;
 }
 
 async function loadAllBase(){
@@ -18976,9 +18983,10 @@ async function openBasePopup(oid){
       if (a === 'later') { closePopup(); toast('เก็บไว้ก่อน — ป้าย ⚠ ยังอยู่ที่ Order นี้', 'warn'); return; }
 
       if (a === 'take') {
-        lock(true); setMsg('กำลังบันทึกภาพถ่ายใหม่…');
-        try { await saveBase(oid, calcSig(newD), newD, true, [calcSig(oldD)]); }
-        catch(e){ setMsg('บันทึกไม่สำเร็จ: ' + ((e && e.message) || e)); lock(false); return; }
+        /* v154: ไม่ต้องรอบันทึกภาพถ่าย — saveBase จำในเครื่องทันที (ORV.base) แล้วบันทึกต่อเบื้องหลัง
+           (ไฟล์กลางบนเครือข่ายช้า · บันทึกไม่สำเร็จ = ครั้งหน้าถามใหม่ ข้อมูล Order ไม่หาย เพราะอยู่ในฐานข้อมูลแล้ว) */
+        var _bp = saveBase(oid, calcSig(newD), newD, true, [calcSig(oldD)]);
+        Promise.resolve(_bp).then(function(ok){ if (ok === false) toast('บันทึกภาพถ่าย BOM ของ ' + oid + ' ไม่สำเร็จ — ครั้งหน้าที่เปิด Order นี้จะถามอีกครั้ง', 'warn'); }, function(){});
         /* ══ v15.1 แก้บั๊ก: กด "รับข้อมูลใหม่" แล้วยังฟ้องซ้ำ ═══════════════
            ภาพถ่ายถูกเก็บจาก newD (ข้อมูลตอนเปิดกล่อง) แต่ checkBase รอบหน้า
            เทียบกับ calcSig(window.currentData) ซึ่งถูกประกอบใหม่ตอน
@@ -18989,7 +18997,7 @@ async function openBasePopup(oid){
            จากข้อมูลที่โหลดจริง ตั้งแต่นั้นลายเซ็นจะตรงกันเสมอ
            → ฟ้องอีกเมื่อ "ต้นทางแก้มาจริง" เท่านั้น */
         try { ORV.skipOnce[oid] = true; delete ORV.changed[oid]; }catch(e){}
-        lock(false); closePopup();
+        closePopup();
         toast('✅ รับข้อมูลใหม่ของ ' + oid + ' แล้ว', 'ok');
         return;
       }
