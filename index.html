@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '154', D = '07/10/2026';
+  var V = '155', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -31830,7 +31830,7 @@ if(typeof sxlScanOver !== 'function' || typeof sxlOverDir !== 'function' || type
    || typeof sxlFileToRaw !== 'function' || typeof sxlRebuild !== 'function' || typeof SXL === 'undefined') return;
 if(sxlScanOver.__v147) return;
 var orig = sxlScanOver;
-var CONC = 8, DBN = 'pv2_sxl_over', STN = 'f', VER = 'v1';
+var CONC = 12, DBN = 'pv2_sxl_over', STN = 'f', VER = 'v1';   /* v155: อ่านจาก Server พร้อมกันครั้งละ 12 (เดิม 8) */
 var ST = { scans:0, files:0, read:0, hit:0, fail:0, ms:0, last:null, cacheErr:'' };
 var dead = false;   /* ที่จำไม่ตอบภายใน 8 วินาที → เลิกใช้ที่จำในรอบเปิดโปรแกรมนี้ (อ่านจาก Server ตามปกติ · ไม่ค้าง) */
 function limit(pr, ms, fb){
@@ -31860,7 +31860,13 @@ function db(){
 }
 function getMany(keys){
   if(dead) return Promise.resolve(new Map());
-  return limit(getMany0(keys), 8000, new Map());
+  var out = new Map(), i = 0, CH = 150;   /* v155: ทีละชุด — เดิมทีเดียวทั้งหมด (เครื่องช้า + ไฟล์เยอะ = เกิน 8 วินาที → ไม่ใช้ที่จำทั้งรอบ) */
+  function next(){
+    if(dead || i >= keys.length) return Promise.resolve(out);
+    var part = keys.slice(i, i + CH); i += CH;
+    return limit(getMany0(part), 8000, null).then(function(m){ if(m) m.forEach(function(v, k){ out.set(k, v); }); return next(); });
+  }
+  return next();
 }
 function getMany0(keys){
   return db().then(function(d){
@@ -31934,7 +31940,10 @@ var scan = async function(T, S, only){
   var d = await sxlOverDir(T.t, false); if(!d) return false;
   var latest = {}, all = {};
   var ab = SXL.__pollAbort;   /* v149: มีเฉพาะตอนรอบตรวจอัตโนมัติ + มีงานบันทึกรออยู่ */
-  for await (var ent of d.entries()){
+  var pf = (!only && typeof SXL.__prelist === 'function') ? SXL.__prelist(T.t) : null, pl = null;   /* v155: รายชื่อที่ไล่ไว้แล้วตั้งแต่เริ่มโหลด (ทุกตารางพร้อมกัน) */
+  if(pf){ try{ pl = await pf; }catch(e){ pl = null; } }
+  if(pl && pl.latest && pl.all){ latest = pl.latest; all = pl.all; }
+  else for await (var ent of d.entries()){
     if(ab && ab()) return false;
     if(ent[1].kind !== 'file') continue;
     var v = sxlVer(ent[0]); if(!v) continue;
@@ -32982,6 +32991,73 @@ var tries = 0, iv = setInterval(function(){
 }, 1000);
 /* โมดูลอื่นห่อ delOrder ทับทีหลังได้ (ห่อซ้อนกัน) — ตรวจซ้ำห่าง ๆ ให้ป้ายตามการลบเสมอ */
 setInterval(function(){ try{ hookMenu(); hookDel(); hookRename(); hookSave(); }catch(e){} }, 15000);
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v155 — เปิดโปรแกรม / เลือกโฟลเดอร์ Server / อ่านไฟล์ล่าสุด: อ่าน "ของที่บันทึกไว้" (_changes) เร็วขึ้น
+     ผู้ใช้ 07/10/2026 15:04 "ตรงหน้าโหลดเข้า ที่มองไฟล์ตรง log ทำให้มันไวกว่านี้ได้ไหม ตอนนี้ยังช้ามากอยู่"
+     วัดแล้ว (โฟลเดอร์ใช้มานาน + เครือข่ายช้า): เปิดโปรแกรมครั้งถัดไป เนื้อไฟล์มาจากที่จำในเครื่อง (v147) เกือบหมด
+       เวลาที่เหลือ = ไล่รายชื่อไฟล์ใน _changes/<ตาราง> ทีละตาราง ต่อกัน (แต่ละตารางมีหลายพันไฟล์ — กลุ่มละ 3 รุ่น)
+     ใหม่ (เฉพาะรอบโหลดใหญ่: เชื่อมตำแหน่งที่จำไว้ / เลือกโฟลเดอร์ / อ่านไฟล์ล่าสุด):
+       1) ไล่รายชื่อไฟล์ _changes ของทุกตารางพร้อมกันตั้งแต่เริ่ม (ไปพร้อมกับการอ่านไฟล์ CSV ฐาน) — ไม่ต้องรอทีละตาราง
+          ตัวอ่าน _changes (v147) ใช้รายชื่อชุดนี้แทนการไล่ใหม่ · กติกาเลือกรุ่นล่าสุดเหมือนเดิมทุกอย่าง
+          ไฟล์ที่เครื่องอื่นเพิ่งบันทึกระหว่างนั้น → รอบตรวจถัดไป (10 วินาที) เห็นเอง เหมือนบันทึกหลังโหลดเสร็จ
+       2) อ่านเนื้อไฟล์จากที่จำในเครื่องเป็นชุดละ 150 (เดิมทีเดียวทั้งหมด — เครื่องช้าอ่านเกิน 8 วินาที = เลิกใช้ที่จำทั้งรอบ → ไปอ่านจาก Server ทุกไฟล์)
+       3) อ่านไฟล์จาก Server พร้อมกันครั้งละ 12 ไฟล์ (เดิม 8)
+     ไฟล์ / โฟลเดอร์บน Server ไม่ถูกเขียน ไม่ถูกลบ · ผลข้อมูลเหมือนเดิมทุกแถว · ปิดได้: localStorage pv2_prelist = 'off'
+     ตรวจใน Console: SXL_loadReport() → เวลาโหลดรอบล่าสุดแยกขั้น
+     ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+if(typeof SXL === 'undefined' || typeof sxlSync !== 'function' || typeof sxlOverDir !== 'function' || typeof sxlVer !== 'function'
+   || typeof sxlLoadable !== 'function' || SXL.__v155) return;
+SXL.__v155 = true;
+
+var PF = null, REP = { last:null };
+function on(){ try{ return localStorage.getItem('pv2_prelist') !== 'off'; }catch(e){ return true; } }
+function rt(){ try{ return performance.now(); }catch(e){ return Date.now(); } }
+/* ไล่รายชื่อไฟล์ของตารางเดียว — กติกาเดียวกับตัวอ่าน _changes (v147 / ของเดิม): รุ่นล่าสุดต่อกลุ่ม · เวลาเท่ากันใช้ชื่อแบบ ~ ก่อนแบบ + */
+async function listOne(t, rec){
+  var t0 = rt(), d = await sxlOverDir(t, false);
+  if(!d){ rec.push({ t:t, n:0, ms:Math.round(rt() - t0) }); return null; }
+  var latest = {}, all = {}, n = 0;
+  for await (var ent of d.entries()){
+    if(ent[1].kind !== 'file') continue;
+    var v = sxlVer(ent[0]); if(!v) continue;
+    n++;
+    (all[v.key] = all[v.key] || []).push(ent[0]);
+    var L0 = latest[v.key];
+    if(!L0 || v.ts > L0.ts || (v.ts === L0.ts && L0.plus && !v.plus)) latest[v.key] = { name:ent[0], ts:v.ts, plus:v.plus };
+  }
+  rec.push({ t:t, n:n, ms:Math.round(rt() - t0) });
+  return { latest:latest, all:all };
+}
+/* ตัวอ่าน _changes ขอรายชื่อที่ไล่ไว้แล้ว (ครั้งเดียวต่อตาราง ต่อรอบโหลด) — ไม่มี = ไล่เองแบบเดิม */
+SXL.__prelist = function(t){
+  if(!PF || !PF.map[t]) return null;
+  var p = PF.map[t]; delete PF.map[t];
+  return p;
+};
+var oSync = sxlSync;
+sxlSync = function(force, why){
+  if(!(why === 'pick' || why === 'restore' || why === 'check') || PF || !on() || !SXL.dir) return oSync.apply(this, arguments);
+  var job = PF = { map:{}, list:[], t0:rt() };
+  try{
+    SXL.cfg.tables.filter(sxlLoadable).forEach(function(T){
+      job.map[T.t] = listOne(T.t, job.list).then(null, function(){ return null; });   /* ไล่ไม่ได้ = ตัวอ่านไล่เองตามเดิม */
+    });
+  }catch(e){}
+  var p;
+  try{ p = oSync.apply(this, arguments); }catch(e){ if(PF === job) PF = null; throw e; }
+  return Promise.resolve(p).then(function(r){ done(job, why); return r; }, function(e){ done(job, why); throw e; });
+};
+function done(job, why){
+  if(PF === job) PF = null;
+  var oc = null; try{ oc = window.SXL_overCache ? window.SXL_overCache() : null; }catch(e){}
+  REP.last = { why:why, ms:Math.round(rt() - job.t0), lists:job.list.slice(), cache:oc ? { fromServer:oc.fromServer, fromCache:oc.fromCache, err:oc.err } : null, at:new Date().toISOString() };
+}
+window.SXL_loadReport = function(){ return REP.last ? JSON.parse(JSON.stringify(REP.last)) : null; };
 })();
 </script>
 </body>
