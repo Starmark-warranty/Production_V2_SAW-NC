@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '152', D = '07/10/2026';
+  var V = '153', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -24990,6 +24990,73 @@ function freshScan(key){
     return Promise.resolve(typeof sxlLocked === 'function' ? sxlLocked(run) : run()).then(function(ch){ try{ if(ch && SXL.extChanged) SXL.extChanged.add('app_settings'); }catch(e){} }, function(){});
   }catch(e){ return Promise.resolve(); }
 }
+/* v153: เอกสารของ Order ที่เปลี่ยนชื่อไปแล้ว (ชื่อเดิมเหลือ { movedTo, movedAt }) → ไม่รับบันทึกลงชื่อเดิม (เครื่อง / หน้าต่างที่ยังเห็นชื่อเดิม)
+   ชื่อนั้นกลับมาใช้ได้เมื่อมี Order ชื่อนั้นจริงอีกครั้ง: ชื่อใหม่ไม่มีแล้ว (เปลี่ยนชื่อกลับ) หรือ Order ถูกส่ง / สร้างหลังเวลาย้าย (loaded_at > movedAt)
+   ใบรวมที่บันทึกแล้วมีชื่อ Order ใหม่เข้ามา (ไม่เคยอยู่ในใบ) → ชื่อนั้นต้องไม่ใช่ชื่อที่ย้ายไปแล้ว
+   เรคอร์ดที่ไม่มี movedTo + ใบรวมที่ไม่ได้เพิ่มชื่อ Order → ทำงานเหมือนเดิมทุกอย่าง */
+function mvScan(table, col, ids){
+  try{
+    if(typeof SXL === 'undefined' || !SXL || !SXL.dir || typeof sxlScanOver !== 'function' || typeof sxlCfg !== 'function') return Promise.resolve();
+    var TT = sxlCfg(table), S = SXL.s && SXL.s[table];
+    if(!TT || !S || !S.ready) return Promise.resolve();
+    var only = new Set(); ids.forEach(function(x){ var o = {}; o[col] = x; only.add(sxlBf(sxlBucketOf(TT, o))); });
+    var run = function(){ return sxlScanOver(TT, S, only); };
+    return Promise.resolve(typeof sxlLocked === 'function' ? sxlLocked(run) : run()).then(function(ch){ try{ if(ch && SXL.extChanged) SXL.extChanged.add(table); }catch(e){} }, function(){});
+  }catch(e){ return Promise.resolve(); }
+}
+function mvActive(d, oid, v){
+  var ok = window.__pdocMoveOk; if(ok && Object.prototype.hasOwnProperty.call(ok, oid) && ok[oid] > 0) return Promise.resolve(false);   /* ทางย้ายเอกสารเอง */
+  return mvScan('imos_orders', 'order_id', [oid, String(v.movedTo)]).then(function(){
+    return Promise.all([Promise.resolve(d.from('imos_orders').select('order_id,loaded_at').eq('order_id', oid).limit(1)),
+                        Promise.resolve(d.from('imos_orders').select('order_id').eq('order_id', String(v.movedTo)).limit(1))]);
+  }).then(function(rs){
+    var a = rs[0] && !rs[0].error && rs[0].data && rs[0].data[0], b = rs[1] && !rs[1].error && rs[1].data && rs[1].data.length;
+    if(!a) return true;                                             /* ไม่มี Order ชื่อนี้ = ยังเป็นชื่อที่ย้ายไปแล้ว */
+    if(!b) return false;                                            /* ชื่อใหม่ไม่มีแล้ว (เปลี่ยนชื่อกลับ) */
+    var cur = String(a.loaded_at == null ? '' : a.loaded_at);
+    if(v.movedLa != null){                                          /* แถว Order เดิมที่เครื่องอื่นยังเห็น = loaded_at เดียวกับตอนย้าย · ส่ง / สร้างใหม่ = ต่างกัน */
+      var was = String(v.movedLa), x = Date.parse(cur), y = Date.parse(was);
+      return cur === was || (!isNaN(x) && !isNaN(y) && x === y);
+    }
+    var la = Date.parse(cur);
+    return !(la && la > (+v.movedAt || 0));
+  });
+}
+function movedGuard(d, oid, r){
+  var v = (r && !r.error && r.data) ? r.data.value : null;
+  if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ v = null; } }
+  if(!v || typeof v !== 'object' || !v.movedTo) return r;
+  return mvActive(d, oid, v).then(function(act){
+    if(act) throw Error('เอกสารของ Order "' + oid + '" ย้ายไปอยู่ที่ "' + v.movedTo + '" แล้ว (เปลี่ยนชื่อ Order) — เปิด Order ชื่อใหม่แล้วทำอีกครั้ง');
+    return r;
+  });
+}
+function mvNames(rec){   /* ชื่อ Order ที่ใบรวมในเรคอร์ดนี้อ้าง */
+  var s = Object.create(null);
+  ((rec && rec.docs) || []).forEach(function(y){
+    var m = y && y.multi; if(!m || typeof m !== 'object') return;
+    (Array.isArray(m.oids) ? m.oids : []).forEach(function(o){ s[o] = 1; });
+    if(m.lot) s[m.lot] = 1;
+    (Array.isArray(m.items) ? m.items : []).forEach(function(it){ if(it && it.oid) s[it.oid] = 1; });
+    (Array.isArray(y.lines) ? y.lines : []).forEach(function(l){ if(l && l.by && typeof l.by === 'object') Object.keys(l.by).forEach(function(k){ s[k] = 1; }); });
+  });
+  return s;
+}
+function mvCheckNames(d, oid, before, rec){
+  var now = mvNames(rec), add = Object.keys(now).filter(function(n){ return !before[n] && n !== oid; });
+  if(!add.length) return Promise.resolve();
+  return mvScan('app_settings', 'key', add.map(function(n){ return DK + n; })).then(function(){
+    return d.from('app_settings').select('key,value').in('key', add.map(function(n){ return DK + n; }));
+  }).then(function(q){
+    var tomb = ((q && !q.error && q.data) || []).map(function(x){
+      var v = x && x.value; if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ v = null; } }
+      return (v && typeof v === 'object' && v.movedTo) ? { oid:String(x.key).slice(DK.length), v:v } : null;
+    }).filter(Boolean);
+    return tomb.reduce(function(p, t){ return p.then(function(){ return mvActive(d, t.oid, t.v).then(function(act){
+      if(act) throw Error('ใบรวมนี้มี Order "' + t.oid + '" ซึ่งเปลี่ยนชื่อเป็น "' + t.v.movedTo + '" แล้ว — ปิดหน้าต่าง เปิด Order ชื่อใหม่ แล้วทำอีกครั้ง');
+    }); }); }, Promise.resolve());
+  });
+}
 function mutateRec(oid, fn){
   var d = dbNow();
   if(!d) return Promise.reject(Error('ยังไม่ได้เชื่อมไฟล์กลาง — กดปุ่ม “ไฟล์กลาง” เลือกโฟลเดอร์ Server ก่อน'));
@@ -24998,7 +25065,7 @@ function mutateRec(oid, fn){
     return freshScan(DK + oid);
   }).then(function(){
     return d.from('app_settings').select('value').eq('key', DK + oid).maybeSingle();
-  }).then(function(r){
+  }).then(function(r){ return movedGuard(d, oid, r); }).then(function(r){   /* v153 */
     if(r && r.error) throw r.error;
     var pr = parseRaw(r && r.data ? r.data.value : null);
     if(pr.bad) throw Error('ข้อมูลเอกสารของ Order นี้ในไฟล์กลางอ่านไม่ได้ — ไม่บันทึกทับ');
@@ -25007,7 +25074,10 @@ function mutateRec(oid, fn){
     if(!Array.isArray(rec.docs)) rec.docs = [];
     if(!rec.head || typeof rec.head !== 'object' || Array.isArray(rec.head)) rec.head = {};
     rec.v = 1; rec.oid = oid;
+    delete rec.movedTo; delete rec.movedAt;   /* v153: ผ่านด่านแล้ว (ชื่อนี้ใช้ได้) → ไม่ใช่ป้ายย้ายแล้วอีกต่อไป (ทางย้ายเอกสารใส่กลับเองตอนปิดชื่อเดิม) */
+    var mvb = mvNames(rec);   /* v153 */
     var out = fn(rec);
+    return mvCheckNames(d, oid, mvb, rec).then(function(){   /* v153: ใบรวมที่เพิ่มชื่อ Order ที่ย้ายไปแล้ว → ไม่รับ */
     rec.at = Date.now();
     rec.lw = { by:machine(), at:rec.at, v:String(window.SAWNC_VERSION || ''), os:osTag() };   /* v139: เครื่องที่บันทึกล่าสุด (ไฟล์รุ่นก่อนบอกได้ว่าใครเขียนทับ) */
     return Promise.resolve(d.from('app_settings').upsert({ key:DK + oid, value:rec }, { onConflict:'key' })).then(function(w){
@@ -25016,6 +25086,7 @@ function mutateRec(oid, fn){
       shSeenAll();   /* v139 */
       plusMirror(DK + oid);   /* v139: มีเครื่อง Windows 7 → สำเนาชื่อ + ให้ทันที */
       return out;
+    });
     });
   });
 }
@@ -27908,6 +27979,8 @@ window.PDOC_list = function(oid){ return clone(allDocs().filter(function(x){ ret
 window.PDOC_open = function(type, no){ openForm(type, no); return !!FM; };
 window.PDOC_html = function(no, oid, sel){ var x = findDoc(no, oid); return x ? docHTML(x, sel) : null; };   /* v129: sel = { secs:{1,2,3}, skip:{รหัส:1} } */
 window.PDOC_reload = function(){ DC.sig = ''; return loadAll(true); };
+window.PDOC_mutate = function(oid, fn){ return mutateRec(oid, fn); };   /* v153: ย้ายเอกสารตอน Rename Order (ทางบันทึกเดียวกับทุกปุ่ม) */
+window.PDOC_formOpen = function(){ return !!FM; };                       /* v153: หน้าต่างเอกสารเปิดอยู่ → ยังไม่ให้ Rename */
 window.PDOC_setAX = setAX;
 window.PDOC_cancel = cancelDoc;
 window.PDOC_dueFromEnd = dueFromEnd;   /* v136: End Date (YYYY-MM-DD) → วันกำหนดเสร็จ(ปิดผิว) */
@@ -32116,7 +32189,9 @@ window.SXL_markBusy = function(oid, txt){
                    · Order ของ Type ที่ปันไม้จาก Lot ชื่อเดิม (bomline_wood order = ชื่อเดิม) → ชี้ชื่อใหม่ · ค่าในเครื่องนี้ (เครื่องตัด/ชื่อ .saw · PD · ไม่เจาะ) ย้ายตาม
          เขียนทับ Order ที่มีอยู่ (ยืนยันแล้ว) → ค่าของชื่อปลายทางถูกแทนด้วยของต้นทางทั้งชุด (ที่ต้นทางไม่มี = เอาออก ไม่ปนกัน)
          ชื่อที่มีค่าค้างของ Order ที่เคยลบ → ถามก่อนแทนที่ · บันทึกไม่สำเร็จ → คืนค่าเดิมของปลายทาง
-         ไม่ย้าย / ไม่คัดลอก: เอกสาร / ใบปิดผิวที่ออกแล้ว (อยู่ในประวัติชื่อเดิม — ใบที่พิมพ์ไปมีชื่อเดิม · Rename Order ที่มีเอกสาร = ถามก่อน)
+         ไม่คัดลอก: เอกสาร / ใบปิดผิวที่ออกแล้ว (Save As / โคลน = Order ใหม่ยังไม่มีเอกสาร)
+         v153 — Rename: เอกสาร / ใบปิดผิวย้ายตามชื่อใหม่ (moveDocs ผ่าน mutateRec ของระบบเอกสาร · ใบรวมที่อ้างชื่อนี้ตามไป · ชื่อเดิมเหลือป้าย movedTo
+                 · เครื่องที่ยังเห็นชื่อเดิมบันทึกลงชื่อเดิมไม่ได้) · Order ที่มีใบกู้คืนจาก PDF (v140) ไม่ให้เปลี่ยนชื่อ
                               · ภาพถ่ายตรวจ "ต้นทางแก้" (ของชื่อเดิม / ของปลายทางที่ถูกเขียนทับ = ลบแบบตอนลบ Order · ชื่อใหม่เก็บใหม่เงียบ ๆ ตอนเปิด)
          ปลายทางที่มีเอกสารออกแล้ว / เป็น Lot ที่ปันไม้เข้า Type แล้ว → เขียนทับไม่ได้ (ประวัติเอกสาร / ไม้ของ Type จะปนกัน)
          ไฟล์กลาง: อ่านไฟล์ล่าสุดของเครื่องอื่นก่อนทำ · Windows 7 ที่ยังไม่เห็นเครื่องช่วยแปลง → ไม่ Rename / ไม่เขียนทับ
@@ -32374,6 +32449,150 @@ function w7Why(){
       + ' · ต้องมีเครื่อง Windows 10/11 เปิด Production ค้างไว้ · ไม่ทำ เพื่อไม่ให้ค่าของเครื่องอื่นหาย';
   }catch(e){ return ''; }
 }
+/* ── v153: เอกสาร / ใบปิดผิวของ Order ที่เปลี่ยนชื่อ → ย้ายตามชื่อใหม่ ──
+   เขียนผ่านทางบันทึกของระบบเอกสารเอง (PDOC_mutate = mutateRec: อ่านไฟล์ล่าสุดก่อน · กัน Windows 7 · จดเครื่องที่บันทึก · สำเนาชื่อ + ให้ Windows 7)
+   1) ชื่อใหม่ ← ทุกใบของชื่อเดิม (oid · ใบรวม multi.oids / items / lot · บรรทัดไม้ by:{ Order:แผ่น } · log "เปลี่ยนชื่อ Order เดิม → ใหม่")
+   2) ใบรวมที่เก็บที่ Order อื่นแต่มีชื่อเดิม → ชี้ชื่อใหม่
+   3) ชื่อเดิม → เหลือป้าย movedTo (ไม่มีใบ · สำเนาชุดเดิมเก็บใน moved — ระบบเอกสารไม่นับ ไม่แสดง)
+      เฉพาะเมื่อชุดเดิมยังเป็นชุดที่อ่านมา (เครื่องอื่นแก้ระหว่างนี้ → อ่านใหม่ รวมใหม่ สูงสุด 3 รอบ) — ไม่ลบใบใดทิ้ง
+   เครื่องที่ยังเห็นชื่อเดิมบันทึกเอกสารลงชื่อเดิม → ระบบเอกสารไม่รับ (บอกให้เปิดชื่อใหม่) ยกเว้นมี Order ชื่อนั้นอยู่จริงอีกครั้ง */
+function docBy(){ try{ return (typeof SXL !== 'undefined' && SXL && SXL.machine) ? String(SXL.machine).split('.')[0] : mach(); }catch(e){ return mach(); } }
+function docRename(x, from, to, now, by){
+  if(!x || typeof x !== 'object') return false;
+  var hit = false;
+  if(x.oid === from){ x.oid = to; hit = true; }
+  var m = x.multi;
+  if(m && typeof m === 'object'){
+    if(Array.isArray(m.oids) && m.oids.indexOf(from) >= 0){ m.oids = m.oids.map(function(o){ return o === from ? to : o; }); hit = true; }
+    if(Array.isArray(m.items)) m.items.forEach(function(it){
+      if(!it || it.oid !== from) return;
+      it.oid = to; hit = true;
+      if(Array.isArray(it.ids)) it.ids = it.ids.map(function(id){ return id === from ? to : id; });   /* Item ที่ไม่มี Item ID ใช้ชื่อ Order แทน */
+    });
+    if(m.lot === from){ m.lot = to; hit = true; }
+  }
+  if(Array.isArray(x.lines)) x.lines.forEach(function(l){
+    if(!l || !l.by || typeof l.by !== 'object' || !Object.prototype.hasOwnProperty.call(l.by, from)) return;
+    var nb = {}; Object.keys(l.by).forEach(function(k){ nb[k === from ? to : k] = l.by[k]; }); l.by = nb; hit = true;
+  });
+  if(hit && now) (x.log = Array.isArray(x.log) ? x.log : []).push({ at:now, by:by, t:'เปลี่ยนชื่อ Order ' + from + ' → ' + to });
+  return hit;
+}
+function refsName(y, from){ return docRename(deep(y), from, '\u0000', 0, ''); }
+function isObj(y){ return !!(y && typeof y === 'object' && !Array.isArray(y)); }
+function dkey(y){ return String(y.no) + '@' + (+y.at || 0); }
+function headOf(h){ return (h && typeof h === 'object' && !Array.isArray(h)) ? h : {}; }
+async function moveDocs(d, from, to, la){
+  var out = { docs:0, refs:0, warn:'', fail:'' };
+  if(typeof window.PDOC_mutate !== 'function'){ out.warn = 'ระบบเอกสารยังไม่พร้อม — เอกสาร / ใบปิดผิวยังอยู่ที่ชื่อเดิม "' + from + '"'; out.fail = 'copy'; return out; }
+  var by = docBy(), RETRY = { retry:true }, prevSrc = null, prevPut = null, touched = false;
+  var allow = window.__pdocMoveOk = window.__pdocMoveOk || Object.create(null);
+  [to, from].forEach(function(n){ allow[n] = (+allow[n] || 0) + 1; });   /* ป้ายย้ายแล้วของชื่อปลายทาง (ครั้งก่อน) / ชื่อเดิม → ให้ทางนี้เขียนได้ */
+  var cleared = false;
+  try{
+    for(var round = 0; round < 4; round++){
+      var now = Date.now();
+      out.warn = ''; out.fail = '';
+      await fresh(null, null);
+      var rows = await allRows(function(){ return d.from('app_settings').select('key,value').like('key', 'pdoc:%').order('key'); });
+      var own = null, refs = [], tgt = null;
+      rows.forEach(function(x){
+        var k = String((x && x.key) || ''); if(k.indexOf('pdoc:') !== 0) return;
+        if(k === 'pdoc:' + from){ own = x; return; }
+        if(k === 'pdoc:' + to){ tgt = x; return; }
+        var v = asObj(x.value); if(!v || !Array.isArray(v.docs)) return;
+        if(v.docs.some(function(y){ return isObj(y) && y.oid !== from && refsName(y, from); })) refs.push(k.slice(5));
+      });
+      /* ชื่อปลายทางเคยเป็นชื่อที่ย้ายออกไป (ป้าย movedTo) → ล้างป้ายก่อน (ชื่อนี้เป็นของ Order ที่เพิ่งเปลี่ยนชื่อมาแล้ว — ไม่งั้นบันทึกเอกสารลงชื่อนี้ไม่ได้) */
+      var tv = tgt ? asObj(tgt.value) : null;
+      if(!cleared && tv && tv.movedTo){
+        try{ await window.PDOC_mutate(to, function(rec){ return 0; }); cleared = true; }
+        catch(e){ out.warn = 'ล้างป้ายย้ายแล้วของชื่อ "' + to + '" ไม่สำเร็จ (' + msgOf(e) + ')'; out.fail = touched ? 'tomb' : 'copy'; return out; }
+      }
+      var ov = own ? asObj(own.value) : null;
+      if(own && (!ov || +ov.v > 1 || (ov.docs != null && !Array.isArray(ov.docs)))){ out.warn = 'อ่านเอกสารของชื่อเดิม "' + from + '" ไม่ได้ — ไม่ย้าย (เอกสารยังอยู่ที่ชื่อเดิม)'; out.fail = touched ? 'tomb' : 'copy'; return out; }
+      var odocs = (ov && Array.isArray(ov.docs)) ? ov.docs : [];
+      var hasOwn = !!ov && (odocs.length > 0 || (Array.isArray(ov.gone) && ov.gone.length > 0) || !!(ov.head && typeof ov.head === 'object' && Object.keys(ov.head).length));
+      if(ov && ov.movedTo && !odocs.length) hasOwn = false;          /* ป้ายย้ายแล้ว — ไม่มีอะไรให้ย้าย */
+      if(!hasOwn && !refs.length) return out;
+      /* 1) ชื่อใหม่ ← ทุกใบของชื่อเดิม
+            รอบหลัง (เครื่องอื่นแก้ชื่อเดิมระหว่างย้าย): ใบที่ชื่อเดิมไม่เปลี่ยนจากรอบก่อน = ไม่ทับ (ชื่อใหม่อาจถูกแก้ไปแล้ว) · ใบที่หายจากชื่อเดิม = เอาออกเฉพาะถ้าชื่อใหม่ยังไม่ถูกแก้ */
+      if(hasOwn){
+        var src = deep(ov), srcC = {}, put = {}, keys = {};
+        (src.docs || []).forEach(function(y){ if(!isObj(y)) return; var k = dkey(y); srcC[k] = canon(y); docRename(y, from, to, now, by); keys[k] = 1; put[k] = canon(y); });
+        var pS = prevSrc, pP = prevPut;
+        try{
+          await window.PDOC_mutate(to, function(rec){
+            delete rec.moved;
+            if(pP) rec.docs = rec.docs.filter(function(z){ if(!isObj(z)) return true; var k = dkey(z); return !(pP[k] && !keys[k] && canon(z) === pP[k]); });
+            (src.docs || []).forEach(function(y){
+              if(!isObj(y)) return;
+              var k = dkey(y), i = -1;
+              rec.docs.forEach(function(z, j){ if(isObj(z) && dkey(z) === k) i = j; });
+              if(i >= 0 && pS && pS[k] === srcC[k]){ put[k] = canon(rec.docs[i]); return; }   /* ชื่อเดิมไม่เปลี่ยน → คงของชื่อใหม่ */
+              if(i >= 0) rec.docs[i] = deep(y); else rec.docs.push(deep(y));
+            });
+            if(src.head && typeof src.head === 'object' && Object.keys(src.head).length) rec.head = deep(src.head);
+            var seen = {}, gl = [];
+            (Array.isArray(rec.gone) ? rec.gone : []).concat(Array.isArray(src.gone) ? src.gone : []).forEach(function(e){ if(!e || !e.no) return; var k = e.no + '@' + (+e.at || 0) + '@' + (+e.del || 0); if(!seen[k]){ seen[k] = 1; gl.push(e); } });
+            rec.gone = gl.slice(-300);
+            return rec.docs.length;
+          });
+        }catch(e){ out.warn = 'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ')' + (touched ? ' — ชื่อใหม่มีเอกสารแล้วบางส่วน ตรวจในหน้ารวมเอกสาร' : ' — เอกสาร / ใบปิดผิวยังอยู่ที่ชื่อเดิม "' + from + '"'); out.fail = touched ? 'tomb' : 'copy'; return out; }
+        touched = true; prevSrc = srcC; prevPut = put; out.docs = Object.keys(keys).length;
+      }
+      /* 2) ใบรวมที่เก็บที่ Order อื่น */
+      var bad = [];
+      for(var i = 0; i < refs.length; i++){
+        try{ await window.PDOC_mutate(refs[i], function(rec){ var n = 0; rec.docs.forEach(function(y){ if(isObj(y) && y.oid !== from && docRename(y, from, to, now, by)) n++; }); return n; }); out.refs++; touched = true; }
+        catch(e){ bad.push(refs[i]); }
+      }
+      if(bad.length){ out.warn = 'ใบรวมที่เก็บที่ ' + bad.join(', ') + ' ยังอ้างชื่อเดิม "' + from + '" (แก้ไม่สำเร็จ)'; out.fail = 'refs'; }
+      if(!hasOwn) return out;
+      /* 3) ชื่อเดิม → ป้ายย้ายแล้ว (เฉพาะเมื่อยังเป็นชุดที่อ่านมา — ใบ / บันทึกการลบ / หัวกระดาษ) */
+      try{
+        await window.PDOC_mutate(from, function(rec){
+          if(canon(rec.docs || []) !== canon(odocs) || canon(rec.gone || []) !== canon((ov && ov.gone) || []) || canon(headOf(rec.head)) !== canon(headOf(ov && ov.head))) throw RETRY;
+          rec.moved = { to:to, at:now, by:by, docs:deep(rec.docs || []), head:deep(rec.head || {}) };
+          rec.docs = []; rec.head = {}; rec.movedTo = to; rec.movedAt = now;
+          rec.movedLa = String(la == null ? '' : la);              /* loaded_at ของ Order ตอนย้าย (แถวเดิมที่เครื่องอื่นยังเห็น = ยังไม่รับ) */
+          return true;
+        });
+      }catch(e){
+        if(e === RETRY) continue;                                    /* เครื่องอื่นแก้ระหว่างนี้ → รอบใหม่ */
+        out.warn = 'ย้ายเอกสารไปชื่อใหม่แล้ว แต่ปิดชุดเดิมที่ชื่อ "' + from + '" ไม่สำเร็จ (' + msgOf(e) + ') — หน้ารวมเอกสารอาจเห็นใบซ้ำ ตรวจก่อนใช้งาน';
+        out.fail = 'tomb'; return out;
+      }
+      /* ตรวจซ้ำ: มีเครื่องที่อ่านชื่อเดิมไว้ก่อนแล้วเขียนทับป้ายทีหลัง? → รอบใหม่ */
+      await fresh(['pdoc:' + from], null);
+      var chk = await d.from('app_settings').select('value').eq('key', 'pdoc:' + from).maybeSingle();
+      var cv = asObj(chk && chk.data && chk.data.value);
+      if(cv && Array.isArray(cv.docs) && cv.docs.length) continue;
+      return out;                                                    /* (out.fail = 'refs' ถ้าใบรวมบางใบยังไม่ได้แก้ → ถามลองใหม่) */
+    }
+    out.warn = 'เอกสารของชื่อเดิม "' + from + '" ถูกแก้จากเครื่องอื่นต่อเนื่องระหว่างย้าย — ชื่อใหม่มีชุดล่าสุดแล้ว แต่ชื่อเดิมยังไม่ปิด · ตรวจในหน้ารวมเอกสาร';
+    out.fail = 'tomb';
+    return out;
+  }catch(e){
+    out.warn = 'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ')' + (touched ? ' — ชื่อใหม่มีเอกสารแล้วบางส่วน ตรวจในหน้ารวมเอกสาร' : ' — เอกสาร / ใบปิดผิวยังอยู่ที่ชื่อเดิม "' + from + '"');
+    out.fail = touched ? 'tomb' : 'copy';
+    return out;
+  }finally{
+    [to, from].forEach(function(n){ if(!(--allow[n] > 0)) delete allow[n]; });
+  }
+}
+/* Order ที่มีใบกู้คืนจาก PDF (v140) — ระบบกู้ใบผูกกับชื่อนี้ → ไม่ให้เปลี่ยนชื่อ */
+function packWhy(oid){
+  try{
+    var pk = (typeof window.PDOC_pack === 'function') ? window.PDOC_pack() : [];
+    var hit = (pk || []).filter(function(x){ return x && x.oid === oid; }).map(function(x){ return x.no; });
+    return hit.length ? 'Order นี้มีใบปิดผิวที่กู้คืนจากไฟล์ PDF (' + hit.join(', ') + ') — ระบบกู้ใบผูกกับชื่อนี้ จึงไม่ให้เปลี่ยนชื่อ (ใช้ Save As / 🧬 โคลน ถ้าต้องการชื่อใหม่)' : '';
+  }catch(e){ return ''; }
+}
+async function w7Check(){
+  try{ if(sxlMode() && SXL.plus == null && typeof sxlPlusProbe === 'function') await sxlPlusProbe(); }catch(e){}   /* ยังไม่รู้ว่าเป็นเครื่อง Windows 7 ไหม → ตรวจก่อน (แบบระบบเอกสาร) */
+  return w7Why();
+}
 var CANCEL = {};   /* ชื่อที่กำลังเขียนใหม่ → ตัวเฝ้าลบ (watchGone) ของชื่อนั้นหยุด */
 /* mode: 'clone' (ชื่อใหม่เท่านั้น) · 'saveas' · 'rename'
    o.overwrite = ผู้ใช้ยืนยันเขียนทับ Order ที่มีอยู่ · o.replace = ผู้ใช้ยืนยันแทนที่ค่าค้างของ Order ที่เคยลบ */
@@ -32391,7 +32610,8 @@ async function transfer(oid, nid, mode, o){
   if(lo.length && mode === 'clone') throw new Error('ชื่อ "' + nid + '" ยังมีข้อมูลค้างของ Order ชื่อนี้ที่เคยลบไป (' + lo.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ตั้งชื่ออื่น');
   if(loM.length && !o.replace) throw new Error('ชื่อ "' + nid + '" ยังมีค่าค้างของ Order ชื่อนี้ที่เคยลบไป (' + loM.map(function(k){ return k.split(':')[0]; }).join(', ') + ')');
   var repl = ex || lo.length > 0;                                 /* ชื่อปลายทางมีของเดิม (Order / ค่าค้าง) → แทนที่ */
-  if(repl || mode === 'rename'){ var w7 = w7Why(); if(w7) throw new Error(w7); }
+  if(repl || mode === 'rename'){ var w7 = await w7Check(); if(w7) throw new Error(w7); }
+  if(mode === 'rename'){ var pw = packWhy(oid); if(pw) throw new Error(pw); }   /* v153 */
   {
     /* ชื่อปลายทางอาจถูกอ้างจาก Order อื่น (ใบรวม / Type ของ Lot) แม้ไม่มีค่าเอง (Order ที่เคยลบ) → ตรวจทุกครั้ง */
     if(mode !== 'clone') await fresh(null, null);                 /* ไฟล์กลาง: อ่านค่าทุกตัวล่าสุดก่อนตรวจ Lot / เอกสาร */
@@ -32456,7 +32676,7 @@ async function transfer(oid, nid, mode, o){
     }catch(x){}
     if(!mineRow) await fail('บันทึก Order ไม่สำเร็จ: ' + msgOf(e2 || w2.error));
   }
-  var res = { got:got, isImport:String(data.source || '') === 'import', ex:ex, repl:repl, mk:mk, warn:[] };
+  var res = { got:got, isImport:String(data.source || '') === 'import', ex:ex, repl:repl, mk:mk, warn:[], la:src.data[0].loaded_at };
   /* 3) ปลายทางเป็นชุดเดียวกับต้นทาง — ค่าเดิมของปลายทางที่ต้นทางไม่มี เอาออก (ไม่ปนกัน) */
   var drop = MOVE.filter(function(p){ return tK[p] != null && !rows.some(function(r){ return r.key === p + nid; }); }).map(function(p){ return p + nid; });
   if(drop.length){
@@ -32483,6 +32703,10 @@ async function transfer(oid, nid, mode, o){
       await fresh(null, null);
       res.refs = await refFix(d, oid, nid);
       if(res.refs < 0) res.warn.push('Order ของ Type ที่ปันไม้จาก "' + oid + '" ยังชี้ชื่อเดิม (แก้ชี้ชื่อใหม่ไม่สำเร็จ)');
+      var md = null;   /* v153: เอกสาร / ใบปิดผิวย้ายตามชื่อใหม่ */
+      try{ md = await moveDocs(d, oid, nid, src.data[0].loaded_at); }catch(e){ md = { warn:'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ') — เอกสาร / ใบปิดผิวยังอยู่ที่ชื่อเดิม "' + oid + '"', fail:'copy' }; }
+      res.docs = md;
+      try{ if(md && (md.docs || md.refs) && typeof window.PDOC_reload === 'function') await window.PDOC_reload(); }catch(e){}
       localCopy(oid, nid, true, repl);
       delete CL.map[oid];
     }
@@ -32509,6 +32733,10 @@ function busyWhy(oid, act){
   try{ if(window.SAWB_busy && window.SAWB_busy()) return 'แท็บ SAW / NC กำลังส่งข้อมูลอยู่ — รอให้เสร็จก่อน'; }catch(e){}
   try{ if(window.MBOM_busy && window.MBOM_busy()) return 'กำลังรวม BOM อยู่ — รอให้เสร็จก่อน'; }catch(e){}
   try{ var fs = window.FA_state && window.FA_state(); if(fs && (fs.busy || fs.view === 'run')) return 'แท็บทำทั้งชุดกำลังทำงานอยู่ — รอให้เสร็จก่อน'; }catch(e){}
+  if(act === 'เปลี่ยนชื่อ'){
+    try{ if(typeof window.PDOC_formOpen === 'function' && window.PDOC_formOpen()) return 'หน้าต่างเอกสาร / ใบปิดผิวเปิดอยู่ — บันทึกหรือปิดก่อน แล้วค่อยเปลี่ยนชื่อ'; }catch(e){}
+    try{ var mbs = (typeof window.MBOM_state === 'function') ? window.MBOM_state() : null; if(mbs && mbs.on) return 'อยู่ในโหมดรวม BOM หลาย Order — ออกจากโหมดรวมก่อน แล้วค่อยเปลี่ยนชื่อ'; }catch(e){}
+  }
   try{ if(axEditMode || bomEditMode) return 'หน้า AX Detail / BOM Fitting อยู่ในโหมดแก้ไข — บันทึกหรือยกเลิกก่อน แล้วค่อย' + act; }catch(e){}
   try{ if(axEdits && Object.keys(axEdits).length) return (open === oid ? 'Order นี้' : 'Order ที่เปิดอยู่ (' + open + ')') + ' มีที่แก้ใน AX Detail ยังไม่บันทึก — บันทึกก่อน แล้วค่อย' + act + ' (ใช้ข้อมูลที่บันทึกแล้ว · เปิด Order ใหม่จะล้างงานแก้ที่ยังไม่บันทึก)'; }catch(e){}
   try{ var xs = window.XC_state && window.XC_state(); if(xs && xs.dirty && Object.keys(xs.dirty).length) return 'มีที่แก้ยังไม่บันทึก (' + Object.keys(xs.dirty).map(function(k){ return k + ': ' + xs.dirty[k]; }).join(' · ') + ') — บันทึกก่อน แล้วค่อย' + act; }catch(e){}
@@ -32647,12 +32875,9 @@ function msgOf(e){ return (e && e.message) || String(e); }
 async function askTarget(nid, oid, verb){
   var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
   await fresh(verb === 'เปลี่ยนชื่อ' ? null : MOVE.concat(ORVK, ['pdoc:']).map(function(p){ return p + nid; }), [oid, nid]);   /* ไฟล์กลาง: ถามจากค่าล่าสุด */
-  if(verb === 'เปลี่ยนชื่อ'){
-    var w7 = w7Why(); if(w7) throw new Error(w7);
-    var dn = await docsOfName(d, oid);
-    if(dn.n && !confirm('Order "' + oid + '" มีเอกสาร / ใบปิดผิวที่ออกไปแล้ว ' + dn.n + ' ใบ\n\n'
-         + 'เอกสารผูกกับชื่อเดิม (ใบที่พิมพ์มีชื่อเดิม) — ไม่ย้ายตามชื่อใหม่ · ประวัติเอกสาร / ยอดที่เปิดใบไปแล้ว ดูได้ที่ชื่อเดิมในหน้ารวมเอกสาร\n'
-         + 'ชื่อใหม่ "' + nid + '" จะเริ่มนับเอกสารใหม่ (ระวังออกใบซ้ำ)\n\nเปลี่ยนชื่อต่อไหม?')) return null;
+  if(verb === 'เปลี่ยนชื่อ'){   /* v153: เอกสารย้ายตามชื่อใหม่ (ไม่ต้องถาม) */
+    var w7 = await w7Check(); if(w7) throw new Error(w7);
+    var pw = packWhy(oid); if(pw) throw new Error(pw);
   }
   var ex = await exists(nid);
   var note = '\n\n(ข้อมูล Order + BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ ของ "' + nid + '" จะถูกแทนด้วยของ "' + oid + '" ทั้งชุด)';
@@ -32710,6 +32935,15 @@ async function renameOrder(oid){
     r = await transfer(oid, nid, 'rename', o);
   }catch(e){ alert('เปลี่ยนชื่อไม่สำเร็จ: ' + msgOf(e)); return; }
   if(r.partial) alert(r.partial);
+  /* v153: ย้ายเอกสารไม่สำเร็จ (ยังไม่ได้แตะเอกสาร) → ลองใหม่ได้ */
+  for(var k = 0; k < 3 && r.docs && (r.docs.fail === 'copy' || r.docs.fail === 'refs') && !r.partial; k++){
+    if(!confirm('เปลี่ยนชื่อ Order แล้ว แต่ย้ายเอกสาร / ใบปิดผิวไม่สำเร็จ\n\n' + r.docs.warn + '\n\nลองย้ายเอกสารอีกครั้งไหม?')) break;
+    var w0 = r.docs.warn, md2 = null;
+    try{ md2 = await moveDocs(D(), oid, nid, r.la); }catch(e){ md2 = { warn:'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ')', fail:'copy' }; }
+    r.warn = (r.warn || []).filter(function(w){ return w !== w0; }); r.docs = md2;
+    try{ if(md2 && (md2.docs || md2.refs) && typeof window.PDOC_reload === 'function') await window.PDOC_reload(); }catch(e){}
+  }
+  if(r.docs && r.docs.warn && (r.warn || []).indexOf(r.docs.warn) < 0) (r.warn = r.warn || []).push(r.docs.warn);
   try{ if(currentOrder === oid) currentOrder = nid; }catch(e){}
   await afterMove(nid, r, r.partial ? null : oid);
 }
@@ -32728,6 +32962,7 @@ function hookRename(){
   return true;
 }
 window.ORDER_saveAs = saveAs; window.ORDER_rename = renameOrder;
+window.ORDER_moveDocs = function(from, to, la){ var pw = packWhy(String(from)); if(pw) return Promise.reject(new Error(pw)); return moveDocs(D(), String(from), String(to), la); };   /* v153: ย้ายเอกสารซ้ำเอง (Console) */
 var tries = 0, iv = setInterval(function(){
   tries++;
   var a = false, b = false, c = false, e2 = false;
