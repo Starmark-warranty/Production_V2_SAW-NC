@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '156', D = '07/10/2026';
+  var V = '157', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -33577,6 +33577,179 @@ function buildBtn(){
 
 window.AX_saveState = function(){ return JSON.parse(JSON.stringify(STAT)); };
 window.AX_frScan = function(){ var r = scan(); return { cells:r.cells, rows:r.rows, skip:r.skip, list:r.list.map(function(m){ return { pid:m.pid, col:m.col, cur:m.cur, n:m.n }; }) }; };
+})();
+</script>
+<script>
+/* ══ v157 — BOM Fitting: ออก Excel "หน้านี้" (ตามที่เห็นบนจอ) ══════════════════════════════
+   ปุ่ม 📊 Excel หน้านี้ (ข้างปุ่ม 📥 Export BOM Fitting เดิม)
+   - ออกรายการตามที่แสดงอยู่: กรอง ทั้งหมด / ขอบ / Fitting / ไม้ + คำค้น
+   - ติ๊กเลือกไว้ → ออกเฉพาะที่ติ๊ก (กติกาเดียวกับปุ่ม Export BOM Fitting)
+   - คอลัมน์: ลำดับ · ประเภท · รหัส (ItemId) · ชื่อสินค้า · จำนวน (ตัวเลข × จำนวนชุดแล้ว) · หน่วย · [Order ตอนรวมหลาย Order] · หมายเหตุ
+   - หัวกระดาษ: Order · Item Id Set · จำนวนชุด · วันเวลาที่ออก · เงื่อนไขที่ใช้
+   - อ่านอย่างเดียว ไม่แก้ข้อมูล · ปุ่ม Export BOM Fitting เดิม (ไฟล์เข้า AX) เหมือนเดิมทุกอย่าง
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+if(window.__v157bomxl) return;
+window.__v157bomxl = true;
+
+function q(id){ return document.getElementById(id); }
+function str(v){ return v == null ? '' : String(v); }
+function pad(n){ return (n < 10 ? '0' : '') + n; }
+
+var xlsxP = null;
+function needXlsx(){
+  if(window.XLSX && XLSX.utils && XLSX.writeFile) return Promise.resolve(true);
+  if(xlsxP) return xlsxP;
+  xlsxP = new Promise(function(res){
+    var done = false, fin = function(){ if(!done){ done = true; res(!!(window.XLSX && XLSX.utils && XLSX.writeFile)); } };
+    try{
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = fin; s.onerror = fin;
+      document.head.appendChild(s);
+    }catch(e){ fin(); }
+    setTimeout(fin, 20000);
+  }).then(function(ok){ if(!ok) xlsxP = null; return ok; });
+  return xlsxP;
+}
+
+function selN(){ try{ return bomSelCount(); }catch(e){ return 0; } }
+function st(){ try{ return bomFltState(); }catch(e){ return { q:'', type:'all', sel:{}, only:false }; } }
+function keyOf(r){ try{ return _bomRowKey(r); }catch(e){ return str(r._origKey || (r._type + ':' + r._code)); } }
+function mb(){ try{ return window.MBOM_state ? window.MBOM_state() : null; }catch(e){ return null; } }
+
+function typeLabel(r){
+  if(r._type === 'Edge') return 'ขอบ';
+  if(r._type === 'ขอบเพิ่ม') return 'ขอบเพิ่ม';
+  if(r._type === 'ExtraFit') return '+Extra';
+  if(r._isManual) return '+เพิ่ม';
+  if(r._type === 'BOM ไม้') return r._wbomFrom ? 'แตก BOM' : 'BOM ไม้';
+  return 'Fitting';
+}
+function fgName(code){ try{ var f = fgLookup(code); return (f && f.name) || ''; }catch(e){ return ''; } }
+function remark(r, edMap){
+  var out = [];
+  if(r._origCode) out.push('แทน ' + r._origCode);
+  if(r._suggestCode) out.push('ไม่พบ ' + str(r._code) + ' → ลองใช้ ' + r._suggestCode + (fgName(r._suggestCode) ? ' (' + fgName(r._suggestCode) + ')' : ''));
+  else if(!r._name) out.push('ยังไม่มีรหัสใน Fitting Global');
+  if(r._wbomFrom) out.push('แตกจาก ' + r._wbomFrom + (r._wbomSheets != null ? ' × ' + r._wbomSheets + ' แผ่น' : ''));
+  var ed = (!r._isManual && edMap && r._origKey) ? edMap[r._origKey] : null;
+  if((ed && ((ed.code !== undefined && ed.code !== '') || ed.qty !== undefined)) || r._wbomEdited) out.push('แก้แล้ว');
+  return out.join(' · ');
+}
+
+/* แถวที่จะออก — คิดแบบเดียวกับตารางบนจอ (renderBOM) */
+function pick(){
+  var all = [];
+  try{ all = buildBOMRows() || []; }catch(e){ all = []; }
+  var vis = all.filter(function(r){ return r && !r._hidden; });
+  var n = selN(), S = st(), rows, how;
+  if(n){
+    rows = vis.filter(function(r){ return S.sel[keyOf(r)]; });
+    how = 'เฉพาะที่ติ๊กเลือก ' + rows.length + ' รายการ';
+  } else {
+    rows = vis.filter(function(r){ try{ return bomFltMatch(r); }catch(e){ return true; } });
+    var t = { all:'ทั้งหมด', edge:'ขอบ', fit:'Fitting', wood:'ไม้' }[S.type] || 'ทั้งหมด';
+    how = 'แสดง: ' + t + (str(S.q).trim() ? ' · ค้นหา "' + str(S.q).trim() + '"' : '') + ' · ' + rows.length + (rows.length !== vis.length ? ' จาก ' + vis.length : '') + ' รายการ';
+  }
+  return { rows:rows, how:how, sel:n, total:vis.length };
+}
+
+function safeName(s){ return str(s).replace(/[\\\/:*?"<>|\r\n\t]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'order'; }
+
+async function exportPage(){
+  var P = pick();
+  if(!P.rows.length){ alert(P.sel ? 'รายการที่เลือกไว้ไม่มีใน BOM แล้ว — กด "ล้างที่เลือก" แล้วเลือกใหม่' : 'ไม่มีรายการในหน้านี้ให้ออก Excel'); return; }
+  var ok = await needXlsx();
+  if(!ok){ alert('โหลดไลบรารี Excel ไม่ได้ — ตรวจอินเทอร์เน็ต แล้วลองใหม่'); return; }
+  var X = window.XLSX;
+  var oid = null; try{ oid = currentOrder; }catch(e){}
+  var M = mb(), multi = !!(M && M.on && M.fit > 0);
+  var orders = multi ? (M.sel || []) : [];
+  var hasMb = P.rows.some(function(r){ return !!r.__mbOrder; });
+  var sets = 1; try{ sets = bomSetsOf(oid); }catch(e){}
+  var iids = ''; try{ iids = str(axItemIdSet); }catch(e){}
+  var edMap = {}; try{ edMap = (oid && bomEdits[oid]) || {}; }catch(e){}
+  var editing = false; try{ editing = !!bomEditMode; }catch(e){}
+  var d = new Date();
+  var stamp = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+
+  var head = ['ลำดับ', 'ประเภท', 'รหัส (ItemId)', 'ชื่อสินค้า', 'จำนวน', 'หน่วย'].concat(hasMb ? ['Order'] : []).concat(['หมายเหตุ']);
+  var aoa = [];
+  aoa.push(['BOM Fitting — ' + (multi ? ('รวม ' + orders.length + ' Order') : str(oid || '-'))]);
+  aoa.push([(multi ? ('Order: ' + orders.join(', ')) : ('Item Id Set: ' + (iids || '-')))
+            + ' · จำนวนชุด / Order: ' + (multi ? 'ตามแต่ละ Order' : sets)
+            + ' · ออกเมื่อ ' + stamp]);
+  aoa.push([P.how + (editing ? ' · อยู่ในโหมดแก้ไข (รวมค่าที่ยังไม่บันทึก)' : '') + ' · จำนวน = ต่อ Order (คูณจำนวนชุดแล้ว · BOM ไม้ไม่คูณ)']);
+  aoa.push([]);
+  aoa.push(head);
+  var R0 = aoa.length;
+  P.rows.forEach(function(r, i){
+    var qty = typeof r._qty === 'number' ? r._qty : (parseFloat(r._qty) || 0);
+    var line = [i + 1, typeLabel(r), str(r._code), str(r._name), qty, str(r._unit)];
+    if(hasMb) line.push(str(r.__mbOrder));
+    line.push(remark(r, edMap));
+    aoa.push(line);
+  });
+  var ws = X.utils.aoa_to_sheet(aoa);
+  /* จำนวน: ขอบ / ทศนิยม → 2 ตำแหน่ง (แบบบนจอ) */
+  P.rows.forEach(function(r, i){
+    var c = ws[X.utils.encode_cell({ r:R0 + i, c:4 })];
+    if(!c || c.t !== 'n') return;
+    var edge = r._type === 'Edge' || r._type === 'ขอบเพิ่ม';
+    c.z = (edge || (c.v % 1)) ? '0.00' : '0';
+  });
+  var nc = head.length;
+  ws['!merges'] = [0, 1, 2].map(function(r){ return { s:{ r:r, c:0 }, e:{ r:r, c:nc - 1 } }; });
+  ws['!cols'] = [{ wch:6 }, { wch:10 }, { wch:20 }, { wch:58 }, { wch:10 }, { wch:8 }].concat(hasMb ? [{ wch:28 }] : []).concat([{ wch:36 }]);
+  ws['!autofilter'] = { ref:X.utils.encode_range({ s:{ r:R0 - 1, c:0 }, e:{ r:R0 - 1 + P.rows.length, c:nc - 1 } }) };
+  var wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, 'BOM Fitting');
+  var ymd = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  var fname = 'BOM_Fitting_' + safeName(multi ? ('merged_' + orders.length + '_orders') : (oid || 'order')) + '_' + ymd + (P.sel ? '_selected' + P.rows.length : '') + '.xlsx';   /* ท้ายชื่อแบบเดียวกับปุ่ม Export BOM Fitting */
+  X.writeFile(wb, fname);
+  LAST = { file:fname, rows:P.rows.length, how:P.how, at:d.toISOString() };
+}
+var LAST = null;
+
+function label(){
+  var b = q('bomXl157');
+  if(!b) return;
+  var n = selN();
+  b.textContent = n ? ('📊 Excel หน้านี้ · เลือก ' + n) : '📊 Excel หน้านี้';
+  b.title = n ? ('ออกเฉพาะ ' + n + ' รายการที่ติ๊กเลือก (ชื่อ · จำนวน · หน่วย)')
+              : 'ออก Excel ตามที่แสดงในหน้านี้ (กรอง / ค้นหา) — ประเภท · รหัส · ชื่อสินค้า · จำนวน · หน่วย';
+}
+function build(){
+  if(q('bomXl157')) return true;
+  var bar = q('bomSubToolbar');
+  if(!bar) return false;
+  var ex = bar.querySelector('button[onclick="exportBOMExcel()"]');
+  var b = document.createElement('button');
+  b.id = 'bomXl157';
+  b.type = 'button';
+  b.style.cssText = 'background:#eff6ff;border:1px solid rgba(37,99,235,0.3);border-radius:7px;padding:5px 13px;font-size:11px;color:#1d4ed8;cursor:pointer;'
+    + "font-family:-apple-system,'Sarabun',sans-serif;font-weight:600;display:flex;align-items:center;gap:5px;white-space:nowrap";
+  b.onclick = function(){ exportPage().catch(function(e){ alert('ออก Excel ไม่สำเร็จ: ' + ((e && e.message) || e)); }); };
+  if(ex && ex.parentNode === bar) bar.insertBefore(b, ex.nextSibling); else bar.appendChild(b);
+  label();
+  return true;
+}
+
+(function(){
+  build();
+  var o = window._bomExportLabel;
+  if(typeof o === 'function' && !o.__v157){
+    var w = function(){ var r = o.apply(this, arguments); try{ build(); label(); }catch(e){} return r; };
+    w.__v157 = true;
+    window._bomExportLabel = w;
+  }
+})();
+
+window.BOMX_exportPage = exportPage;
+window.BOMX_last = function(){ return LAST ? JSON.parse(JSON.stringify(LAST)) : null; };
+window.BOMX_pick = function(){ var P = pick(); return { n:P.rows.length, how:P.how, sel:P.sel, total:P.total, codes:P.rows.map(function(r){ return str(r._code); }) }; };
 })();
 </script>
 </body>
