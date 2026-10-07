@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '157', D = '07/10/2026';
+  var V = '158', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -33658,6 +33658,26 @@ function pick(){
 
 function safeName(s){ return str(s).replace(/[\\\/:*?"<>|\r\n\t]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'order'; }
 
+/* v158: สรุปรวมตาม ITEM — รหัส + หน่วย เดียวกันรวมเป็นแถวเดียว (ลำดับตามที่เจอครั้งแรก)
+   โหมดรวมหลาย Order: แยกจำนวนของแต่ละ Order (คอลัมน์ละ Order ตามลำดับที่เลือกรวม) · Order เดียว: บอกว่ารวมกี่แถว
+   แสดงเมื่อเป็นโหมดรวมหลาย Order หรือมีรหัสซ้ำ (Order เดียวไม่มีรหัสซ้ำ = เหมือนรายการด้านบน ไม่ต้องซ้ำอีกชุด) */
+function rnd(v){ return Math.round((+v || 0) * 1000) / 1000; }
+function summarize(rows, hasMb, orders){
+  var by = {}, items = [], seen = {}, ords = [];
+  rows.forEach(function(r){
+    var code = str(r._code).trim(), unit = str(r._unit).trim(), k = code + '\u0001' + unit;
+    var it = by[k];
+    if(!it){ it = by[k] = { code:code, name:str(r._name), unit:unit, type:typeLabel(r), edge:(r._type === 'Edge' || r._type === 'ขอบเพิ่ม'), total:0, n:0, by:{} }; items.push(it); }
+    if(!it.name && r._name) it.name = str(r._name);
+    var q = typeof r._qty === 'number' ? r._qty : (parseFloat(r._qty) || 0);
+    it.total += q; it.n++;
+    if(hasMb){ var o = str(r.__mbOrder) || '(ไม่ระบุ Order)'; it.by[o] = (it.by[o] || 0) + q; seen[o] = 1; }
+  });
+  (orders || []).forEach(function(o){ if(seen[o] && ords.indexOf(o) < 0) ords.push(o); });
+  rows.forEach(function(r){ var o = str(r.__mbOrder) || '(ไม่ระบุ Order)'; if(hasMb && seen[o] && ords.indexOf(o) < 0) ords.push(o); });
+  return { items:items, ords:ords, show:(hasMb || items.length < rows.length) };
+}
+
 async function exportPage(){
   var P = pick();
   if(!P.rows.length){ alert(P.sel ? 'รายการที่เลือกไว้ไม่มีใน BOM แล้ว — กด "ล้างที่เลือก" แล้วเลือกใหม่' : 'ไม่มีรายการในหน้านี้ให้ออก Excel'); return; }
@@ -33676,12 +33696,14 @@ async function exportPage(){
   var stamp = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 
   var head = ['ลำดับ', 'ประเภท', 'รหัส (ItemId)', 'ชื่อสินค้า', 'จำนวน', 'หน่วย'].concat(hasMb ? ['Order'] : []).concat(['หมายเหตุ']);
+  var SUM = summarize(P.rows, hasMb, orders);   /* v158 */
   var aoa = [];
   aoa.push(['BOM Fitting — ' + (multi ? ('รวม ' + orders.length + ' Order') : str(oid || '-'))]);
   aoa.push([(multi ? ('Order: ' + orders.join(', ')) : ('Item Id Set: ' + (iids || '-')))
             + ' · จำนวนชุด / Order: ' + (multi ? 'ตามแต่ละ Order' : sets)
             + ' · ออกเมื่อ ' + stamp]);
-  aoa.push([P.how + (editing ? ' · อยู่ในโหมดแก้ไข (รวมค่าที่ยังไม่บันทึก)' : '') + ' · จำนวน = ต่อ Order (คูณจำนวนชุดแล้ว · BOM ไม้ไม่คูณ)']);
+  aoa.push([P.how + (editing ? ' · อยู่ในโหมดแก้ไข (รวมค่าที่ยังไม่บันทึก)' : '') + ' · จำนวน = ต่อ Order (คูณจำนวนชุดแล้ว · BOM ไม้ไม่คูณ)'
+            + (SUM.show ? ' · สรุปรวมตาม ITEM (รหัสซ้ำรวมกัน) อยู่ใต้รายการ' : '')]);
   aoa.push([]);
   aoa.push(head);
   var R0 = aoa.length;
@@ -33692,6 +33714,23 @@ async function exportPage(){
     line.push(remark(r, edMap));
     aoa.push(line);
   });
+  /* v158: สรุปรวมตาม ITEM ใต้รายการ (ส่งสโตร์จัดของ) */
+  var RT = -1, RS = -1, sHead = null;
+  if(SUM.show){
+    aoa.push([]);
+    RT = aoa.length;
+    aoa.push(['สรุปรวมตาม ITEM (รหัสซ้ำรวมกัน) — ' + SUM.items.length + ' รายการ'
+              + (hasMb ? (' · แยกจำนวนตาม Order ' + SUM.ords.length + ' Order') : ' · รวมจาก ' + P.rows.length + ' แถว')]);
+    sHead = ['ลำดับ', 'ประเภท', 'รหัส (ItemId)', 'ชื่อสินค้า', 'รวม', 'หน่วย'].concat(hasMb ? SUM.ords : ['รวมจาก (แถว)']);
+    aoa.push(sHead);
+    RS = aoa.length;
+    SUM.items.forEach(function(it, i){
+      var line = [i + 1, it.type, it.code, it.name, rnd(it.total), it.unit];
+      if(hasMb) SUM.ords.forEach(function(o){ line.push(it.by[o] !== undefined ? rnd(it.by[o]) : ''); });
+      else line.push(it.n);
+      aoa.push(line);
+    });
+  }
   var ws = X.utils.aoa_to_sheet(aoa);
   /* จำนวน: ขอบ / ทศนิยม → 2 ตำแหน่ง (แบบบนจอ) */
   P.rows.forEach(function(r, i){
@@ -33700,16 +33739,25 @@ async function exportPage(){
     var edge = r._type === 'Edge' || r._type === 'ขอบเพิ่ม';
     c.z = (edge || (c.v % 1)) ? '0.00' : '0';
   });
-  var nc = head.length;
-  ws['!merges'] = [0, 1, 2].map(function(r){ return { s:{ r:r, c:0 }, e:{ r:r, c:nc - 1 } }; });
-  ws['!cols'] = [{ wch:6 }, { wch:10 }, { wch:20 }, { wch:58 }, { wch:10 }, { wch:8 }].concat(hasMb ? [{ wch:28 }] : []).concat([{ wch:36 }]);
-  ws['!autofilter'] = { ref:X.utils.encode_range({ s:{ r:R0 - 1, c:0 }, e:{ r:R0 - 1 + P.rows.length, c:nc - 1 } }) };
+  if(RS >= 0) SUM.items.forEach(function(it, i){
+    var cols = [4].concat(hasMb ? SUM.ords.map(function(o, j){ return 6 + j; }) : []);
+    cols.forEach(function(ci){
+      var c = ws[X.utils.encode_cell({ r:RS + i, c:ci })];
+      if(c && c.t === 'n') c.z = (it.edge || (c.v % 1)) ? '0.00' : '0';
+    });
+  });
+  var nc = Math.max(head.length, sHead ? sHead.length : 0);
+  ws['!merges'] = [0, 1, 2].concat(RT >= 0 ? [RT] : []).map(function(r){ return { s:{ r:r, c:0 }, e:{ r:r, c:nc - 1 } }; });
+  var W = [6, 10, 20, 58, 10, 8].concat(hasMb ? [28] : []).concat([36]);
+  if(sHead) for(var ci = 6; ci < sHead.length; ci++) W[ci] = Math.max(W[ci] || 0, Math.min(40, str(sHead[ci]).length + 2), 10);
+  ws['!cols'] = W.map(function(w){ return { wch:w }; });
+  ws['!autofilter'] = { ref:X.utils.encode_range({ s:{ r:R0 - 1, c:0 }, e:{ r:R0 - 1 + P.rows.length, c:head.length - 1 } }) };
   var wb = X.utils.book_new();
   X.utils.book_append_sheet(wb, ws, 'BOM Fitting');
   var ymd = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   var fname = 'BOM_Fitting_' + safeName(multi ? ('merged_' + orders.length + '_orders') : (oid || 'order')) + '_' + ymd + (P.sel ? '_selected' + P.rows.length : '') + '.xlsx';   /* ท้ายชื่อแบบเดียวกับปุ่ม Export BOM Fitting */
   X.writeFile(wb, fname);
-  LAST = { file:fname, rows:P.rows.length, how:P.how, at:d.toISOString() };
+  LAST = { file:fname, rows:P.rows.length, how:P.how, at:d.toISOString(), sum:SUM.show ? SUM.items.length : 0, ords:SUM.ords.slice() };
 }
 var LAST = null;
 
@@ -33719,7 +33767,7 @@ function label(){
   var n = selN();
   b.textContent = n ? ('📊 Excel หน้านี้ · เลือก ' + n) : '📊 Excel หน้านี้';
   b.title = n ? ('ออกเฉพาะ ' + n + ' รายการที่ติ๊กเลือก (ชื่อ · จำนวน · หน่วย)')
-              : 'ออก Excel ตามที่แสดงในหน้านี้ (กรอง / ค้นหา) — ประเภท · รหัส · ชื่อสินค้า · จำนวน · หน่วย';
+              : 'ออก Excel ตามที่แสดงในหน้านี้ (กรอง / ค้นหา) — ประเภท · รหัส · ชื่อสินค้า · จำนวน · หน่วย · ใต้รายการมีสรุปรวมรหัสซ้ำ (แยกตาม Order)';
 }
 function build(){
   if(q('bomXl157')) return true;
