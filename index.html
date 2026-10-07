@@ -12059,8 +12059,11 @@ function _asmMotherIndex(){
     .then(function(rows){ return { data:rows }; });
   var pS = _asmAll(function(){ return d.from('app_settings').select('key,value').like('key', 'iids:%').order('key'); })
     .then(function(rows){ return { data:rows }; })['catch'](function(){ return { data:[] }; });
-  return Promise.all([pO, pS]).then(function(rs){
-    var o = rs[0], s = rs[1];
+  /* v151: Order ที่โคลนมา (ป้าย clone:<Order>) → อยู่ท้ายรายการแม่เสมอ (ต้นฉบับมาก่อน · มีแต่ตัวโคลนจึงใช้ตัวโคลน) */
+  var pC = _asmAll(function(){ return d.from('app_settings').select('key').like('key', 'clone:%').order('key'); })['catch'](function(){ return []; });
+  return Promise.all([pO, pS, pC]).then(function(rs){
+    var o = rs[0], s = rs[1], cl = {};
+    (rs[2] || []).forEach(function(r){ var k = String((r && r.key) || ''); if(k.indexOf('clone:') === 0) cl[k.slice(6)] = 1; });
     if(o && o.error) throw o.error;
     var info = {}, bySet = {};
     ((o && o.data) || []).forEach(function(r){ if(r && r.order_id) info[r.order_id] = r; });
@@ -12071,7 +12074,7 @@ function _asmMotherIndex(){
       if(String(r.src || '') === 'import') return;           /* Order นำเข้าไม่ใช่แม่ */
       var L = bySet[set] || (bySet[set] = []);
       for(var i = 0; i < L.length; i++){ if(L[i].oid === oid){ if(how === 'bom') L[i].how = 'bom'; return; } }
-      L.push({ oid:oid, how:how, at:String(r.loaded_at || '') });
+      L.push({ oid:oid, how:how, at:String(r.loaded_at || ''), cl:!!cl[oid] });
     }
     Object.keys(info).forEach(function(oid){ add(info[oid].iids, oid, 'bom'); });
     ((s && !s.error && s.data) || []).forEach(function(r){
@@ -12081,7 +12084,7 @@ function _asmMotherIndex(){
     });
     Object.keys(bySet).forEach(function(k){
       bySet[k].sort(function(a, b){
-        return ((b.how === 'bom') - (a.how === 'bom')) || (a.at < b.at ? 1 : (a.at > b.at ? -1 : 0));
+        return ((a.cl ? 1 : 0) - (b.cl ? 1 : 0)) || ((b.how === 'bom') - (a.how === 'bom')) || (a.at < b.at ? 1 : (a.at > b.at ? -1 : 0));
       });
     });
     _asmIdx = { at:Date.now(), bySet:bySet };
@@ -14298,7 +14301,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '150', D = '06/10/2026';
+  var V = '151', D = '07/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -21300,6 +21303,16 @@ function iidsVal(oid){
   if(raw == null) return '';
   try{ var v = JSON.parse(raw); return v == null ? '' : String(v); }catch(e){ return String(raw); }
 }
+/* v151: ป้าย clone:<Order> ที่เพิ่งปรากฏ (เทียบกับรอบก่อน) */
+var CLSNAP = null, CLN = {};
+function clNew(){
+  var S = tbl('app_settings'), out = {}, cur = {};
+  if(!S || !S.ready) return out;
+  for(var i = 0; i < S.rows.length; i++){ var k = String((S.rows[i] && S.rows[i].key) || ''); if(k.indexOf('clone:') === 0) cur[k.slice(6)] = 1; }
+  if(CLSNAP) Object.keys(cur).forEach(function(o){ if(!CLSNAP[o]) out[o] = 1; });
+  CLSNAP = cur;
+  return out;
+}
 function onExternal(dO, dS){
   var hit = {}, t0 = nowIso();
   var add = function(t, d){
@@ -21314,6 +21327,7 @@ function onExternal(dO, dS){
     });
   };
   add('imos_orders', dO); add('app_settings', dS);
+  Object.keys(hit).forEach(function(oid){ if(CLN[oid]) hit[oid].isNew = true; });   /* v151: Order ที่เพิ่งโคลน = Order ใหม่ */
   var gone = dO ? dO.removed : [];
   var open = openOid(), mb = mbState(), others = [];
   Object.keys(hit).forEach(function(oid){
@@ -21624,6 +21638,7 @@ SXL.cfg.apply = async function(ch, why){
   if(ch && ch.has('app_settings') && typeof window.ORV_reload === 'function'){
     try{ await window.ORV_reload(); }catch(e){ console.error('[ไฟล์กลาง] อ่านรายการรอตัดสินใจใหม่ไม่ได้:', e); }
   }
+  try{ if(why === 'pick' || why === 'restore') CLSNAP = null; CLN = (ch && ch.has('app_settings')) ? clNew() : {}; }catch(e){ CLN = {}; }   /* v151 */
   try{ if(dO || dS) onExternal(dO, dS); }catch(e){ console.error('[ต้นทางแก้]', e); }
   return st;
 };
@@ -32073,5 +32088,403 @@ window.SXL_markBusy = function(oid, txt){
 })();
 </script>
 
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v151 — 🧬 โคลน Order (คลิกขวาที่ Order ในรายการซ้าย → 🧬 โคลน Order…)
+     ผู้ใช้ 07/10/2026 08:32 "copy หรือโคลนนิ่ง Order แม่ออกมาเป็นอีก Order … ตัวแม่เปลี่ยน ตัวที่โคลนออกมาจะไม่เปลี่ยนตาม
+                              ยึดข้อมูลทั้งหมดตามตัวแม่ ณ วันที่ดึงข้อมูลมา … ห้ามเกิดบัคส่วนอื่น รวมถึงส่วน Order"
+     คัดลอก (ยึดข้อมูล ณ ตอนกด): ข้อมูล Order ทั้งก้อน (ชิ้นงาน / BOM / ที่แก้ใน AX Detail) · BOM Fitting ที่แก้เอง (bom_edits)
+                                 · Fitting เพิ่มเติม (extra_fit) · Item Id Set (iids) · จำนวนแผ่นไม้ใน BOM Fitting (bomline_wood — ไม่ผูกกับ Lot)
+     ไม่คัดลอก: เอกสาร / ใบปิดผิวที่ออกแล้ว (pdoc) · ภาพถ่ายตรวจ "ต้นทางแก้" (order_base / order_rev) · ลิงก์ Assembly ใน part_index (อยู่ในข้อมูล Order แล้ว)
+     ตัวโคลน = Order ชื่อใหม่ทั้งหมด (ทุกอย่างผูกกับชื่อ Order) → ต้นฉบับถูกแก้ / ส่งข้อมูลใหม่ทีหลัง ตัวโคลนไม่เปลี่ยน · แก้ตัวโคลนก็ไม่กระทบต้นฉบับ
+     กันของเดิมพัง:
+       • ไม่เขียนทับอะไรเลย — ชื่อที่มี Order อยู่แล้ว หรือมีข้อมูลค้างของ Order ที่เคยลบไป = ไม่ให้ใช้ (บันทึกแบบ insert)
+       • ป้าย clone:<ชื่อใหม่> ในไฟล์กลาง → การหา "Order แม่" ของ Item Id Set (ปันไม้เข้า Type · ลิงก์ Assembly · แท็บทำทั้งชุด)
+         เลือกต้นฉบับก่อนตัวโคลนเสมอ (มีแต่ตัวโคลนจึงใช้ตัวโคลน)
+       • บันทึกค่าของ Order ก่อน แล้วค่อยบันทึกตัว Order → เครื่องอื่นเห็นเป็น Order ใหม่ (ไม่ขึ้น "มีแก้ใหม่")
+       • บันทึกตัว Order ไม่สำเร็จ → ลบค่าที่เพิ่งเขียนออก (ไม่ทิ้งของค้าง)
+       • ลบตัวโคลน (กดยืนยันแล้ว Order หายจริง) → ลบป้าย + ค่าของตัวโคลนเอง (iids / bom_edits / extra_fit / bomline_wood ชื่อตัวโคลนเท่านั้น)
+         ต้นฉบับไม่ถูกแตะ · ใช้ชื่อนั้นโคลนใหม่ได้อีก
+       • เปลี่ยนชื่อตัวโคลน → ป้าย clone ย้ายตามชื่อใหม่
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#orderList .order-item .ocl-tag{display:inline-block;margin-left:5px;font-size:9px;font-weight:800;letter-spacing:.3px;color:#0e7490;background:#ecfeff;border:1px solid #a5f3fc;border-radius:5px;padding:0 5px;line-height:14px;vertical-align:middle}
+#oclBg{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#oclBox{background:#fff;color:#1e293b;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.3);width:min(560px,94vw);max-height:90vh;overflow:auto}
+#oclBox .ocl-h{padding:15px 18px 10px;border-bottom:1px solid #e2e8f0;font-size:15px;font-weight:800}
+#oclBox .ocl-s{font-size:11.5px;color:#64748b;font-weight:400;margin-top:3px;font-family:Menlo,monospace;word-break:break-all}
+#oclBox .ocl-b{padding:13px 18px;font-size:12.5px;line-height:1.6}
+#oclBox label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px}
+#oclBox input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:13px;font-family:Menlo,monospace}
+#oclBox input:focus{outline:none;border-color:#0e7490;box-shadow:0 0 0 3px rgba(14,116,144,.15)}
+#oclBox .ocl-box{border-radius:9px;padding:9px 12px;margin-top:10px}
+#oclBox .ocl-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}
+#oclBox .ocl-no{background:#f8fafc;border:1px solid #e2e8f0;color:#475569}
+#oclBox .ocl-wn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+#oclBox .ocl-st{min-height:18px;margin-top:9px;font-size:12px;font-weight:700}
+#oclBox .ocl-st.err{color:#b91c1c}
+#oclBox .ocl-f{display:flex;gap:8px;justify-content:flex-end;padding:11px 18px 15px;border-top:1px solid #e2e8f0}
+#oclBox button{border-radius:8px;padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+#oclBox .ocl-c{border:1px solid #cbd5e1;background:#fff;color:#334155}
+#oclBox .ocl-g{border:1px solid #0e7490;background:#0e7490;color:#fff}
+#oclBox button:disabled{opacity:.55;cursor:default}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__oclone) return;
+window.__oclone = true;
+
+function D(){ try{ return (typeof db !== 'undefined' && db && typeof db.from === 'function') ? db : null; }catch(e){ return null; } }
+var KEYS = ['iids:', 'bom_edits:', 'extra_fit:', 'bomline_wood:'];   /* เนื้อหาของ Order ที่คัดลอก */
+var USED = KEYS.concat(['pdoc:', 'order_base:', 'order_base_data:', 'order_rev:', 'order_rev_data:', 'order_rev_skip:', 'clone:']);   /* ชื่อที่มีของค้างแบบนี้ = ไม่ให้ใช้ */
+var CL = { map:{}, at:0, busy:null };
+function H(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+function mach(){ try{ return String(localStorage.getItem('ncp_machine_code') || localStorage.getItem('ncp_pd_machine') || '').trim(); }catch(e){ return ''; } }
+function dmy(iso){ var d = new Date(iso); if(isNaN(d)) return ''; var p = function(n){ return ('0' + n).slice(-2); }; return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + (d.getFullYear() + 543) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+function badName(n){
+  if(!n) return 'ชื่อว่างไม่ได้';
+  if(n.length > 120) return 'ชื่อยาวเกิน 120 ตัวอักษร';
+  if(/['"\\<>`&]/.test(n) || /[\u0000-\u001f\u007f]/.test(n)) return 'ชื่อมีเครื่องหมายที่ใช้ไม่ได้ ( \' " \\ < > ` & )';
+  return '';
+}
+async function exists(oid){
+  var r = await D().from('imos_orders').select('order_id').eq('order_id', oid).limit(1);
+  if(r && r.error) throw r.error;
+  return !!(r && r.data && r.data.length);
+}
+async function leftovers(oid){
+  var r = await D().from('app_settings').select('key').in('key', USED.map(function(p){ return p + oid; }));
+  if(r && r.error) throw r.error;
+  return ((r && r.data) || []).map(function(x){ return String(x.key || ''); });
+}
+async function freeName(base){
+  for(var i = 1; i <= 30; i++){
+    var n = base + '_COPY' + (i > 1 ? i : '');
+    if(badName(n)) return '';
+    if(!(await exists(n)) && !(await leftovers(n)).length) return n;
+  }
+  return '';
+}
+
+/* ── ป้าย clone:<Order> (อ่านไม่บ่อยกว่า 30 วินาที) ── */
+function loadMarks(force){
+  if(CL.busy) return CL.busy;
+  if(!force && Date.now() - CL.at < 30000) return Promise.resolve(CL.map);
+  var d = D(); if(!d) return Promise.resolve(CL.map);
+  CL.busy = Promise.resolve(d.from('app_settings').select('key,value').like('key', 'clone:%')).then(function(r){
+    if(r && r.error) throw r.error;
+    var m = {};
+    ((r && r.data) || []).forEach(function(x){
+      var k = String((x && x.key) || ''); if(k.indexOf('clone:') !== 0) return;
+      var v = x.value; if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ v = null; } }
+      m[k.slice(6)] = (v && typeof v === 'object') ? v : {};
+    });
+    CL.map = m; CL.at = Date.now(); CL.busy = null;
+    return m;
+  }).then(null, function(){ CL.busy = null; CL.at = Date.now(); return CL.map; });
+  return CL.busy;
+}
+function itemOid(it){   /* ชื่อจริงจาก onclick ก่อน (ป้ายชื่อของ Order นำเข้าอาจแสดงชื่ออื่น) */
+  var m = (it.getAttribute('onclick') || '').match(/selectOrder\(\s*'([^']*)'/);
+  if(m) return m[1];
+  var n = it.querySelector('.order-name');
+  return (n && n.textContent) ? n.textContent.trim() : '';
+}
+function paint(){
+  var list = document.getElementById('orderList'); if(!list) return;
+  Array.prototype.forEach.call(list.querySelectorAll('.order-item'), function(it){
+    var oid = itemOid(it), v = oid && CL.map[oid], tag = it.querySelector('.ocl-tag');
+    if(v){
+      if(!tag){ tag = document.createElement('span'); tag.className = 'ocl-tag'; tag.textContent = 'COPY'; (it.querySelector('.order-meta') || it).appendChild(tag); }   /* ไม่ใส่ใน .order-name */
+      tag.title = 'โคลนจาก ' + (v.from || '?') + (v.at ? ' เมื่อ ' + dmy(v.at) : '') + ' — ข้อมูลยึดตามต้นฉบับ ณ ตอนโคลน ไม่เปลี่ยนตามต้นฉบับ';
+    } else if(tag && tag.parentNode) tag.parentNode.removeChild(tag);
+  });
+}
+var _pT = 0;
+(function watchList(){
+  var el = document.getElementById('orderList');
+  if(!el){ setTimeout(watchList, 1000); return; }
+  try{ new MutationObserver(function(){ clearTimeout(_pT); _pT = setTimeout(function(){ paint(); loadMarks(false).then(paint); }, 0); }).observe(el, { childList:true }); }catch(e){}
+  loadMarks(true).then(paint);
+})();
+
+/* ── โคลน ── */
+/* ถอนค่าที่เพิ่งเขียน (บันทึกไม่สำเร็จ): ลบเฉพาะคีย์ที่ค่ายังตรงกับที่ตัวโคลนเขียนเป๊ะ — ของคนอื่นที่เขียนทับแล้วไม่แตะ */
+function canon(v){   /* JSON เทียบได้แม้ลำดับคีย์ต่างกัน (Supabase jsonb เรียงคีย์ใหม่) */
+  if(v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
+  if(Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  return '{' + Object.keys(v).sort().filter(function(k){ return v[k] !== undefined; }).map(function(k){ return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}';
+}
+async function undo(d, rows){
+  try{
+    var r = await d.from('app_settings').select('key,value').in('key', rows.map(function(x){ return x.key; }));
+    if(r && r.error) return;
+    var mine = {}, isStr = {}; rows.forEach(function(x){ mine[x.key] = canon(x.value); isStr[x.key] = typeof x.value === 'string'; });
+    var del = ((r && r.data) || []).filter(function(x){
+      if(mine[x.key] == null) return false;
+      var v = x.value; if(typeof v === 'string' && !isStr[x.key]){ try{ v = JSON.parse(v); }catch(e){} }
+      return canon(v) === mine[x.key];
+    }).map(function(x){ return x.key; });
+    if(del.length) await d.from('app_settings').delete().in('key', del);
+  }catch(e){}
+}
+async function cloneOrder(oid, nid){
+  var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
+  oid = String(oid == null ? '' : oid); nid = String(nid == null ? '' : nid).trim();   /* ชื่อมีช่องว่างหัว/ท้าย = ตัดออก · ช่องว่างล้วน = ชื่อว่าง */
+  var bad = badName(nid); if(bad) throw new Error(bad);
+  if(nid === oid) throw new Error('ชื่อใหม่ต้องไม่ซ้ำกับต้นฉบับ');
+  if(await exists(nid)) throw new Error('มี Order ชื่อ "' + nid + '" อยู่แล้ว — ตั้งชื่ออื่น (โคลนไม่เขียนทับ Order ที่มีอยู่)');
+  var lo = await leftovers(nid);
+  if(lo.length) throw new Error('ชื่อ "' + nid + '" ยังมีข้อมูลค้างของ Order ชื่อนี้ที่เคยลบไป (' + lo.map(function(k){ return k.split(':')[0]; }).join(', ') + ') — ตั้งชื่ออื่น');
+  var src = await d.from('imos_orders').select('order_id,data,loaded_at').eq('order_id', oid).limit(1);
+  if(src && src.error) throw src.error;
+  if(!src || !src.data || !src.data.length) throw new Error('ไม่พบ Order ' + oid + ' (อาจถูกลบไปแล้ว)');
+  var data = src.data[0].data;
+  if(typeof data === 'string'){ try{ data = JSON.parse(data); }catch(e){ data = null; } }
+  if(!data || typeof data !== 'object') throw new Error('อ่านข้อมูล Order ' + oid + ' ไม่ได้');
+  data = JSON.parse(JSON.stringify(data));                    /* สำเนาลึก — ไม่ใช้วัตถุร่วมกับต้นฉบับ */
+  var now = new Date().toISOString(), by = mach();
+  data.orderID = nid;                                          /* แบบ Save As เดิม */
+  data.cloneOf = { oid:oid, at:now, by:by };
+  var st = await d.from('app_settings').select('key,value').in('key', KEYS.map(function(p){ return p + oid; }));
+  if(st && st.error) throw st.error;
+  var rows = [], got = [];
+  ((st && st.data) || []).forEach(function(r){
+    var p = KEYS.filter(function(k){ return r && r.key === k + oid; })[0]; if(!p) return;
+    var v = r.value; if(v == null) return;
+    v = JSON.parse(JSON.stringify(v));
+    if(p === 'bomline_wood:'){
+      if(typeof v === 'string'){ try{ v = JSON.parse(v); }catch(e){ return; } }
+      if(!v || typeof v !== 'object' || !Array.isArray(v.rows) || !v.rows.length) return;
+      if(v.alloc){ delete v.alloc; v.order = nid; }            /* ไม้ที่ปันมาจาก Lot → เป็นของตัวโคลนเอง (ไม่เข้าไปเป็น Type ของ Lot) */
+      else if(!v.order || v.order === oid) v.order = nid;
+    }
+    rows.push({ key:p + nid, value:v }); got.push(p.slice(0, -1));
+  });
+  var mark = { from:oid, at:now, by:by, src:String(data.source || '') };
+  rows.push({ key:'clone:' + nid, value:mark });
+  /* 1) ค่าของ Order ก่อน (insert = มีอยู่แล้วไม่เขียนทับ) 2) ตัว Order */
+  var w1 = null, e1 = null;
+  try{ w1 = await d.from('app_settings').insert(rows); }catch(e){ e1 = e; }
+  if(e1 || (w1 && w1.error)){
+    var x1 = e1 || w1.error;
+    if(!(x1 && x1.code === '23505')) await undo(d, rows);         /* ชื่อซ้ำ = ไม่ได้เขียนอะไร · อย่างอื่น (เขียนได้บางไฟล์) → ถอนของตัวเอง */
+    throw new Error('บันทึกค่าของ Order ไม่สำเร็จ: ' + ((x1 && x1.message) || x1));
+  }
+  var w2 = null, e2 = null;
+  try{ w2 = await d.from('imos_orders').insert({ order_id:nid, data:data, loaded_at:now }); }catch(e){ e2 = e; }
+  if(e2 || (w2 && w2.error)){
+    /* เน็ตหลุดตอนตอบกลับ แต่บันทึกไปแล้ว? → ดูก่อน · เป็นของตัวโคลนนี้ (cloneOf.at ตรง) = สำเร็จ */
+    var mineRow = false;
+    try{
+      var chk = await d.from('imos_orders').select('order_id,data').eq('order_id', nid).limit(1);
+      var cd = chk && chk.data && chk.data[0] && chk.data[0].data;
+      if(typeof cd === 'string'){ try{ cd = JSON.parse(cd); }catch(x){ cd = null; } }
+      mineRow = !!(cd && cd.cloneOf && cd.cloneOf.at === now && cd.cloneOf.oid === oid);
+    }catch(x){}
+    if(!mineRow){
+      await undo(d, rows);
+      var x2 = e2 || w2.error;
+      throw new Error('บันทึก Order ไม่สำเร็จ: ' + ((x2 && x2.message) || x2));
+    }
+  }
+  try{ if(localStorage.getItem('nodrill_dismissed:' + oid)) localStorage.setItem('nodrill_dismissed:' + nid, '1'); }catch(e){}
+  CL.map[nid] = mark;
+  return { got:got, isImport:String(data.source || '') === 'import' };
+}
+async function afterClone(nid, isImport){
+  try{ if(isImport && typeof window.IMPB_reload === 'function') await window.IMPB_reload(); }catch(e){}
+  try{ if(typeof refreshStatus === 'function') await refreshStatus(); }catch(e){}
+  try{ if(typeof renderSidebar === 'function') await renderSidebar(); }catch(e){}
+  try{ if(typeof _renderOrderList === 'function') _renderOrderList(); }catch(e){}
+  paint();
+  var tab = ''; try{ tab = currentMainTab; }catch(e){}
+  var mb = null; try{ mb = (typeof window.MBOM_state === 'function') ? window.MBOM_state() : null; }catch(e){}
+  if((!tab || tab === 'ax' || tab === 'imos') && !(mb && mb.on) && !busyWhy(nid) && typeof selectOrder === 'function'){ try{ selectOrder(nid); }catch(e){} }
+}
+function busyWhy(oid){
+  var open = null; try{ open = currentOrder; }catch(e){}
+  try{ if(window.SAWB_busy && window.SAWB_busy()) return 'แท็บ SAW / NC กำลังส่งข้อมูลอยู่ — รอให้เสร็จก่อน'; }catch(e){}
+  try{ if(window.MBOM_busy && window.MBOM_busy()) return 'กำลังรวม BOM อยู่ — รอให้เสร็จก่อน'; }catch(e){}
+  try{ if(axEditMode || bomEditMode) return 'หน้า AX Detail / BOM Fitting อยู่ในโหมดแก้ไข — บันทึกหรือยกเลิกก่อน แล้วค่อยโคลน'; }catch(e){}
+  try{ if(axEdits && Object.keys(axEdits).length) return (open === oid ? 'Order นี้' : 'Order ที่เปิดอยู่ (' + open + ')') + ' มีที่แก้ใน AX Detail ยังไม่บันทึก — บันทึกก่อน แล้วค่อยโคลน (โคลนจากข้อมูลที่บันทึกแล้ว · เปิดตัวโคลนจะล้างงานแก้ที่ยังไม่บันทึก)'; }catch(e){}
+  try{ var xs = window.XC_state && window.XC_state(); if(xs && xs.dirty && Object.keys(xs.dirty).length) return 'มีที่แก้ยังไม่บันทึก (' + Object.keys(xs.dirty).map(function(k){ return k + ': ' + xs.dirty[k]; }).join(' · ') + ') — บันทึกก่อน แล้วค่อยโคลน'; }catch(e){}
+  return '';
+}
+
+/* ── หน้าต่างโคลน ── */
+async function openClone(oid){
+  var why = busyWhy(oid); if(why){ alert('🧬 โคลน Order\n\n' + why); return; }
+  if(CL.close){ try{ CL.close(true); }catch(e){} CL.close = null; }
+  var old = document.getElementById('oclBg'); if(old) old.remove();
+  var isImp = false; try{ isImp = !!(window.IMPB_list && window.IMPB_list().indexOf(oid) >= 0); }catch(e){}
+  var bg = document.createElement('div'); bg.id = 'oclBg';
+  bg.innerHTML = '<div id="oclBox" role="dialog" aria-modal="true">'
+    + '<div class="ocl-h">🧬 โคลน Order<div class="ocl-s">ต้นฉบับ: ' + H(oid) + '</div></div>'
+    + '<div class="ocl-b">'
+    +   '<label for="oclName">ชื่อ Order ใหม่</label><input id="oclName" spellcheck="false" maxlength="120" placeholder="กำลังหาชื่อที่ว่าง…">'
+    +   '<div class="ocl-box ocl-ok"><b>คัดลอก — ยึดข้อมูล ณ ตอนนี้</b><br>ชิ้นงาน / BOM ทั้งหมด (รวมที่แก้ใน AX Detail) · BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ใน BOM Fitting</div>'
+    +   '<div class="ocl-box ocl-no"><b>ไม่คัดลอก</b><br>เอกสาร / ใบปิดผิวที่ออกไปแล้ว · ประวัติตรวจ "ต้นทางแก้" (ตัวโคลนเริ่มนับใหม่)</div>'
+    +   '<div class="ocl-box ocl-wn">ต้นฉบับถูกแก้ หรือส่งข้อมูลใหม่มาทีหลัง → <b>ตัวโคลนไม่เปลี่ยนตาม</b> · แก้ตัวโคลนก็ไม่กระทบต้นฉบับ<br>'
+    +     'Item Id Set / บาร์โค้ดเหมือนต้นฉบับ — ถ้าจะผลิตทั้งสองชุด ตั้ง Item Id Set ของตัวโคลนใหม่ก่อนส่ง SAW / NC'
+    +     (isImp ? '<br>Order นำเข้า (Lot): ตัวโคลนชี้ไป Order ของแต่ละ Type ชุดเดียวกับต้นฉบับ — ส่ง SAW / NC จากตัวโคลนแล้วปันไม้เข้า Type → ยอดไม้ใน Order ของ Type เป็นของตัวโคลน (แทนของต้นฉบับ) เหมือนส่งจากต้นฉบับ' : '') + '</div>'
+    +   '<div class="ocl-st" id="oclSt"></div>'
+    + '</div>'
+    + '<div class="ocl-f"><button class="ocl-c" id="oclCancel">ยกเลิก</button><button class="ocl-g" id="oclGo" disabled>🧬 โคลน</button></div>'
+    + '</div>';
+  document.body.appendChild(bg);
+  var inp = document.getElementById('oclName'), go = document.getElementById('oclGo'), cc = document.getElementById('oclCancel'), stEl = document.getElementById('oclSt'), busy = false, hidden = false;
+  /* ระหว่างโคลน: ปิดหน้าต่าง = ซ่อน (งานบันทึกทำต่อจนจบ · ไม่สำเร็จจะเด้งบอก) */
+  function close(force){ if(busy && !force) hidden = true; try{ bg.remove(); }catch(e){} document.removeEventListener('keydown', key, true); if(CL.close === close) CL.close = null; }
+  function key(ev){
+    if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); close(); }
+    else if(ev.key === 'Enter' && !ev.isComposing && document.activeElement === inp && !go.disabled && !busy){ ev.preventDefault(); ev.stopPropagation(); go.click(); }
+  }
+  CL.close = close;
+  function stt(t, err){ stEl.textContent = t || ''; stEl.className = 'ocl-st' + (err ? ' err' : ''); }
+  document.addEventListener('keydown', key, true);
+  cc.onclick = function(){ close(); };
+  bg.addEventListener('mousedown', function(ev){ if(ev.target === bg) close(); });
+  inp.addEventListener('input', function(){ if(busy) return; var b = badName(inp.value.trim()); stt(b, !!b); go.disabled = !!b; });
+  go.onclick = async function(){
+    var nid = inp.value.trim(), b = badName(nid);
+    if(b){ stt(b, true); return; }
+    var why2 = busyWhy(oid); if(why2){ stt(why2, true); return; }
+    busy = true; go.disabled = true; inp.disabled = true; cc.textContent = 'ซ่อนหน้าต่าง'; stt('กำลังโคลน… (ซ่อนหน้าต่างได้ — บันทึกต่อจนเสร็จ)');
+    try{
+      var r = await cloneOrder(oid, nid);
+      busy = false; close(true);
+      await afterClone(nid, r.isImport);
+      try{ if(typeof sxlToast === 'function') sxlToast('🧬 โคลนแล้ว: ' + nid + ' (จาก ' + oid + ')'); }catch(e){}
+    }catch(e){
+      busy = false; go.disabled = false; inp.disabled = false; cc.textContent = 'ยกเลิก';
+      stt('โคลนไม่สำเร็จ: ' + ((e && e.message) || e), true);
+      if(hidden) alert('🧬 โคลน Order ' + oid + ' → ' + nid + ' ไม่สำเร็จ\n\n' + ((e && e.message) || e));
+    }
+  };
+  setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 30);
+  try{
+    var nm = await freeName(oid);
+    if(document.body.contains(inp) && !inp.value && !busy){ inp.value = nm; inp.placeholder = 'ชื่อ Order ใหม่'; try{ inp.select(); }catch(e){} }
+  }catch(e){ inp.placeholder = 'ชื่อ Order ใหม่'; }
+  if(!busy){ var b0 = badName(inp.value.trim()); go.disabled = !!b0; }
+}
+window.ORDER_clone = cloneOrder;      /* ชุดทดสอบ / Console */
+window.ORDER_cloneOpen = openClone;
+window.ORDER_cloneMarks = function(){ return loadMarks(true).then(function(m){ return JSON.parse(JSON.stringify(m)); }); };
+
+/* ── เมนูคลิกขวา: เพิ่ม 🧬 โคลน Order… ต่อจาก Save As (ของเดิมไม่เปลี่ยน) ── */
+function copyFlags(from, to){ try{ Object.keys(from).forEach(function(k){ if(!(k in to)) to[k] = from[k]; }); }catch(e){} }
+function hookMenu(){
+  if(typeof window.orderCtxMenu !== 'function' || window.orderCtxMenu.__ocl) return !!(window.orderCtxMenu && window.orderCtxMenu.__ocl);
+  var orig = window.orderCtxMenu;
+  var w = function(e, oid){
+    var r = orig.apply(this, arguments);
+    try{
+      var m = document.getElementById('orderCtx');
+      if(m && !m.querySelector('[data-ocl]')){
+        var b = document.createElement('div');
+        b.setAttribute('data-ocl', '1');
+        b.textContent = '🧬 โคลน Order (ยึดข้อมูล ณ ตอนนี้)…';
+        b.title = 'สร้าง Order ใหม่ที่ข้อมูลเหมือนต้นฉบับ ณ ตอนนี้ — ต้นฉบับเปลี่ยนทีหลัง ตัวโคลนไม่เปลี่ยนตาม';
+        b.style.cssText = 'padding:8px 12px;font-size:13px;border-radius:7px;cursor:pointer;white-space:nowrap;color:#0e7490;font-weight:600';
+        b.onmouseover = function(){ b.style.background = 'rgba(14,116,144,0.08)'; };
+        b.onmouseout = function(){ b.style.background = 'transparent'; };
+        b.onclick = function(ev){ ev.stopPropagation(); try{ if(typeof _orderCtxClose === 'function') _orderCtxClose(); else m.remove(); }catch(x){} openClone(oid); };
+        var items = m.children, after = items.length > 1 ? items[1] : null;   /* [0] = หัว (ชื่อ Order) · [1] = Save As */
+        if(after && after.nextSibling) m.insertBefore(b, after.nextSibling); else m.appendChild(b);
+        /* เมนูอาจล้นจอล่าง → ขยับขึ้น */
+        var r2 = m.getBoundingClientRect();
+        if(r2.bottom > window.innerHeight - 8) m.style.top = Math.max(8, window.innerHeight - r2.height - 8) + 'px';
+      }
+    }catch(x){}
+    return r;
+  };
+  copyFlags(orig, w); w.__ocl = true;
+  window.orderCtxMenu = w;
+  return true;
+}
+/* ── ลบตัวโคลน → เอาป้าย clone + ค่าของตัวโคลนเองออก (รอจน Order หายจริง 2 รอบติด — ผู้ใช้กดยกเลิกก็ไม่ลบอะไร) ── */
+var WATCHING = {};
+function watchGone(oid, n, gone){
+  n = n || 0; gone = gone || 0;
+  if(n === 0){ if(WATCHING[oid]) return; WATCHING[oid] = 1; }
+  if(n > 30){ delete WATCHING[oid]; return; }
+  setTimeout(function(){
+    exists(oid).then(function(ex){
+      if(ex) return watchGone(oid, n + 1, 0);
+      if(gone < 1) return watchGone(oid, n + 1, gone + 1);
+      var d = D(); if(!d){ delete WATCHING[oid]; return; }
+      var ks = KEYS.concat(['clone:']).map(function(p){ return p + oid; });
+      return Promise.resolve(d.from('app_settings').delete().in('key', ks)).then(function(r){
+        if(r && r.error) throw r.error;
+        delete CL.map[oid]; delete WATCHING[oid]; paint();
+      });
+    }).then(null, function(){ watchGone(oid, n + 1, 0); });
+  }, 1500);
+}
+function hookDel(){
+  if(typeof window.delOrder !== 'function' || window.delOrder.__ocl) return !!(window.delOrder && window.delOrder.__ocl);
+  var orig = window.delOrder;
+  var w = function(ev, oid){
+    var had = !!(oid && CL.map[oid]), said = null, C = window.confirm, r;
+    if(had) window.confirm = function(){ var v = C.apply(window, arguments); if(said === null) said = !!v; return v; };
+    try{ r = orig.apply(this, arguments); }   /* กล่องยืนยันลบเด้งก่อน await แรก → คืน confirm เดิมได้ทันที */
+    finally{ if(had) window.confirm = C; }
+    try{ if(had && said !== false) watchGone(oid, 0); }catch(x){}
+    return r;
+  };
+  copyFlags(orig, w); w.__ocl = true;
+  window.delOrder = w;
+  return true;
+}
+/* ── เปลี่ยนชื่อตัวโคลน → ป้าย clone ย้ายตามชื่อใหม่ (ชื่อใหม่ = ที่พิมพ์ในกล่อง Rename ของเดิม) ── */
+function hookRename(){
+  if(typeof window.orderRename !== 'function' || window.orderRename.__ocl) return !!(window.orderRename && window.orderRename.__ocl);
+  var orig = window.orderRename;
+  var w = function(oid){
+    var had = oid && CL.map[oid], typed = null, pre = false, P = window.prompt, r;
+    if(had) window.prompt = function(){
+      var v = P.apply(window, arguments);
+      if(typed === null){ typed = v; try{ var t = String(v == null ? '' : v).trim(); pre = !!t && (_sidebarOrders || []).some(function(o){ return o && o.oid === t; }); }catch(e){} }
+      return v;
+    };
+    try{ r = orig.apply(this, arguments); }   /* กล่อง Rename เด้งก่อน await แรก → คืน prompt เดิมได้ทันที */
+    finally{ if(had) window.prompt = P; }
+    if(!had) return r;
+    return Promise.resolve(r).then(async function(res){
+      try{
+        var nid = (typed == null) ? '' : String(typed).trim();
+        if(nid && nid !== oid && !(await exists(oid)) && (await exists(nid))){
+          var d = D();
+          if(!pre){
+            var mk = JSON.parse(JSON.stringify(had)); mk.renamedFrom = oid;
+            var u = await d.from('app_settings').upsert({ key:'clone:' + nid, value:mk }, { onConflict:'key' });
+            if(u && u.error) throw u.error;
+            CL.map[nid] = mk;
+          }
+          await d.from('app_settings').delete().eq('key', 'clone:' + oid);
+          delete CL.map[oid]; paint();
+        }
+      }catch(x){}
+      return res;
+    });
+  };
+  copyFlags(orig, w); w.__ocl = true;
+  window.orderRename = w;
+  return true;
+}
+var tries = 0, iv = setInterval(function(){
+  tries++;
+  var a = false, b = false, c = false;
+  try{ a = hookMenu(); }catch(e){}
+  try{ b = hookDel(); }catch(e){}
+  try{ c = hookRename(); }catch(e){}
+  if((a && b && c) || tries > 60) clearInterval(iv);
+}, 1000);
+/* โมดูลอื่นห่อ delOrder ทับทีหลังได้ (ห่อซ้อนกัน) — ตรวจซ้ำห่าง ๆ ให้ป้ายตามการลบเสมอ */
+setInterval(function(){ try{ hookMenu(); hookDel(); hookRename(); }catch(e){} }, 15000);
+})();
+</script>
 </body>
 </html>
