@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '158', D = '07/10/2026';
+  var V = '159', D = '08/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -28272,7 +28272,7 @@ var T = {
       x: 'รหัสสินค้าสำเร็จของ Order นี้ใน AX — ตรวจให้ถูกก่อน Export · ถ้าเป็นรูปแบบ RE-xxxx-xxxx อาจเป็นค่าที่โปรแกรมเดาจากเลข Order' },
     { el: '#__axGap', t: 'ตรวจลำดับชิ้น', x: 'ขึ้นสีเขียว "ชิ้นครบ" = เลขชิ้นเรียงครบไม่มีหาย · ถ้าเตือนว่าเลขชิ้นขาด ให้ตรวจไฟล์ต้นทางก่อนผลิต' },
     { el: '#editModeBtn', t: 'แก้ไขตาราง', x: 'กดเพื่อแก้ค่าในตาราง เช่น รหัสผิว ขนาด ร่อง แล้วกดบันทึก — ค่าที่แก้จำไว้กับ Order นี้' },
-    { el: [function(){ return byOnclick('exportAXExcel()'); }, '#ncPdExportBtn', function(){ return byOnclick('exportRepairBOM()'); }], t: 'ส่งออก Excel',
+    { el: [function(){ return byOnclick('exportAXExcel()'); }, '#ncPdExportBtn', function(){ return byOnclick('exportRepairBOM()'); }, '#tb159AxExp'], t: 'ส่งออก Excel',
       x: '<b>Export BOM ไม้</b> ไฟล์นำเข้า AX<br><b>(PD)</b> เลขตู้แบบ PD01, PD02 ชุดเดียวกับ SAW/NC<br><b>แจ้งซ่อม</b> ฟอร์แมตสำหรับงานแจ้งซ่อม' },
     { el: '#mbToggle', t: 'เลือกหลาย Order', x: 'ผลิตหลาย Order พร้อมกัน? รวม BOM หลาย Order เป็นตารางเดียว (ทุกแถวติดชื่อ Order) แล้ว Export ครั้งเดียว' },
     { el: ['#asmModeBtn', '#__blfAskBtn', function(){ return byOnclick('openMatConfig()'); }, function(){ return byOnclick('openFSConfig()'); }], t: 'ตั้งค่าเสริม',
@@ -28292,8 +28292,8 @@ var T = {
     { el: '#bomSelAll', t: 'เลือกบางรายการ', x: 'ติ๊กช่องหน้าแถวแล้วกด Export จะออกเฉพาะที่เลือก · ช่องบนสุดนี้ = เลือกทุกแถวที่แสดงอยู่' },
     { el: '#bomEditBtn', t: 'แก้ไข BOM Fitting', x: 'เปลี่ยนรหัส แก้จำนวน ลบแถว หรือเพิ่มแถวเอง แล้วกดบันทึก' },
     { el: function(){ return $('#bomSubToolbar button[onclick="openExtraFitPanel()"]'); }, t: 'เพิ่ม Fitting', x: 'วางรายการจาก Excel (รหัส + จำนวน) เพิ่มเข้า BOM ของ Order นี้' },
-    { el: function(){ return byOnclick('exportFrameDrawings()'); }, t: 'Export แบบผลิต', x: 'สร้างแบบผลิตกรอบบานให้อัตโนมัติจากข้อมูล Order' },
-    { el: function(){ return byOnclick('exportBOMExcel()'); }, t: 'Export BOM Fitting', x: 'ไฟล์ Excel (ItemId · Qty · Warehouse) สำหรับนำเข้า AX · รหัสเดียวกันรวมยอดให้เอง' },
+    { el: [function(){ return byOnclick('exportFrameDrawings()'); }, '#tb159BfExp'], t: 'Export แบบผลิต', x: 'สร้างแบบผลิตกรอบบานให้อัตโนมัติจากข้อมูล Order' },
+    { el: [function(){ return byOnclick('exportBOMExcel()'); }, '#tb159BfExp'], t: 'Export BOM Fitting', x: 'ไฟล์ Excel (ItemId · Qty · Warehouse) สำหรับนำเข้า AX · รหัสเดียวกันรวมยอดให้เอง' },
     { el: '#__blfAskBtn', t: 'ถามขนาดไม้ทุกครั้ง',
       x: 'ตอนส่งไม้จากใบสั่งตัดเข้ามา โปรแกรมเลือกรหัสตามขนาดแผ่นให้เอง (P48 = 4×8 ฟุต · P68 = 6×8 ฟุต) · เปิดสวิตช์นี้ถ้าอยากให้ถามยืนยันทุกครั้ง' },
     { el: '#subTabWoodCheck', act: 'click', t: 'ต่อไป: เช็คไม้', x: 'กดแท็บเช็คไม้ เพื่อตรวจว่ารหัสไม้ของ Order นี้มีใน Fitting Global ครบไหม' }
@@ -31924,6 +31924,34 @@ function prune(pre, keep){
 }
 function prefix(T){ var n = ''; try{ n = (SXL.dir && SXL.dir.name) || ''; }catch(e){} return VER + '|' + n + '|' + T.t + '|'; }
 
+/* ══ v159: รายชื่อไฟล์ _changes ที่เพิ่งไล่มา (ต่อตาราง) ════════════════════════════════════════════
+   ผู้ใช้ 08/10/2026 10:57 "ตอน Import ตอน save อะไร ดูช้าไปหมดเลย"
+   ต้นเหตุ: ทุกครั้งที่บันทึก ตัวเขียนไล่รายชื่อไฟล์ใน _changes/<ตาราง> ทั้งโฟลเดอร์ก่อน (เพื่อต่อจากของล่าสุดของเครื่องอื่น)
+            โฟลเดอร์ที่ใช้มานาน + เครือข่าย = ครั้งละหลายวินาที · งานที่บันทึกหลายครั้งติดกัน (Import / Rename / ลบ) ช้าเป็นสิบวินาที
+   ใหม่: ไล่ครบทั้งโฟลเดอร์เมื่อไหร่ (รอบตรวจ 10 วินาที · อ่านไฟล์ล่าสุด · ตัวเขียนเอง) จำรายชื่อไว้
+         ตัวเขียนที่ตามมาไม่นาน (2 เท่าของเวลาที่ไล่ · อย่างน้อย 10 วิ · ไม่เกิน 20 วิ) ใช้รายชื่อนั้นแทนการไล่ใหม่
+         (บันทึกทั้งแถว = แถวใหม่แทนแถวเดิมอยู่แล้ว · ชื่อไฟล์ใหม่ใช้เวลาปัจจุบัน เรียงหลังไฟล์ของเครื่องอื่นที่บันทึกก่อนหน้าเสมอ)
+         ไฟล์ใหม่ของกลุ่มที่จะเขียน (ที่เห็นในรายชื่อ) ยังอ่านเนื้อก่อนเขียนเหมือนเดิม
+   ใช้เฉพาะ "อ่านก่อนเขียน" ของตัวเขียน — รอบตรวจ / อ่านไฟล์ล่าสุด / การตรวจก่อนออกเลขเอกสาร / ตรวจหลังบันทึก ไล่เองทุกครั้งเหมือนเดิม
+   ปิดได้: localStorage pv2_wlist = 'off' · Console: SXL_listCache() */
+var LCACHE = Object.create(null), LCS = { list:0, hit:0 };
+function lcOn(){ try{ return localStorage.getItem('pv2_wlist') !== 'off'; }catch(e){ return true; } }
+function lcPut(t, latest, all, dur){
+  try{ LCACHE[t] = { dir:SXL.dir, at:Date.now(), dur:Math.max(0, dur || 0), latest:latest, all:all }; }catch(e){}   /* all = ตัวเดียวกับ S.names */
+}
+function lcFresh(t){
+  if(!lcOn()) return null;
+  var c = LCACHE[t];
+  if(!c || c.dir !== SXL.dir) return null;
+  var win = Math.min(20000, Math.max(10000, c.dur * 2));
+  return (Date.now() - c.at <= win) ? c : null;
+}
+window.SXL_listCache = function(){
+  var o = { on:lcOn(), list:LCS.list, hit:LCS.hit, tables:{} };
+  Object.keys(LCACHE).forEach(function(k){ var c = LCACHE[k]; o.tables[k] = { ageMs:Date.now() - c.at, listMs:c.dur, files:Object.keys(c.all).length }; });
+  return o;
+};
+
 /* อ่านพร้อมกันครั้งละ n งาน */
 async function pool(list, n, fn){
   var i = 0;
@@ -31934,6 +31962,7 @@ async function pool(list, n, fn){
 
 /* ตัวใหม่ — ขั้นตอน/ผลเหมือน sxlScanOver เดิมทุกอย่าง ต่างแค่วิธีอ่านเนื้อไฟล์ */
 var scan = async function(T, S, only){
+  var wpre = !!SXL.__wpre; SXL.__wpre = false;   /* v159: เรียกจากตัวเขียน (อ่านก่อนเขียน) — ต้องจับไว้ก่อน await แรก */
   var md = mode();
   if(md === 'orig') return orig.apply(this, arguments);
   var t0 = Date.now();
@@ -31942,7 +31971,9 @@ var scan = async function(T, S, only){
   var ab = SXL.__pollAbort;   /* v149: มีเฉพาะตอนรอบตรวจอัตโนมัติ + มีงานบันทึกรออยู่ */
   var pf = (!only && typeof SXL.__prelist === 'function') ? SXL.__prelist(T.t) : null, pl = null;   /* v155: รายชื่อที่ไล่ไว้แล้วตั้งแต่เริ่มโหลด (ทุกตารางพร้อมกัน) */
   if(pf){ try{ pl = await pf; }catch(e){ pl = null; } }
+  var LCx = (wpre && !pl) ? lcFresh(T.t) : null, tL = Date.now();   /* v159 */
   if(pl && pl.latest && pl.all){ latest = pl.latest; all = pl.all; }
+  else if(LCx){ latest = LCx.latest; all = LCx.all; LCS.hit++; }   /* all ใช้ร่วมกับ S.names — ตัวเขียนเก็บ 3 รุ่นล่าสุดแล้วแก้รายชื่อตรงนี้ → รายชื่อที่จำไว้รู้ไฟล์ที่เพิ่งเขียน (ลบรุ่นเก่าได้ครบ) */
   else for await (var ent of d.entries()){
     if(ab && ab()) return false;
     if(ent[1].kind !== 'file') continue;
@@ -31951,6 +31982,7 @@ var scan = async function(T, S, only){
     var L0 = latest[v.key];
     if(!L0 || v.ts > L0.ts || (v.ts === L0.ts && L0.plus && !v.plus)) latest[v.key] = { name:ent[0], ts:v.ts, plus:v.plus };
   }
+  if(!pl && !LCx){ lcPut(T.t, latest, all, Date.now() - tL); LCS.list++; }   /* v159: ไล่ครบ (ไม่ถูกหยุดกลางทาง) → จำไว้ให้ตัวเขียน */
   S.names = all;
   var ch = false, todo = [], done = 0;
   for(var bf in latest){
@@ -32237,6 +32269,26 @@ window.SXL_markBusy = function(oid, txt){
 #oclBox .ocl-c{border:1px solid #cbd5e1;background:#fff;color:#334155}
 #oclBox .ocl-g{border:1px solid #0e7490;background:#0e7490;color:#fff}
 #oclBox button:disabled{opacity:.55;cursor:default}
+#oclBox .ocl-pg{margin-top:12px;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;background:#f8fafc}
+#oclBox .ocl-bar{height:8px;border-radius:5px;background:#e2e8f0;overflow:hidden}
+#oclBox .ocl-bar i{display:block;height:100%;width:4%;border-radius:5px;background:linear-gradient(90deg,#0e7490,#22d3ee,#0e7490);background-size:200% 100%;animation:oclMove 1.2s linear infinite;transition:width .35s}
+#oclBox .ocl-pg.fin .ocl-bar i{animation:none;background:#16a34a}
+@keyframes oclMove{0%{background-position:100% 0}100%{background-position:-100% 0}}
+#oclBox .ocl-steps{margin:8px 0 0;padding:0;list-style:none;font-size:12px;color:#94a3b8}
+#oclBox .ocl-steps li{padding:2px 0 2px 22px;position:relative}
+#oclBox .ocl-steps li:before{content:'○';position:absolute;left:4px}
+#oclBox .ocl-steps li.now{color:#0e7490;font-weight:700}
+#oclBox .ocl-steps li.now:before{content:'⏳';left:0}
+#oclBox .ocl-steps li.done{color:#15803d}
+#oclBox .ocl-steps li.done:before{content:'✓';font-weight:800}
+#oclBox .ocl-time{margin-top:7px;font-size:11.5px;color:#64748b}
+#oclBox .ocl-ask{margin-top:10px;border:1.5px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px 12px;color:#78350f}
+#oclBox .ocl-ask .ocl-ab{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
+#oclBox .ocl-r{border:1px solid #dc2626;background:#dc2626;color:#fff}
+#oclBox .ocl-big{font-size:17px;font-weight:800;color:#15803d;margin-bottom:8px}
+#oclBox .ocl-big.wn{color:#b45309}
+#oclBox .ocl-arrow{font-family:Menlo,monospace;font-size:12px;background:#f1f5f9;border-radius:7px;padding:7px 10px;word-break:break-all}
+#oclBox .ocl-wl{margin:9px 0 0;padding-left:4px;list-style:none;color:#92400e;font-size:12px}
 </style>
 <script>
 (function(){
@@ -32615,11 +32667,13 @@ var CANCEL = {};   /* ชื่อที่กำลังเขียนให�
    o.overwrite = ผู้ใช้ยืนยันเขียนทับ Order ที่มีอยู่ · o.replace = ผู้ใช้ยืนยันแทนที่ค่าค้างของ Order ที่เคยลบ */
 async function transfer(oid, nid, mode, o){
   o = o || {};
+  var step = function(k){ try{ if(typeof o.step === 'function') o.step(k); }catch(e){} };   /* v159: แถบความคืบหน้า */
   var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
   oid = String(oid == null ? '' : oid); nid = String(nid == null ? '' : nid).trim();   /* ชื่อมีช่องว่างหัว/ท้าย = ตัดออก · ช่องว่างล้วน = ชื่อว่าง */
   var bad = badName(nid); if(bad) throw new Error(bad);
   if(nid === oid) throw new Error('ชื่อใหม่ต้องไม่ซ้ำกับต้นฉบับ');
-  if(mode !== 'clone') await fresh(MOVE.concat(ORVK, ['pdoc:']).reduce(function(a, p){ a.push(p + oid, p + nid); return a; }, []), [oid, nid]);
+  step('check');
+  if(mode !== 'clone' && !o.freshDone) await fresh(MOVE.concat(ORVK, ['pdoc:']).reduce(function(a, p){ a.push(p + oid, p + nid); return a; }, []), [oid, nid]);   /* v159: หน้าต่างเพิ่งอ่านชุดนี้มา (ไม่ได้ถามอะไรระหว่างนั้น) → ไม่อ่านซ้ำ */
   var ex = await exists(nid);
   if(ex && (mode === 'clone' || !o.overwrite)) throw new Error('มี Order ชื่อ "' + nid + '" อยู่แล้ว — ตั้งชื่ออื่น' + (mode === 'clone' ? ' (โคลนไม่เขียนทับ Order ที่มีอยู่)' : ''));
   var lo = ex ? [] : await leftovers(nid);
@@ -32637,6 +32691,7 @@ async function transfer(oid, nid, mode, o){
     var lt = await lotTypesOf(d, nid);
     if(lt.list.length) throw new Error('ชื่อ "' + nid + '" เป็น Lot ที่ปันไม้เข้า Type แล้ว (' + lt.list.slice(0, 5).join(', ') + (lt.list.length > 5 ? ' …' : '') + ') — ' + (ex ? 'เขียนทับ' : 'ใช้ชื่อนี้') + 'ไม่ได้ (ไม้ของ Type จะปนกับ Lot ใหม่) · ตั้งชื่ออื่น');
   }
+  step('read');
   var src = await d.from('imos_orders').select('order_id,data,loaded_at').eq('order_id', oid).limit(1);
   if(src && src.error) throw src.error;
   if(!src || !src.data || !src.data.length) throw new Error('ไม่พบ Order ' + oid + ' (อาจถูกลบไปแล้ว)');
@@ -32667,6 +32722,7 @@ async function transfer(oid, nid, mode, o){
     throw new Error(msg + (ok ? '' : ' · คืนค่าเดิมไม่ครบ — ตรวจค่าของ "' + nid + '" ก่อนใช้งาน'));
   };
   /* 1) ค่าของ Order ก่อน (ชื่อที่ยังไม่มีค่า = insert · มีอยู่แล้วเครื่องอื่นสร้างตัดหน้า = ล้ม ไม่เขียนทับของเขา) 2) ตัว Order */
+  step('settings');
   if(rowsNew.length){
     var w1 = null, e1 = null;
     try{ w1 = await d.from('app_settings').insert(rowsNew); }catch(e){ e1 = e; }
@@ -32681,6 +32737,7 @@ async function transfer(oid, nid, mode, o){
     try{ w1b = await d.from('app_settings').upsert(rowsOld, { onConflict:'key' }); }catch(e){ e1b = e; }
     if(e1b || (w1b && w1b.error)) await fail('บันทึกค่าของ Order ไม่สำเร็จ: ' + msgOf(e1b || w1b.error));
   }
+  step('order');
   var w2 = null, e2 = null, row = { order_id:nid, data:data, loaded_at:(mode === 'rename' ? (src.data[0].loaded_at || now) : now) };
   try{ w2 = ex ? await d.from('imos_orders').upsert(row, { onConflict:'order_id' }) : await d.from('imos_orders').insert(row); }catch(e){ e2 = e; }
   if(e2 || (w2 && w2.error)){
@@ -32705,6 +32762,7 @@ async function transfer(oid, nid, mode, o){
   if(mode !== 'clone'){ try{ if(window.__ORV && window.__ORV.skipOnce) window.__ORV.skipOnce[nid] = true; }catch(e){} }
   if(mk) CL.map[nid] = mk; else delete CL.map[nid];
   if(mode === 'rename'){
+    step('old');
     var del = null, e3 = null;
     try{ del = await d.from('imos_orders').delete().eq('order_id', oid); }catch(e){ e3 = e; }
     if(e3 || (del && del.error)){ res.partial = 'สร้างชื่อใหม่แล้ว แต่ลบชื่อเดิมไม่สำเร็จ: ' + msgOf(e3 || del.error); localCopy(oid, nid, false, repl); }
@@ -32720,6 +32778,7 @@ async function transfer(oid, nid, mode, o){
       await fresh(null, null);
       res.refs = await refFix(d, oid, nid);
       if(res.refs < 0) res.warn.push('Order ของ Type ที่ปันไม้จาก "' + oid + '" ยังชี้ชื่อเดิม (แก้ชี้ชื่อใหม่ไม่สำเร็จ)');
+      step('docs');
       var md = null;   /* v153: เอกสาร / ใบปิดผิวย้ายตามชื่อใหม่ */
       try{ md = await moveDocs(d, oid, nid, src.data[0].loaded_at); }catch(e){ md = { warn:'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ') — เอกสาร / ใบปิดผิวยังอยู่ที่ชื่อเดิม "' + oid + '"', fail:'copy' }; }
       res.docs = md;
@@ -32728,6 +32787,7 @@ async function transfer(oid, nid, mode, o){
       delete CL.map[oid];
     }
   } else localCopy(oid, nid, false, repl);
+  step('finish');
   try{ if(typeof window.IMP_motherReset === 'function') window.IMP_motherReset(); }catch(e){}
   try{ if(repl || mode === 'rename') await window.ORV_reload(); }catch(e){}
   try{ if((mode === 'rename' || repl) && typeof window.PDOC_lots === 'function') window.PDOC_lots(); }catch(e){}   /* Lot map อ่านใหม่ */
@@ -32762,6 +32822,7 @@ function busyWhy(oid, act){
 
 /* ── หน้าต่างโคลน ── */
 async function openClone(oid){
+  if(OPBUSY.show){ OPBUSY.show(); return; }   /* v159: มีงานทำอยู่ (ซ่อนหน้าต่างไว้) → โชว์งานนั้น */
   var why = busyWhy(oid); if(why){ alert('🧬 โคลน Order\n\n' + why); return; }
   if(CL.close){ try{ CL.close(true); }catch(e){} CL.close = null; }
   var old = document.getElementById('oclBg'); if(old) old.remove();
@@ -32783,9 +32844,15 @@ async function openClone(oid){
   document.body.appendChild(bg);
   var inp = document.getElementById('oclName'), go = document.getElementById('oclGo'), cc = document.getElementById('oclCancel'), stEl = document.getElementById('oclSt'), busy = false, hidden = false;
   /* ระหว่างโคลน: ปิดหน้าต่าง = ซ่อน (งานบันทึกทำต่อจนจบ · ไม่สำเร็จจะเด้งบอก) */
-  function close(force){ if(busy && !force) hidden = true; try{ bg.remove(); }catch(e){} document.removeEventListener('keydown', key, true); if(CL.close === close) CL.close = null; }
+  function close(force){
+    if(busy && !force){ hidden = true; bg.style.display = 'none'; document.removeEventListener('keydown', key, true); return; }   /* v159: ซ่อน (ทำต่อจนจบ แล้วเด้งผลกลับมา) */
+    try{ bg.remove(); }catch(e){} document.removeEventListener('keydown', key, true); if(CL.close === close) CL.close = null;
+  }
+  function show(){ if(!document.body.contains(bg)) document.body.appendChild(bg); bg.style.display = 'flex'; hidden = false; document.removeEventListener('keydown', key, true); document.addEventListener('keydown', key, true); }
+  var doneV = false;
   function key(ev){
     if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); close(); }
+    else if(ev.key === 'Enter' && !ev.isComposing && doneV){ ev.preventDefault(); ev.stopPropagation(); close(true); }
     else if(ev.key === 'Enter' && !ev.isComposing && document.activeElement === inp && !go.disabled && !busy){ ev.preventDefault(); ev.stopPropagation(); go.click(); }
   }
   CL.close = close;
@@ -32798,16 +32865,28 @@ async function openClone(oid){
     var nid = inp.value.trim(), b = badName(nid);
     if(b){ stt(b, true); return; }
     var why2 = busyWhy(oid); if(why2){ stt(why2, true); return; }
-    busy = true; go.disabled = true; inp.disabled = true; cc.textContent = 'ซ่อนหน้าต่าง'; stt('กำลังโคลน… (ซ่อนหน้าต่างได้ — บันทึกต่อจนเสร็จ)');
+    busy = true; go.disabled = true; inp.disabled = true; cc.textContent = 'ซ่อนหน้าต่าง'; stt('กำลังโคลน… (ซ่อนหน้าต่างได้ — ทำต่อจนเสร็จ แล้วแจ้งผล)');
+    var body = bg.querySelector('.ocl-b'), P = prog(body, 'clone');   /* v159 */
+    OPBUSY.show = show;
     try{
-      var r = await cloneOrder(oid, nid);
-      busy = false; close(true);
+      var r = await transfer(oid, nid, 'clone', { step:P.step });
+      P.step('open');
       await afterClone(nid, r.isImport);
+      var secs = P.done(), op = { opened:(function(){ try{ return currentOrder === nid; }catch(x){ return false; } })() };
+      busy = false; OPBUSY.show = null; doneV = true;
+      body.innerHTML = resultHtml('clone', oid, nid, r, secs, op);
+      var ft = bg.querySelector('.ocl-f'); ft.innerHTML = '<button type="button" class="ocl-g" id="oclOk">ปิด</button>';
+      document.getElementById('oclOk').onclick = function(){ close(true); };
+      RUNS.push({ kind:'clone', oid:oid, nid:nid, ok:true, secs:secs, warn:(r.warn || []).slice(), opened:op.opened });
+      show();
+      try{ document.getElementById('oclOk').focus(); }catch(x){}
       try{ if(typeof sxlToast === 'function') sxlToast('🧬 โคลนแล้ว: ' + nid + ' (จาก ' + oid + ')'); }catch(e){}
     }catch(e){
-      busy = false; go.disabled = false; inp.disabled = false; cc.textContent = 'ยกเลิก';
+      var s2 = P.stop(); P.remove();
+      busy = false; OPBUSY.show = null; go.disabled = false; inp.disabled = false; cc.textContent = 'ยกเลิก';
       stt('โคลนไม่สำเร็จ: ' + ((e && e.message) || e), true);
-      if(hidden) alert('🧬 โคลน Order ' + oid + ' → ' + nid + ' ไม่สำเร็จ\n\n' + ((e && e.message) || e));
+      RUNS.push({ kind:'clone', oid:oid, nid:nid, ok:false, err:((e && e.message) || String(e)), secs:s2 });
+      show();
     }
   };
   setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 30);
@@ -32839,6 +32918,12 @@ function hookMenu(){
         b.onmouseover = function(){ b.style.background = 'rgba(14,116,144,0.08)'; };
         b.onmouseout = function(){ b.style.background = 'transparent'; };
         b.onclick = function(ev){ ev.stopPropagation(); try{ if(typeof _orderCtxClose === 'function') _orderCtxClose(); else m.remove(); }catch(x){} openClone(oid); };
+        /* v159: Save As / Rename เปิดหน้าต่างของโปรแกรม (แถบความคืบหน้า · ถามในหน้าต่าง · แจ้งผลสำเร็จ) */
+        Array.prototype.forEach.call(m.children, function(it){
+          var tx = (it.textContent || '').trim();
+          if(/^📄\s*Save As/.test(tx)) it.onclick = function(ev){ ev.stopPropagation(); try{ _orderCtxClose(); }catch(x){} openOp('saveas', oid); };
+          else if(/^✏️\s*Rename/.test(tx)) it.onclick = function(ev){ ev.stopPropagation(); try{ _orderCtxClose(); }catch(x){} openOp('rename', oid); };
+        });
         var items = m.children, after = items.length > 1 ? items[1] : null;   /* [0] = หัว (ชื่อ Order) · [1] = Save As */
         if(after && after.nextSibling) m.insertBefore(b, after.nextSibling); else m.appendChild(b);
         /* เมนูอาจล้นจอล่าง → ขยับขึ้น */
@@ -32904,7 +32989,7 @@ async function askTarget(nid, oid, verb){
        + verb + ' แล้วใช้ค่าของ "' + oid + '" แทนทั้งชุด?')) return null;
   return { overwrite:false, replace:loM.length > 0 };
 }
-async function afterMove(nid, r, oldOid){
+async function afterMove(nid, r, oldOid, quiet){
   /* Order นำเข้า: ล้างแถวที่จำไว้ของชื่อปลายทาง / ชื่อเดิม แล้วอ่านรายการใหม่ (ไม่ใช้แถวเก่าของ Order ที่ถูกเขียนทับ) */
   var I = window.IMPB, wasImp = false;
   try{ wasImp = !!(I && I.store && (I.store[nid] || (oldOid && I.store[oldOid]))); }catch(e){}
@@ -32918,10 +33003,11 @@ async function afterMove(nid, r, oldOid){
   try{ if(typeof refreshStatus === 'function') await refreshStatus(); }catch(e){}
   try{ if(typeof renderSidebar === 'function') await renderSidebar(); }catch(e){}
   paint();
-  if(r.warn && r.warn.length) alert('⚠ ' + r.warn.join('\n⚠ '));
+  if(r.warn && r.warn.length && !quiet) alert('⚠ ' + r.warn.join('\n⚠ '));
   var why = busyWhy(nid, 'เปิด');
-  if(why){ try{ if(typeof sxlToast === 'function') sxlToast('บันทึก "' + nid + '" แล้ว — ยังไม่เปิดให้ เพราะ' + why); }catch(e){} return; }
+  if(why){ try{ if(!quiet && typeof sxlToast === 'function') sxlToast('บันทึก "' + nid + '" แล้ว — ยังไม่เปิดให้ เพราะ' + why); }catch(e){} return { opened:false, why:why }; }
   try{ selectOrder(nid); }catch(e){}                                /* แบบเดิม: เปิด Order ชื่อใหม่ (ไม่รอ) */
+  return { opened:true };
 }
 async function saveAs(oid){
   var why = busyWhy(oid, ' Save As'); if(why){ alert('📄 Save As\n\n' + why); return; }
@@ -32964,6 +33050,239 @@ async function renameOrder(oid){
   try{ if(currentOrder === oid) currentOrder = nid; }catch(e){}
   await afterMove(nid, r, r.partial ? null : oid);
 }
+/* ══ v159 — Save As / Rename / 🧬 โคลน: หน้าต่างในโปรแกรม + แถบความคืบหน้า + แจ้งผลสำเร็จ ═══════════════════
+   ผู้ใช้ 08/10/2026 10:44 "save as ใช้ไม่ได้ · เปลี่ยนชื่อก็ใช้ไม่ได้ · โคลนเสร็จแล้วให้ขึ้น popup สำเร็จ หรือมีแถบโหลดให้ดู"
+   ต้นเหตุ: (1) Save As / Rename ใช้กล่อง prompt / confirm / alert ของเบราว์เซอร์ — ถ้าเคยติ๊ก "ไม่ให้หน้านี้สร้างกล่องโต้ตอบ"
+            กล่องจะไม่ขึ้นเลย กดแล้วเงียบ · (2) ไฟล์กลางบนเครือข่ายที่ใช้มานาน: Save As ~17 วินาที · Rename ~38 วินาที
+            ระหว่างนั้นจอไม่บอกอะไร → ดูเหมือนกดไม่ติด
+   ใหม่: เมนูคลิกขวา Save As / Rename เปิดหน้าต่างของโปรแกรมเอง (แบบหน้าต่างโคลน) — ช่องชื่อ · สิ่งที่คัดลอก/ย้าย ·
+         ถามเขียนทับในหน้าต่าง · แถบความคืบหน้าทีละขั้น + เวลาที่ใช้ · จบแล้วขึ้น ✅ สำเร็จ (สิ่งที่คัดลอก/ย้าย · ข้อควรตรวจ)
+         ผิดพลาด → ข้อความแดงในหน้าต่าง แก้ชื่อแล้วลองใหม่ได้ · ซ่อนหน้าต่างได้ระหว่างทำ (ทำต่อจนจบ แล้วเด้งผลกลับมา)
+         โคลน: เพิ่มแถบความคืบหน้า + หน้า ✅ สำเร็จ (เดิมปิดหน้าต่างเงียบ ๆ)
+         Save As / Rename: ไม่อ่านไฟล์กลางซ้ำสองรอบติดกัน (ตอนตรวจชื่อ + ตอนเริ่มบันทึก) ถ้าไม่ได้ถามอะไรผู้ใช้ระหว่างนั้น
+   ตัวบันทึก (transfer) เป็นตัวเดิมทุกอย่าง · orderSaveAs / orderRename (แบบกล่อง prompt) ยังใช้ได้ตามเดิมจาก Console */
+var STEPS = {
+  saveas: [['check', 'ตรวจชื่อ · อ่านข้อมูลล่าสุดจากไฟล์กลาง'], ['read', 'อ่านข้อมูล Order ต้นฉบับ'],
+           ['settings', 'บันทึกค่าของ Order (Item Id Set · BOM Fitting · Fitting เพิ่มเติม · แผ่นไม้)'], ['order', 'บันทึกข้อมูล Order ชื่อใหม่'],
+           ['finish', 'อ่านรายการ Order ใหม่'], ['open', 'เปิด Order ใหม่']],
+  rename: [['check', 'ตรวจชื่อ · อ่านข้อมูลล่าสุดจากไฟล์กลาง'], ['read', 'อ่านข้อมูล Order'],
+           ['settings', 'บันทึกค่าของ Order ไปชื่อใหม่'], ['order', 'บันทึกข้อมูล Order ชื่อใหม่'],
+           ['old', 'ลบชื่อเดิม · ย้ายค่าของ Order'], ['docs', 'ย้ายเอกสาร / ใบปิดผิว'], ['finish', 'อ่านรายการ Order ใหม่'], ['open', 'เปิด Order ชื่อใหม่']],
+  clone:  [['check', 'ตรวจชื่อ'], ['read', 'อ่านข้อมูล Order ต้นฉบับ'],
+           ['settings', 'บันทึกค่าของ Order (Item Id Set · BOM Fitting · Fitting เพิ่มเติม · แผ่นไม้)'], ['order', 'บันทึกข้อมูล Order ตัวโคลน'],
+           ['finish', 'อ่านรายการ Order ใหม่'], ['open', 'เปิด Order ตัวโคลน']]
+};
+var OPBUSY = { show:null };   /* งานที่กำลังทำ (ซ่อนหน้าต่างอยู่ก็ได้) — เปิดงานใหม่ระหว่างนี้ = โชว์งานเดิม */
+var RUNS = [];                /* ผลล่าสุด (ชุดทดสอบ / Console) */
+
+/* แถบความคืบหน้าทีละขั้น + เวลาที่ใช้ */
+function prog(box, kind){
+  var steps = STEPS[kind] || [], el = document.createElement('div');
+  el.className = 'ocl-pg';
+  el.innerHTML = '<div class="ocl-bar"><i></i></div><ol class="ocl-steps">'
+    + steps.map(function(s){ return '<li data-k="' + s[0] + '">' + H(s[1]) + '</li>'; }).join('') + '</ol><div class="ocl-time"></div>';
+  box.appendChild(el);
+  var t0 = Date.now(), bar = el.querySelector('.ocl-bar i'), tm = el.querySelector('.ocl-time'), lis = el.querySelectorAll('li'), cur = -1, iv = 0;
+  function secs(){ return Math.max(0, Math.round((Date.now() - t0) / 1000)); }
+  function tick(){
+    var s = secs();
+    tm.textContent = 'ใช้เวลา ' + s + ' วินาที' + (s >= 4 ? ' · ไฟล์กลางบนเครือข่ายอาจใช้เวลา 10–40 วินาที — อย่าปิดโปรแกรมระหว่างนี้' : '');
+  }
+  function paint(i, fin){
+    for(var j = 0; j < lis.length; j++) lis[j].className = (fin || j < i) ? 'done' : (j === i ? 'now' : '');
+    bar.style.width = fin ? '100%' : Math.max(4, Math.round((i + 0.5) / Math.max(1, steps.length) * 100)) + '%';
+  }
+  iv = setInterval(tick, 1000); tick(); paint(0);
+  return {
+    step:function(k){
+      var i = -1; for(var j = 0; j < steps.length; j++) if(steps[j][0] === k) i = j;
+      if(i < 0 || i < cur) return;
+      cur = i; paint(i);
+    },
+    done:function(){ clearInterval(iv); paint(steps.length, true); el.className = 'ocl-pg fin'; return secs(); },
+    stop:function(){ clearInterval(iv); return secs(); },
+    remove:function(){ clearInterval(iv); try{ el.remove(); }catch(e){} }
+  };
+}
+
+/* ถามในหน้าต่าง (แทน confirm ของเบราว์เซอร์) */
+function makeAsk(box, show, state){
+  return function(html, okLabel){
+    return new Promise(function(res){
+      var a = document.createElement('div');
+      a.className = 'ocl-ask';
+      a.innerHTML = html + '<div class="ocl-ab"><button type="button" class="ocl-c" data-a="no">ยกเลิก</button><button type="button" class="ocl-r" data-a="yes">' + H(okLabel) + '</button></div>';
+      box.appendChild(a);
+      var fin = function(v){ if(state.ask !== fin) return; state.ask = null; try{ a.remove(); }catch(e){} res(v); };
+      state.ask = fin;
+      a.querySelector('[data-a="yes"]').onclick = function(){ fin(true); };
+      a.querySelector('[data-a="no"]').onclick = function(){ fin(false); };
+      show();
+      try{ a.scrollIntoView({ block:'nearest' }); }catch(e){}
+    });
+  };
+}
+
+/* ตรวจปลายทาง (แบบ askTarget) — ถามในหน้าต่าง · อ่านไฟล์กลางชุดเดียวกับที่ตัวบันทึกจะอ่าน → ไม่ถามอะไรระหว่างนั้น = ตัวบันทึกไม่ต้องอ่านซ้ำ */
+async function askTarget2(nid, oid, kind, ask){
+  var d = D(); if(!d) throw new Error('ยังไม่ได้เชื่อมฐานข้อมูล / ไฟล์กลาง');
+  await fresh(MOVE.concat(ORVK, ['pdoc:']).reduce(function(a, p){ a.push(p + oid, p + nid); return a; }, []), [oid, nid]);
+  if(kind === 'rename'){
+    var w7 = await w7Check(); if(w7) throw new Error(w7);
+    var pw = packWhy(oid); if(pw) throw new Error(pw);
+  }
+  var note = '<div style="font-size:11.5px;margin-top:4px">ข้อมูล Order + BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ ของ "' + H(nid) + '" จะถูกแทนด้วยของ "' + H(oid) + '" ทั้งชุด</div>';
+  if(await exists(nid)){
+    if(!(await ask('<b>Order "' + H(nid) + '" มีอยู่แล้ว — เขียนทับ?</b>' + note, 'เขียนทับ'))) return null;
+    return { overwrite:true, replace:true, freshDone:false };
+  }
+  var lo = await leftovers(nid), loM = lo.filter(function(k){ return MOVE.some(function(p){ return k === p + nid; }); });
+  if(loM.length){
+    if(!(await ask('<b>ชื่อ "' + H(nid) + '" มีค่าค้างของ Order ชื่อนี้ที่เคยลบไป</b> (' + H(loM.map(function(k){ return k.split(':')[0]; }).join(', ')) + ')'
+      + '<div style="font-size:11.5px;margin-top:4px">' + (kind === 'rename' ? 'เปลี่ยนชื่อ' : 'Save As') + ' แล้วใช้ค่าของ "' + H(oid) + '" แทนทั้งชุด?</div>', 'ใช้ค่าของต้นฉบับแทน'))) return null;
+    return { overwrite:false, replace:true, freshDone:false };
+  }
+  return { overwrite:false, replace:false, freshDone:true };
+}
+
+var GOT_LBL = { iids:'Item Id Set', bom_edits:'BOM Fitting ที่แก้เอง', extra_fit:'Fitting เพิ่มเติม', bomline_wood:'จำนวนแผ่นไม้ใน BOM Fitting' };
+function resultHtml(kind, oid, nid, r, secs, op){
+  var T = { clone:'✅ โคลนสำเร็จ', saveas:'✅ Save As สำเร็จ', rename:'✅ เปลี่ยนชื่อสำเร็จ' }[kind];
+  var V = kind === 'rename' ? 'ย้ายไปชื่อใหม่แล้ว' : 'คัดลอกแล้ว (ยึดข้อมูล ณ ตอนนี้)';
+  var items = ['ข้อมูล Order (ชิ้นงาน / BOM)'].concat((r.got || []).map(function(k){ return GOT_LBL[k] || k; }));
+  if(kind === 'rename' && r.docs && (r.docs.docs || r.docs.refs)) items.push('เอกสาร / ใบปิดผิว' + (r.docs.docs ? ' ' + r.docs.docs + ' รายการ' : '') + (r.docs.refs ? ' · ใบรวมที่อ้างชื่อนี้ ' + r.docs.refs : ''));
+  var warn = (r.warn || []).slice(); if(r.partial) warn.unshift(r.partial);
+  var open = op && op.opened ? ('เปิด Order "' + H(nid) + '" ให้แล้ว') : ('ยังไม่ได้เปิด Order "' + H(nid) + '"' + (op && op.why ? ' — ' + H(op.why) : ' — คลิกชื่อในรายการซ้ายเพื่อเปิด'));
+  return '<div class="ocl-res">'
+    + '<div class="ocl-big' + (warn.length ? ' wn' : '') + '">' + T + (warn.length ? ' — มีข้อควรตรวจ' : '') + '</div>'
+    + '<div class="ocl-arrow">' + H(oid) + ' &nbsp;→&nbsp; <b>' + H(nid) + '</b></div>'
+    + '<div class="ocl-box ocl-ok"><b>' + V + '</b><br>' + items.map(H).join(' · ') + '</div>'
+    + (r.ex ? '<div class="ocl-box ocl-no">เขียนทับ Order "' + H(nid) + '" เดิมแล้ว</div>' : '')
+    + (kind === 'rename' ? '<div class="ocl-box ocl-no">ชื่อเดิม "' + H(oid) + '" ' + (r.partial ? 'ยังอยู่ในรายการ (ลบไม่สำเร็จ)' : 'ไม่อยู่ในรายการแล้ว') + '</div>' : '')
+    + (kind === 'clone' ? '<div class="ocl-box ocl-wn">ต้นฉบับเปลี่ยนทีหลัง ตัวโคลนไม่เปลี่ยนตาม · ถ้าจะผลิตทั้งสองชุด ตั้ง Item Id Set ของตัวโคลนใหม่ก่อนส่ง SAW / NC</div>' : '')
+    + (warn.length ? '<ul class="ocl-wl">' + warn.map(function(w){ return '<li>⚠ ' + H(w) + '</li>'; }).join('') + '</ul>' : '')
+    + '<div class="ocl-time">ใช้เวลา ' + secs + ' วินาที · ' + open + '</div>'
+    + '</div>';
+}
+
+/* หน้าต่าง Save As / Rename */
+function openOp(kind, oid){
+  if(OPBUSY.show){ OPBUSY.show(); return; }
+  var C = kind === 'rename'
+    ? { t:'✏️ Rename — เปลี่ยนชื่อ Order', s:'ชื่อเดิม', go:'✏️ เปลี่ยนชื่อ', def:oid, act:'เปลี่ยนชื่อ', bad:'ชื่อใหม่เหมือนชื่อเดิม — พิมพ์ชื่อที่ต้องการ', fail:'เปลี่ยนชื่อไม่สำเร็จ',
+        ok:'<b>ย้ายไปชื่อใหม่ทั้งหมด</b><br>ข้อมูล Order (ชิ้นงาน / BOM · รวมที่แก้ใน AX Detail) · BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ใน BOM Fitting · เอกสาร / ใบปิดผิวที่ออกแล้ว',
+        wn:'ชื่อเดิม "' + H(oid) + '" จะหายจากรายการ · ชื่อที่มี Order อยู่แล้วจะถามก่อนเขียนทับ' }
+    : { t:'📄 Save As — บันทึกเป็นชื่อใหม่', s:'ต้นฉบับ', go:'📄 บันทึก', def:oid + '_copy', act:' Save As', bad:'ชื่อใหม่ต้องไม่ซ้ำกับเดิม', fail:'บันทึกไม่สำเร็จ',
+        ok:'<b>คัดลอกไปชื่อใหม่</b><br>ข้อมูล Order (ชิ้นงาน / BOM · รวมที่แก้ใน AX Detail) · BOM Fitting ที่แก้เอง · Fitting เพิ่มเติม · Item Id Set · จำนวนแผ่นไม้ใน BOM Fitting',
+        no:'<b>ไม่คัดลอก</b><br>เอกสาร / ใบปิดผิวที่ออกไปแล้ว (Order ใหม่ยังไม่มีเอกสาร)',
+        wn:'ต้นฉบับยังอยู่ครบ · บันทึกเสร็จแล้วเปิด Order ใหม่ให้ · ชื่อที่มี Order อยู่แล้วจะถามก่อนเขียนทับ' };
+  if(CL.close){ try{ CL.close(true); }catch(e){} CL.close = null; }
+  var old = document.getElementById('oclBg'); if(old) old.remove();
+  var bg = document.createElement('div'); bg.id = 'oclBg';
+  bg.innerHTML = '<div id="oclBox" role="dialog" aria-modal="true" data-op="' + kind + '">'
+    + '<div class="ocl-h">' + C.t + '<div class="ocl-s">' + C.s + ': ' + H(oid) + '</div></div>'
+    + '<div class="ocl-b" id="opBody">'
+    +   '<label for="opName">ชื่อ Order ใหม่</label><input id="opName" spellcheck="false" maxlength="120" value="' + H(C.def) + '">'
+    +   '<div class="ocl-box ocl-ok">' + C.ok + '</div>'
+    +   (C.no ? '<div class="ocl-box ocl-no">' + C.no + '</div>' : '')
+    +   '<div class="ocl-box ocl-wn">' + C.wn + '</div>'
+    +   '<div class="ocl-st" id="opSt"></div>'
+    + '</div>'
+    + '<div class="ocl-f" id="opFoot"><button type="button" class="ocl-c" id="opCancel">ยกเลิก</button><button type="button" class="ocl-g" id="opGo">' + C.go + '</button></div>'
+    + '</div>';
+  document.body.appendChild(bg);
+  var box = document.getElementById('oclBox'), body = document.getElementById('opBody'), inp = document.getElementById('opName'),
+      go = document.getElementById('opGo'), cc = document.getElementById('opCancel'), stEl = document.getElementById('opSt');
+  var S = { busy:false, hidden:false, ask:null, done:false };
+  function stt(t, err){ stEl.textContent = t || ''; stEl.className = 'ocl-st' + (err ? ' err' : ''); }
+  function show(){
+    if(!document.body.contains(bg)) document.body.appendChild(bg);
+    bg.style.display = 'flex'; S.hidden = false;
+    document.removeEventListener('keydown', key, true); document.addEventListener('keydown', key, true);
+  }
+  function close(force){
+    if(S.ask) S.ask(false);                                    /* ปิดตอนถามอยู่ = ยกเลิก */
+    if(S.busy && !force){ S.hidden = true; bg.style.display = 'none'; document.removeEventListener('keydown', key, true); return; }
+    try{ bg.remove(); }catch(e){}
+    document.removeEventListener('keydown', key, true);
+    if(CL.close === close) CL.close = null;
+  }
+  function key(ev){
+    if(ev.key === 'Escape'){ ev.preventDefault(); ev.stopPropagation(); close(); }
+    else if(ev.key === 'Enter' && !ev.isComposing){
+      if(S.done){ ev.preventDefault(); ev.stopPropagation(); close(true); }
+      else if(document.activeElement === inp && !go.disabled && !S.busy){ ev.preventDefault(); ev.stopPropagation(); go.click(); }
+    }
+  }
+  CL.close = close;
+  document.addEventListener('keydown', key, true);
+  cc.onclick = function(){ close(); };
+  bg.addEventListener('mousedown', function(ev){ if(ev.target === bg && !S.ask) close(); });
+  function check(){
+    var nid = inp.value.trim(), b = badName(nid);
+    if(!b && nid === oid) b = C.bad;
+    stt(b, !!b); go.disabled = !!b;
+    return b;
+  }
+  inp.addEventListener('input', function(){ if(!S.busy) check(); });
+  var why0 = busyWhy(oid, C.act);
+  if(why0) stt(why0, true); else check();
+  var ask = makeAsk(body, show, S);
+  go.onclick = async function(){
+    if(S.busy) return;
+    var nid = inp.value.trim();
+    if(check()) return;
+    var why = busyWhy(oid, C.act); if(why){ stt(why, true); return; }
+    S.busy = true; go.disabled = true; inp.disabled = true; cc.textContent = 'ซ่อนหน้าต่าง';
+    stt(kind === 'rename' ? 'กำลังเปลี่ยนชื่อ… (ซ่อนหน้าต่างได้ — ทำต่อจนเสร็จ แล้วแจ้งผล)' : 'กำลังบันทึก… (ซ่อนหน้าต่างได้ — ทำต่อจนเสร็จ แล้วแจ้งผล)');
+    OPBUSY.show = show;
+    var P = prog(body, kind), r = null, op = null, stage = 'ask';
+    try{
+      var o = await askTarget2(nid, oid, kind, ask);
+      if(!o){
+        P.remove(); S.busy = false; OPBUSY.show = null; go.disabled = false; inp.disabled = false; cc.textContent = 'ยกเลิก';
+        stt('ยกเลิกแล้ว — ไม่ได้เปลี่ยนอะไร'); show(); return;
+      }
+      stage = 'save';
+      o.step = P.step;
+      r = await transfer(oid, nid, kind, o);
+      if(kind === 'rename'){
+        /* ย้ายเอกสารไม่สำเร็จ (ยังไม่ได้แตะเอกสาร) → ลองใหม่ได้ (ถามในหน้าต่าง) */
+        for(var k = 0; k < 3 && r.docs && (r.docs.fail === 'copy' || r.docs.fail === 'refs') && !r.partial; k++){
+          if(!(await ask('<b>เปลี่ยนชื่อ Order แล้ว แต่ย้ายเอกสาร / ใบปิดผิวไม่สำเร็จ</b><div style="font-size:11.5px;margin-top:4px">' + H(r.docs.warn) + '</div>', 'ลองย้ายเอกสารอีกครั้ง'))) break;
+          P.step('docs');
+          var w0 = r.docs.warn, md2 = null;
+          try{ md2 = await moveDocs(D(), oid, nid, r.la); }catch(e){ md2 = { warn:'ย้ายเอกสารไม่สำเร็จ (' + msgOf(e) + ')', fail:'copy' }; }
+          r.warn = (r.warn || []).filter(function(w){ return w !== w0; }); r.docs = md2;
+          try{ if(md2 && (md2.docs || md2.refs) && typeof window.PDOC_reload === 'function') await window.PDOC_reload(); }catch(e){}
+        }
+        if(r.docs && r.docs.warn && (r.warn || []).indexOf(r.docs.warn) < 0) (r.warn = r.warn || []).push(r.docs.warn);
+        try{ if(currentOrder === oid) currentOrder = nid; }catch(e){}
+      }
+      P.step('open');
+      op = await afterMove(nid, r, kind === 'rename' ? (r.partial ? null : oid) : null, true);
+      var secs = P.done();
+      S.busy = false; OPBUSY.show = null; S.done = true;
+      body.innerHTML = resultHtml(kind, oid, nid, r, secs, op);
+      document.getElementById('opFoot').innerHTML = '<button type="button" class="ocl-g" id="opOk">ปิด</button>';
+      document.getElementById('opOk').onclick = function(){ close(true); };
+      RUNS.push({ kind:kind, oid:oid, nid:nid, ok:true, secs:secs, warn:(r.warn || []).slice(), partial:r.partial || '', opened:!!(op && op.opened) });
+      show();
+      try{ document.getElementById('opOk').focus(); }catch(e){}
+    }catch(e){
+      var s2 = P.stop(); P.remove();
+      S.busy = false; OPBUSY.show = null; go.disabled = false; inp.disabled = false; cc.textContent = 'ปิด';
+      stt(C.fail + ': ' + msgOf(e) + (stage === 'save' ? '' : ' — แก้ชื่อแล้วกดอีกครั้งได้'), true);
+      RUNS.push({ kind:kind, oid:oid, nid:nid, ok:false, err:msgOf(e), secs:s2 });
+      show();
+    }
+  };
+  setTimeout(function(){ try{ inp.focus(); inp.select(); }catch(e){} }, 30);
+}
+window.ORDER_saveAsOpen = function(oid){ return openOp('saveas', String(oid)); };
+window.ORDER_renameOpen = function(oid){ return openOp('rename', String(oid)); };
+window.ORDER_opRuns = function(){ return JSON.parse(JSON.stringify(RUNS)); };
+
 function hookSave(){
   if(typeof window.orderSaveAs !== 'function' || window.orderSaveAs.__ocl) return !!(window.orderSaveAs && window.orderSaveAs.__ocl);
   var w = function(oid){ return saveAs(oid); };
@@ -33273,6 +33592,113 @@ function applyExtra(d, E){
   return out;
 }
 
+/* ══ v159: ไฟล์กลาง — บันทึกแบบเดียวกับตัวเดิม (ใส่ค่าที่แก้ลงข้อมูล Order แล้วเขียนทั้งก้อน) แต่ไม่ตัดจบที่ 20 วินาที ══
+   ผู้ใช้ 08/10/2026 10:52 "แก้ไขแล้วบันทึก มันค้าง · คำพูดเราไม่ใช้ Supabase แล้ว"
+   ตัวเดิมรอ 20 วินาทีแล้วขึ้น "บันทึกลง Supabase ไม่สำเร็จ: หมดเวลา" ทั้งที่ไฟล์กลางบนเครือข่ายช้ายังเขียนอยู่ (เขียนเสร็จทีหลัง)
+   ใหม่ (เฉพาะไฟล์กลาง): ปุ่มนับเวลา "กำลังบันทึกลงไฟล์กลาง… n วิ" · รอจนเขียนเสร็จจริง (นานสุด 3 นาที) · ข้อความพูดถึงไฟล์กลาง
+   ส่วนใส่ค่าที่แก้ลงข้อมูล = ยกมาจากตัวเดิมทุกบรรทัด (saveAxEdits ของ head) · Supabase / Order นำเข้า ใช้ตัวเดิม */
+function sxlOn(){ try{ return typeof SXL !== 'undefined' && !!SXL && !!SXL.dir && typeof SXL_DB !== 'undefined' && db === SXL_DB; }catch(e){ return false; } }
+function applyEditsLikeHead(cd, E){
+  cd.groups.forEach(function(g) {
+    (g.rows||[]).forEach(function(r) {
+      if (r._tp !== 3) return;
+      var pid = r.ID || '';
+      var ed  = E[pid];
+      if (!ed) return;
+      if (ed['FinishWidth']     !== undefined) r.WIDTH     = ed['FinishWidth'];
+      if (ed['FinishLength']    !== undefined) r.LENGTH    = ed['FinishLength'];
+      if (ed['FinishThickness'] !== undefined) r.THICKNESS = ed['FinishThickness'];
+      if (ed['CutWidth']        !== undefined) r.CWIDTH    = ed['CutWidth'];
+      if (ed['CutLength']       !== undefined) r.CLENGTH   = ed['CutLength'];
+      if (ed['Groove3']         !== undefined) r.INFO2     = ed['Groove3'];
+      if (ed['FrontStyle']      !== undefined) r.INFO3     = ed['FrontStyle'];
+      if (ed['PartName']        !== undefined) r.ID_TEXT   = ed['PartName'];
+      ['SurfaceBeforeCutTopCode','SurfaceBeforeCutBottomCode'].forEach(function(colKey, ci) {
+        var tp = ci === 0 ? 5 : 6;
+        if (ed[colKey] === undefined) return;
+        var newVal = ed[colKey];
+        var lastC  = newVal.slice(-1).toUpperCase();
+        var gror   = lastC==='X'?'90': lastC==='Y'?'0':'45';
+        var artId  = newVal.slice(0,-1);
+        var found  = false;
+        g.rows.forEach(function(row) {
+          var baseId = (row.ID||'').replace(/_[123]$/,'');
+          if (baseId === pid && row._tp === tp) {
+            row.ARTICLE_ID = artId;
+            row.GROR       = gror;
+            found = true;
+          }
+        });
+        if (!found) {
+          if (!r._overrides) r._overrides = {};
+          r._overrides[colKey] = newVal;
+        }
+      });
+      var edgeColToSuffix = {'EdgeCode1':'4','EdgeCode2':'5','EdgeCode3':'6','EdgeCode4':'7'};
+      Object.keys(edgeColToSuffix).forEach(function(edgeCol) {
+        if (ed[edgeCol] === undefined) return;
+        var sfx     = edgeColToSuffix[edgeCol];
+        var newCode = ed[edgeCol];
+        var targetId = pid + '_' + sfx;
+        var found = false;
+        g.rows.forEach(function(row) {
+          if (row._tp === 7 && row.ID === targetId) {
+            row.NAME2 = newCode; row.NAME = newCode; found = true;
+          }
+        });
+        if (!found) {
+          if (sfx==='4') r._e1 = newCode;
+          if (sfx==='5') r._e2 = newCode;
+          if (sfx==='6') r._e3 = newCode;
+          if (sfx==='7') r._e4 = newCode;
+        }
+      });
+      if (ed['CutRiteMaterialCode'] !== undefined) {
+        if (!r._overrides) r._overrides = {};
+        r._overrides['CutRiteMaterialCode'] = ed['CutRiteMaterialCode'];
+      }
+    });
+  });
+}
+var SAVING = false;
+async function saveSxl(silent){
+  if(!currentData){ if(!silent) toggleEditMode(); return; }
+  if(SAVING) return;
+  applyEditsLikeHead(currentData, axEdits || {});
+  axEdits = {};
+  var saveBtn = q('saveEditsBtn'), t0 = Date.now();
+  var lab = function(){ if(saveBtn) saveBtn.textContent = '\u23f3 กำลังบันทึกลงไฟล์กลาง… ' + Math.round((Date.now() - t0) / 1000) + ' วิ'; };
+  if(saveBtn){ lab(); saveBtn.disabled = true; }
+  var iv = setInterval(lab, 1000), err = null;
+  SAVING = true;
+  try{
+    var res = await Promise.race([
+      Promise.resolve(db.from('imos_orders').upsert({ order_id: currentOrder, data: currentData }, { onConflict: 'order_id' })),
+      new Promise(function(_, rj){ setTimeout(function(){ rj(new Error('ไฟล์กลางไม่ตอบกลับนานเกิน 3 นาที (เครือข่าย / โฟลเดอร์ Server)')); }, 180000); })
+    ]);
+    if(res && res.error) err = res.error;
+  }catch(e){ err = e; }
+  finally{ clearInterval(iv); SAVING = false; }
+  if(err){
+    if(saveBtn){ saveBtn.textContent = '\ud83d\udcbe บันทึก'; saveBtn.disabled = false; }
+    alert('บันทึกลงไฟล์กลางไม่สำเร็จ:\n' + ((err && err.message) || err) + '\n\nค่าที่แก้ยังอยู่บนจอ — กด 💾 บันทึก อีกครั้ง');
+    return;
+  }
+  axEditMode = false;
+  if (!silent) {
+    var btn = q('editModeBtn');
+    if (btn) { btn.textContent='✏️ แก้ไข'; btn.style.background='var(--s3)'; btn.style.color='var(--text2)'; btn.style.borderColor='var(--border)'; }
+    if (saveBtn) { saveBtn.textContent = '💾 บันทึก'; saveBtn.disabled = false; saveBtn.style.display = 'none'; }
+    var aBtn = q('applyAllSuggestBtn'); if (aBtn) aBtn.style.display = 'none';
+    var pBtn = q('applyAllPartBtn'); if (pBtn) pBtn.style.display = 'none';
+    var qEl = q('qAX'); if (qEl) qEl.disabled = false;
+    try{ document.getElementById('contentAX').classList.remove('ax-edit-mode'); }catch(e){}
+    try{ closeFR(); }catch(e){}
+  }
+  try{ renderAX(); }catch(e){}
+  if (!silent){ try{ renderWoodCheck(); }catch(e){} }
+}
+
 (function(){
   var o = window.saveAxEdits;
   if(typeof o !== 'function' || o.__v156) return;
@@ -33282,10 +33708,12 @@ function applyExtra(d, E){
       hadData = !!(window.currentData);
       if(!imp && hadData && E) ex = applyExtra(window.currentData, E);
     }catch(e){ try{ console.warn('[v156] เติมค่าที่แก้ไม่สำเร็จ', e); }catch(x){} }
-    var r = await o.apply(this, arguments);
+    var tS = Date.now();
+    var r = (!imp && hadData && sxlOn()) ? await saveSxl(silent) : await o.apply(this, arguments);   /* v159 */
     var ok = hadData && !editMode();
     STAT.saves++; STAT.last = { ok:ok, imp:imp, cells:n, rows:rowsN, extra:ex, at:new Date().toISOString() };
-    if(ok && !silent && !imp) toast('✅ บันทึกแล้ว' + (n ? ' · แก้ ' + n + ' ช่อง (' + rowsN + ' แถว)' : ''));
+    var sec = Math.round((Date.now() - tS) / 1000);
+    if(ok && !silent && !imp) toast('\u2705 บันทึก' + (sxlOn() ? 'ลงไฟล์กลาง' : '') + 'แล้ว' + (n ? ' \u00b7 แก้ ' + n + ' ช่อง (' + rowsN + ' แถว)' : '') + (sec >= 2 ? ' \u00b7 ' + sec + ' วินาที' : ''));
     syncBtn();
     return r;
   };
@@ -33798,6 +34226,249 @@ function build(){
 window.BOMX_exportPage = exportPage;
 window.BOMX_last = function(){ return LAST ? JSON.parse(JSON.stringify(LAST)) : null; };
 window.BOMX_pick = function(){ var P = pick(); return { n:P.rows.length, how:P.how, sel:P.sel, total:P.total, codes:P.rows.map(function(r){ return str(r._code); }) }; };
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v159 — ไฟล์กลางช้า / หน้าจอ (ผู้ใช้ 08/10/2026 10:52–10:57)
+       1) ตัวเขียนไฟล์กลาง: "อ่านก่อนเขียน" ใช้รายชื่อไฟล์ _changes ที่เพิ่งไล่มา (ดูคำอธิบายที่ตัวอ่าน v147)
+       2) ลบ Order: กด OK แล้วแถวทางซ้ายขึ้น "กำลังลบ…" ทันที (เดิมนิ่งจนลบเสร็จ — เฉพาะ Order นำเข้าที่มีป้าย)
+       3) กล่องค้นหา/แทนที่ (AX Detail): ลากหัวกล่องย้ายไปไหนก็ได้ (จำตำแหน่ง) · ปุ่ม ▁ ย่อเหลือหัวกล่อง
+       4) แถบปุ่มของ AX Detail / BOM Fitting:
+          - BOM ไม้: Export BOM ไม้ · Export BOM ไม้ (PD) · Export BOM แจ้งซ่อม → เมนู 📥 Export ▾
+                     แก้ตามคำแนะนำทั้งหมด · แก้ชิ้นเดียวกัน (โหมดแก้ไข) → เมนู 💡 คำแนะนำ ▾
+          - BOM Fitting: Export แบบผลิต · Export BOM Fitting · Excel หน้านี้ → เมนู 📥 Export ▾
+          - ปุ่มไม่ตกบรรทัด (เดิมบีบจนตัวหนังสือเรียงลงมาหลายบรรทัด)
+          - จอแคบจนแถบไม่พอ → แถบปุ่มขึ้นบรรทัดใหม่ใต้แท็บทั้งแถบ (แทนการบีบ)
+          ปุ่มเป็นตัวเดิมทุกตัว (ย้ายเข้าเมนู) — กดแล้วทำงานเหมือนเดิม · ปุ่มที่ซ่อนอยู่ก็ซ่อนในเมนูเหมือนเดิม
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#axSubToolbar > button, #bomSubToolbar > button, #axSubToolbar > div[id$="Badge"], #bomSubToolbar > div[id$="Badge"]{white-space:nowrap;flex-shrink:0}
+.tb159-dd{position:relative;display:flex;flex-shrink:0}
+.tb159-trig{background:var(--s3);border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:11px;color:var(--text);cursor:pointer;font-weight:700;
+  display:flex;align-items:center;gap:5px;white-space:nowrap;font-family:-apple-system,'Sarabun',sans-serif}
+.tb159-trig:hover{background:rgba(0,0,0,0.06)}
+.tb159-dd.open .tb159-trig{background:#e0f2fe;border-color:#7dd3fc;color:#0369a1}
+.tb159-menu{display:none;position:fixed;z-index:9000;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);
+  padding:6px;flex-direction:column;gap:5px;min-width:210px}
+.tb159-menu.tb159-on{display:flex}   /* เปิดแล้วย้ายไปไว้ที่ body (แถบแท็บมี backdrop-filter → position:fixed เพี้ยน) */
+.tb159-menu > *{width:100%;box-sizing:border-box;justify-content:flex-start;white-space:nowrap;text-align:left}
+.main-tabs.tb159-wrap{flex-wrap:wrap}
+.main-tabs.tb159-wrap #axToolbar{flex:1 0 100%;justify-content:flex-end;border-top:1px solid var(--border);padding:5px 10px;box-sizing:border-box;min-height:42px}
+.main-tabs.tb159-wrap #axSubToolbar,.main-tabs.tb159-wrap #bomSubToolbar{flex-wrap:wrap;justify-content:flex-end;row-gap:6px;min-width:0}
+#frPanel.fr159-min > *:not(:first-child){display:none !important}
+#frPanel.fr159-min{min-width:0;padding:9px 12px}
+#frPanel .fr159-head{cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}
+#fr159Min{background:none;border:none;font-size:14px;color:var(--text3);cursor:pointer;line-height:1;padding:0 6px}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__v159misc) return;
+window.__v159misc = true;
+function q(id){ return document.getElementById(id); }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+/* ── 1) ตัวเขียน: บอกตัวอ่าน (v147) ว่าเป็น "อ่านก่อนเขียน" ── */
+(function(){
+  if(typeof sxlWriteIn !== 'function' || sxlWriteIn.__v159) return;
+  var o = sxlWriteIn;
+  var w = function(T, S, st){
+    SXL.__wpre = true;                         /* ตัวอ่านจับค่านี้ตอนเริ่ม (ก่อน await แรก) แล้วล้างเอง */
+    try{ return o.apply(this, arguments); }
+    finally{ SXL.__wpre = false; }
+  };
+  w.__v159 = true;
+  sxlWriteIn = w;
+})();
+
+/* ── 2) ลบ Order: แถวซ้ายขึ้น "กำลังลบ…" ทันทีหลังกด OK ── */
+(function(){
+  function hook(){
+    var o = window.delOrder;
+    if(typeof o !== 'function' || o.__v159) return;
+    var w = function(ev, oid){
+      var C = window.confirm, said = null, r, imp = false;
+      try{ imp = !!(oid && window.IMPB && IMPB.store && IMPB.store[oid]); }catch(e){}   /* Order นำเข้า: ตัวลบของ Lot ติด/ถอดป้ายเอง (ลบต่อเบื้องหลัง) */
+      window.confirm = function(){ var v = C.apply(window, arguments); if(said === null) said = !!v; return v; };
+      try{ r = o.apply(this, arguments); }      /* กล่องยืนยันขึ้นก่อน await แรกของตัวลบทุกชั้น */
+      finally{ window.confirm = C; }
+      if(said && oid){
+        try{ if(window.SXL_markBusy) SXL_markBusy(oid, 'กำลังลบ…'); }catch(e){}
+        /* ตัวลบคืนงานที่รอได้ → เสร็จแล้วเอาป้ายออก · Order นำเข้า (ตัวลบของ Lot คืนทันทีแล้วลบต่อเบื้องหลัง) จัดป้ายเอง */
+        if(!imp && r && typeof r.then === 'function'){
+          var fin = function(){ try{ if(window.SXL_markBusy) SXL_markBusy(oid, null); }catch(e){} };
+          r.then(fin, fin);
+        }
+      }
+      return r;
+    };
+    Object.keys(o).forEach(function(k){ if(!(k in w)) w[k] = o[k]; });   /* ป้ายของตัวห่อชั้นอื่น (ไม่ห่อซ้ำ) */
+    w.__v159 = true;
+    window.delOrder = w;
+  }
+  hook();
+  var n = 0, iv = setInterval(function(){ try{ hook(); }catch(e){} if(++n > 40) clearInterval(iv); }, 1500);
+})();
+
+/* ── 3) กล่องค้นหา/แทนที่: ลากย้าย · ย่อ ── */
+(function(){
+  var KEY = 'pv2_fr159';
+  function setup(){
+    var p = q('frPanel');
+    if(!p || p.__v159) return !!p;
+    var head = p.firstElementChild;
+    if(!head) return false;
+    p.__v159 = true;
+    head.classList.add('fr159-head');
+    head.title = 'ลากตรงนี้เพื่อย้ายกล่อง';
+    var x = head.querySelector('button');
+    var mn = document.createElement('button');
+    mn.type = 'button'; mn.id = 'fr159Min'; mn.title = 'ย่อ / ขยายกล่อง'; mn.textContent = '▁';
+    if(x) head.insertBefore(mn, x); else head.appendChild(mn);
+    var st = null; try{ st = JSON.parse(lsGet(KEY) || 'null'); }catch(e){ st = null; }
+    st = st || {};
+    function save(){ lsSet(KEY, JSON.stringify(st)); }
+    function place(px, py){
+      var w = p.offsetWidth || 360, h = p.offsetHeight || 60;
+      px = Math.max(4, Math.min(window.innerWidth - w - 4, px));
+      py = Math.max(4, Math.min(window.innerHeight - Math.min(h, 48) - 4, py));
+      p.style.left = Math.round(px) + 'px'; p.style.top = Math.round(py) + 'px'; p.style.right = 'auto'; p.style.bottom = 'auto';
+      st.x = Math.round(px); st.y = Math.round(py);
+    }
+    function minState(){ p.classList.toggle('fr159-min', !!st.min); mn.textContent = st.min ? '▢' : '▁'; }
+    mn.addEventListener('click', function(ev){ ev.stopPropagation(); st.min = !st.min; minState(); save(); });
+    head.addEventListener('pointerdown', function(ev){
+      if(ev.button !== 0 || (ev.target && ev.target.closest && ev.target.closest('button'))) return;
+      ev.preventDefault();
+      var r = p.getBoundingClientRect(), dx = ev.clientX - r.left, dy = ev.clientY - r.top, moved = false;
+      function mv(e){ moved = true; place(e.clientX - dx, e.clientY - dy); }
+      function up(){ document.removeEventListener('pointermove', mv, true); document.removeEventListener('pointerup', up, true); document.removeEventListener('pointercancel', up, true); if(moved) save(); }
+      document.addEventListener('pointermove', mv, true); document.addEventListener('pointerup', up, true); document.addEventListener('pointercancel', up, true);
+    });
+    /* เปิดกล่องเมื่อไหร่ ไปที่ตำแหน่งที่จำไว้ (ยังอยู่ในจอ) */
+    function onShow(){ if(!p.classList.contains('visible')) return; minState(); if(st.x != null && st.y != null) place(st.x, st.y); }
+    try{ new MutationObserver(onShow).observe(p, { attributes:true, attributeFilter:['class'] }); }catch(e){}
+    window.addEventListener('resize', function(){ if(p.classList.contains('visible') && st.x != null) place(st.x, st.y); });
+    onShow();
+    return true;
+  }
+  if(!setup()){ var n = 0, iv = setInterval(function(){ if(setup() || ++n > 30) clearInterval(iv); }, 1000); }
+  window.FR159_reset = function(){ lsSet(KEY, '{}'); var p = q('frPanel'); if(p){ p.style.left = p.style.top = p.style.right = p.style.bottom = ''; p.classList.remove('fr159-min'); } };
+})();
+
+/* ── 4) แถบปุ่ม: เมนู ▾ + ไม่ตกบรรทัด + ล้นแล้วขึ้นบรรทัดใหม่ ── */
+(function(){
+  var GROUPS = [
+    { bar:'axSubToolbar', id:'tb159AxTip', label:'💡 คำแนะนำ', title:'แก้ตามคำแนะนำ (โหมดแก้ไข)',
+      items:['#applyAllSuggestBtn', '#applyAllPartBtn'] },
+    { bar:'axSubToolbar', id:'tb159AxExp', label:'📥 Export', title:'ส่งออก Excel — BOM ไม้ (AX) · BOM ไม้ (PD) · BOM แจ้งซ่อม',
+      items:['#axSubToolbar button[onclick="exportAXExcel()"]', '#ncPdExportBtn', '#axSubToolbar button[onclick="exportRepairBOM()"]'] },
+    { bar:'bomSubToolbar', id:'tb159BfExp', label:'📥 Export', title:'ส่งออก — แบบผลิต · BOM Fitting (เข้า AX) · Excel หน้านี้',
+      items:['#bomSubToolbar button[onclick="exportFrameDrawings()"]', '#bomSubToolbar button[onclick="exportBOMExcel()"]', '#bomXl157'] }
+  ];
+  var OPEN = null;
+  function find(G, s){
+    var el = document.querySelector(s);
+    if(el) return el;
+    var dd = q(G.id);                              /* ย้ายเข้าเมนูแล้ว → หาในเมนู */
+    if(dd && dd.__menu){ var m = /onclick="([^"]+)"/.exec(s); if(m) return dd.__menu.querySelector('button[onclick="' + m[1] + '"]'); }
+    return null;
+  }
+  function close(){
+    if(!OPEN) return;
+    var dd = OPEN, menu = dd.__menu;
+    dd.classList.remove('open'); OPEN = null;
+    if(menu){ menu.classList.remove('tb159-on'); if(menu.parentNode !== dd) dd.appendChild(menu); }
+    document.removeEventListener('mousedown', outside, true);
+    document.removeEventListener('keydown', esc, true);
+    window.removeEventListener('resize', close);
+    window.removeEventListener('scroll', close, true);
+  }
+  function outside(ev){ if(OPEN && !OPEN.contains(ev.target) && !(OPEN.__menu && OPEN.__menu.contains(ev.target))) close(); }
+  function esc(ev){ if(ev.key === 'Escape' && OPEN){ ev.stopPropagation(); close(); } }
+  function open(dd){
+    if(OPEN === dd){ close(); return; }
+    close();
+    var trig = dd.querySelector('.tb159-trig'), menu = dd.__menu;
+    dd.classList.add('open'); OPEN = dd;
+    document.body.appendChild(menu); menu.classList.add('tb159-on');
+    var r = trig.getBoundingClientRect(), mw = menu.offsetWidth || 220, mh = menu.offsetHeight || 100;
+    var left = Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw));
+    var top = r.bottom + 4; if(top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    menu.style.left = Math.round(left) + 'px'; menu.style.top = Math.round(top) + 'px';
+    document.addEventListener('mousedown', outside, true);   /* เปิดจาก click (mousedown ของการกดเปิดผ่านไปแล้ว) */
+    document.addEventListener('keydown', esc, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+  }
+  function shown(el){ try{ return getComputedStyle(el).display !== 'none'; }catch(e){ return false; } }
+  function sync(G){
+    var dd = q(G.id); if(!dd) return;
+    var menu = dd.__menu, n = 0;
+    Array.prototype.forEach.call(menu.children, function(c){ if(shown(c)) n++; });
+    var want = n ? 'flex' : 'none';
+    if(dd.style.display !== want) dd.style.display = want;
+    if(!n && OPEN === dd) close();
+  }
+  function ensure(G){
+    var bar = q(G.bar); if(!bar) return;
+    var els = G.items.map(function(s){ return find(G, s); }).filter(Boolean);
+    if(!els.length) return;
+    var dd = q(G.id);
+    if(!dd){
+      dd = document.createElement('div');
+      dd.id = G.id; dd.className = 'tb159-dd';
+      dd.innerHTML = '<button type="button" class="tb159-trig" title="' + G.title + '">' + G.label + ' ▾</button><div class="tb159-menu" role="menu"></div>';
+      var first = els.filter(function(e){ return e.parentNode === bar; })[0];
+      if(first) bar.insertBefore(dd, first); else bar.appendChild(dd);
+      dd.__menu = dd.querySelector('.tb159-menu');
+      dd.querySelector('.tb159-trig').addEventListener('click', function(ev){ ev.stopPropagation(); open(dd); });
+      dd.__menu.addEventListener('click', function(){ close(); });   /* กดรายการ → ปุ่มเดิมทำงานไปแล้ว (ตัวปุ่มได้ click ก่อน) แล้วปิดเมนู */
+      try{ new MutationObserver(function(){ sync(G); }).observe(dd.__menu, { attributes:true, attributeFilter:['style'], subtree:true, childList:true }); }catch(e){}
+    }
+    if(OPEN === dd) return;   /* เมนูเปิดอยู่ (อยู่ที่ body) — ไม่ย้ายของตอนนี้ */
+    var menu = dd.__menu;
+    /* เรียงตามลำดับที่กำหนด (ย้ายเฉพาะตัวที่ยังไม่อยู่ในที่) */
+    var cur = Array.prototype.slice.call(menu.children);
+    var same = cur.length === els.length && cur.every(function(c, i){ return c === els[i]; });
+    if(!same) els.forEach(function(e){ menu.appendChild(e); });
+    sync(G);
+  }
+  function ensureAll(){ GROUPS.forEach(function(G){ try{ ensure(G); }catch(e){} }); fitSoon(); }
+
+  /* แถบไม่พอ → แถบปุ่มขึ้นบรรทัดใหม่ทั้งแถบ (วัดตอนแท็บแบบแคบ เพื่อไม่สลับไปมากับตัวจัดแท็บของแท็บทำทั้งชุด) */
+  function fitBar(){
+    var bar = document.querySelector('.main-tabs'), tb = q('axToolbar');
+    if(!bar || !tb) return;
+    var had = bar.classList.contains('tb159-wrap'), tight = bar.classList.contains('fa-tight');
+    bar.classList.add('fa-measure');
+    bar.classList.remove('tb159-wrap');
+    if(!tight) bar.classList.add('fa-tight');
+    var vis = tb.offsetWidth > 0 && getComputedStyle(tb).display !== 'none';
+    var need = vis && ((bar.scrollWidth - bar.clientWidth) > 1 || (tb.scrollWidth - tb.clientWidth) > 1);
+    if(!tight) bar.classList.remove('fa-tight');
+    if(need) bar.classList.add('tb159-wrap');
+    void bar.offsetHeight;
+    bar.classList.remove('fa-measure');
+    if(need !== had) FIT.n++;
+  }
+  var FIT = { n:0 }, ft = 0;
+  function fitSoon(){ clearTimeout(ft); ft = setTimeout(function(){ try{ fitBar(); }catch(e){} }, 90); }
+  window.addEventListener('resize', fitSoon);
+  try{
+    var mo = new MutationObserver(fitSoon);
+    var tb0 = q('axToolbar'); if(tb0) mo.observe(tb0, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['style'] });
+  }catch(e){}
+  ensureAll();
+  var n = 0, iv = setInterval(function(){ ensureAll(); if(++n > 60) clearInterval(iv); }, 1500);   /* ปุ่มที่โมดูลอื่นเติมทีหลัง (เช่น Export (PD)) */
+  setInterval(function(){ try{ ensureAll(); }catch(e){} }, 15000);
+  window.TB159_state = function(){
+    var bar = document.querySelector('.main-tabs');
+    return { wrap:!!(bar && bar.classList.contains('tb159-wrap')), flips:FIT.n,
+      groups:GROUPS.map(function(G){ var dd = q(G.id); return { id:G.id, shown:!!(dd && dd.style.display !== 'none'), items:dd ? Array.prototype.map.call(dd.__menu.children, function(c){ return (c.textContent || '').trim(); }) : [] }; }) };
+  };
+})();
 })();
 </script>
 </body>
