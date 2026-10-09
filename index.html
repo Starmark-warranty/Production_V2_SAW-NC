@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '161', D = '09/10/2026';
+  var V = '162', D = '09/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -34493,9 +34493,12 @@ function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
 #ea161.on input{border-color:#38bdf8;color:#0369a1}
 #ea161 input:disabled{opacity:.6}
 #ea161Note{font-size:10.5px;color:var(--text3,#94a3b8);white-space:normal}
+#ea161Hint{font-size:11px;font-weight:600;color:#0369a1;white-space:nowrap}
+#ea161Hint i{font-style:normal;color:var(--text3,#94a3b8);font-weight:500}
+html[data-theme="dark"] #ea161Hint{color:#7dd3fc}
 #ea161Note b{font-weight:700;color:var(--text2,#64748b)}
 #ea161Note.bad{color:#b91c1c}
-td[data-ea161]::before{content:attr(data-ea161);font-size:9px;font-weight:600;color:var(--text3,#94a3b8);opacity:.85;margin-right:4px;letter-spacing:.2px;vertical-align:1px}
+td[data-ea161]::before{content:attr(data-ea161);font-size:9.5px;font-weight:600;color:var(--text3,#94a3b8);opacity:.85;margin-right:4px;letter-spacing:.2px;vertical-align:1px}
 html[data-theme="dark"] #ea161{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.3);color:#cbd5e1}
 html[data-theme="dark"] #ea161 input{background:#0f172a;color:#e2e8f0;border-color:#64748b}
 html[data-theme="dark"] #ea161.on{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.45);color:#7dd3fc}
@@ -34628,7 +34631,7 @@ function noteBody(mm){
 }
 function exampleTip(mm){
   var a = mm > 0 ? mm : 20;
-  return 'เผื่อหัว-ท้ายของเอจทุกเส้น (มม. ต่อด้าน)\n'
+  return 'เผื่อหัว-ท้ายของเอจทุกเส้น (มม. ต่อด้าน) — ใส่ ' + a + ' = หัว ' + a + ' + ท้าย ' + a + ' มม. (เส้นละ +' + (a * 2) + ' มม.)\n'
     + 'เช่น ใส่ ' + a + ': ชิ้น 100×400 ปิดเอจ 4 ด้าน → เอจ ' + (100 + 2 * a) + ' + ' + (400 + 2 * a) + ' + ' + (100 + 2 * a) + ' + ' + (400 + 2 * a)
     + ' = ' + fmm(1000 + 8 * a) + ' มม. (เดิม 1,000)\n'
     + 'ยอดขอบ = ปัดขึ้น((ยาวตามแบบ + เผื่อ) ÷ 1000) + 1 ม. · คูณจำนวนชุดเหมือนเดิม\n'
@@ -34645,8 +34648,10 @@ function bar(host){
     lab.id = 'ea161';
     lab.innerHTML = '✂️ เผื่อเอจ หัว-ท้าย ด้านละ <input id="ea161In" type="number" min="0" max="' + MAX + '" step="1" inputmode="decimal" aria-label="เผื่อเอจหัว-ท้าย มม. ต่อด้าน"> มม.';
     var note = document.createElement('span'); note.id = 'ea161Note';
-    wrap.appendChild(lab); wrap.appendChild(note);
+    var hint = document.createElement('span'); hint.id = 'ea161Hint';   /* v162: บอกบนจอว่าใส่ X = หัว X + ท้าย X */
+    wrap.appendChild(lab); wrap.appendChild(hint); wrap.appendChild(note);
     var inp = lab.querySelector('input');
+    inp.addEventListener('input', function(){ var h2 = document.getElementById('ea161Hint'); if(h2) h2.innerHTML = hintHtml(clamp(inp.value)); });
     inp.addEventListener('change', function(){ onSet(inp); });
     inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); } });
     inp.addEventListener('focus', function(){ load(false); });
@@ -34656,8 +34661,16 @@ function bar(host){
   inp2.disabled = !!EA.saving;
   lab.className = EA.mm > 0 ? 'on' : '';
   lab.title = exampleTip(EA.mm);
+  var hn = wrap.querySelector('#ea161Hint');
+  if(hn && document.activeElement !== inp2) hn.innerHTML = hintHtml(EA.mm);
   var nt = wrap.querySelector('#ea161Note');
   if(nt){ nt.innerHTML = noteHtml(); nt.className = EA.err ? 'bad' : ''; }
+}
+/* v162: ข้อความข้างช่อง — ใส่ X = หัว X + ท้าย X มม. ทุกเส้น · ตัวอย่างชิ้น 100×400 */
+function hintHtml(v){
+  var a = v > 0 ? v : 20, ex = 'เช่น 100×400 ปิด 4 ด้าน → เอจ ' + (100 + 2 * a) + '×' + (400 + 2 * a);
+  return v > 0 ? ('= หัว ' + a + ' + ท้าย ' + a + ' มม. ทุกเส้น <i>· ' + ex + '</i>')
+               : ('<i>ใส่ 20 = หัว 20 + ท้าย 20 มม. ทุกเส้น · ' + ex + '</i>');
 }
 function onSet(inp){
   var raw = String(inp.value).trim(), v = clamp(raw);
@@ -34711,8 +34724,9 @@ function rows(host){
       if(qtd.hasAttribute('data-ea161')){ qtd.removeAttribute('data-ea161'); if(qtd.hasAttribute('data-ea161t')){ qtd.removeAttribute('title'); qtd.removeAttribute('data-ea161t'); } }
       return;
     }
-    var tip = rowTip(c, I.a, setsOf(own));
-    qtd.setAttribute('data-ea161', 'เผื่อ');
+    var sN = setsOf(own), dq = (Math.ceil((c.net + c.n * I.a * 2) / 1000) - Math.ceil(c.net / 1000)) * sN;   /* v162: ยอดที่เพิ่มเพราะเผื่อ (ม.) */
+    var tip = rowTip(c, I.a, sN);
+    qtd.setAttribute('data-ea161', 'เผื่อ +' + dq);
     qtd.setAttribute('data-ea161t', '1');
     qtd.title = tip;
     var num = qtd.querySelector('span.ax-num'); if(num) num.title = tip;   /* ชี้ที่ตัวเลขก็เห็น (แทนป้าย × ชุด เดิม — ในนี้บอก × ชุดด้วย) */
