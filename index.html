@@ -14303,7 +14303,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '163', D = '09/10/2026';
+  var V = '164', D = '09/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -34615,7 +34615,7 @@ function rerender(){
 function mbOn(){ try{ var s = window.MBOM_state ? window.MBOM_state() : null; return !!(s && s.on && s.fit > 0); }catch(e){ return false; } }
 function curInfo(){ var oid = ''; try{ oid = String(currentOrder == null ? '' : currentOrder); }catch(e){} return EA.info[oid] || null; }
 function noteHtml(){
-  if(EA.saving) return 'กำลังบันทึก…';
+  if(EA.saving) return 'ใช้ค่าใหม่ในตารางแล้ว · กำลังบันทึกลงไฟล์กลาง (ให้ทุกเครื่อง)… ' + Math.max(0, Math.round((Date.now() - (EA.savingAt || Date.now())) / 1000)) + ' วิ';   /* v164 */
   if(EA.err) return EA.err;
   var mm = EA.mm, fl = EA.flash ? '<b>' + esc(EA.flash) + '</b> · ' : '';
   return fl + noteBody(mm);
@@ -34660,7 +34660,7 @@ function bar(host){
   }
   var inp2 = lab.querySelector('input');
   if(document.activeElement !== inp2) inp2.value = String(EA.mm);
-  inp2.disabled = !!EA.saving;
+  inp2.disabled = false;   /* v164: แก้ซ้ำระหว่างบันทึกได้ (บันทึกค่าล่าสุดต่อให้) */
   lab.className = EA.mm > 0 ? 'on' : '';
   lab.title = exampleTip(EA.mm);
   var hn = wrap.querySelector('#ea161Hint');
@@ -34678,17 +34678,28 @@ function onSet(inp){
   var raw = String(inp.value).trim(), v = clamp(raw);
   if(raw !== '' && (parseFloat(raw) || 0) > MAX){ try{ alert('✂️ เผื่อเอจ: ใส่ได้ไม่เกิน ' + MAX + ' มม. ต่อด้าน'); }catch(e){} }
   inp.value = String(v);
-  if(v === EA.mm || EA.saving) return;
-  var prev = EA.mm;
-  EA.saving = true; EA.err = ''; paintSoon();
+  if(v === EA.mm) return;
+  /* v164: ใช้ค่าใหม่ในตารางทันที — บันทึกลงไฟล์กลางอยู่เบื้องหลัง (เดิมรอบันทึกเสร็จก่อน = ค้าง "กำลังบันทึก…") */
+  if(!EA.saving) EA.saved = EA.mm;          /* ค่าล่าสุดที่บันทึกสำเร็จ — ใช้ย้อนกลับถ้าบันทึกไม่ได้ */
+  EA.mm = v; EA.err = ''; EA.flash = ''; keepLS();
+  rerender();
+  if(EA.saving){ EA.want = v; paintSoon(); return; }   /* กำลังบันทึกค่าก่อนหน้า → บันทึกค่านี้ต่อเมื่อเสร็จ */
+  runSave(v);
+}
+function tick(){ if(!EA.saving) return; paintSoon(); setTimeout(tick, 1000); }
+function runSave(v){
+  EA.saving = true; EA.savingAt = Date.now(); EA.want = null; tick();
   save(v).then(function(){
-    EA.saving = false; EA.mm = v; EA.loadedAt = Date.now(); keepLS();
+    EA.saved = v; EA.loadedAt = Date.now();
+    if(EA.want != null && EA.want !== v){ var w = EA.want; EA.saving = false; runSave(w); return; }
+    EA.saving = false; EA.want = null;
     EA.flash = '✓ บันทึกแล้ว ' + (v > 0 ? ('เผื่อด้านละ ' + v + ' มม.') : 'ปิดการเผื่อ (0)') + ' · ใช้ทุกเครื่อง';
-    rerender();
+    paintSoon();
     setTimeout(function(){ EA.flash = ''; paintSoon(); }, 5000);
   }, function(e){
-    EA.saving = false; EA.mm = prev;
-    EA.err = '⚠ บันทึกไม่สำเร็จ — ยังใช้ค่าเดิม ' + prev + ' มม. (' + esc((e && e.message) || e) + ')';
+    var back = (EA.saved != null) ? EA.saved : 0;
+    EA.saving = false; EA.want = null; EA.mm = back; keepLS();
+    EA.err = '⚠ บันทึกลงไฟล์กลางไม่สำเร็จ — กลับไปใช้ค่าเดิม ' + back + ' มม. (' + esc((e && e.message) || e) + ')';
     rerender();
     setTimeout(function(){ EA.err = ''; paintSoon(); }, 8000);
   });
