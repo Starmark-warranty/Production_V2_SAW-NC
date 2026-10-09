@@ -14302,7 +14302,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '160', D = '08/10/2026';
+  var V = '161', D = '09/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -34469,6 +34469,280 @@ function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
       groups:GROUPS.map(function(G){ var dd = q(G.id); return { id:G.id, shown:!!(dd && dd.style.display !== 'none'), items:dd ? Array.prototype.map.call(dd.__menu.children, function(c){ return (c.textContent || '').trim(); }) : [] }; }) };
   };
 })();
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v161 — BOM Fitting: เผื่อเอจหัว-ท้าย (ผู้ใช้ 09/10/2026 10:02)
+       "กว้าง 100x400 ปิดเอจ 4 ด้าน ก็จะได้เอจ 140x440 · ให้คำนวน m มาในช่อง Fitting · มีช่องให้ใส่ค่าเผื่อ
+        ขึ้นยอดเอจ ค่าเผื่อให้เห็นด้วยแบบลับ ๆ · กดออก BOM Fitting ไม่ต้องติดค่าเผื่อออกไป"
+       • ช่อง "✂️ เผื่อเอจ หัว-ท้าย ด้านละ __ มม." อยู่แถบเดียวกับ 📦 จำนวนชุด / Order (บนตาราง BOM Fitting)
+         ค่าเดียวใช้ทุก Order ทุกเครื่อง (app_settings คีย์ edge_allow) · ค่าเริ่ม 0 = ปิด (ยอดเหมือนเดิมทุกตัว)
+       • ยอดขอบ (แถว "ขอบ") = ปัดขึ้น( (ความยาวตามแบบ + เส้น × เผื่อ × 2) ÷ 1000 ) + 1 ม. — สูตรเดิมของโปรแกรม เพิ่มแค่ส่วนเผื่อ
+         ใช้กับ Order ที่ความยาวขอบ = ขอบชิ้นพอดี: Furtech V.1 (source boardforge) · Order ที่ไม่มีแถวขอบ TYP7 (Manual BOM ฯลฯ คิดจากขนาดชิ้น)
+         Order IMOS ไม่บวก — IMOS เผื่อมาในความยาวแล้ว (เส้นละ 60 มม.)
+       • ทำที่ getEdgeAgg (ห่อ) — แก้เฉพาะ _lenMM ที่ buildBOMRows ใช้ · LENGTH ที่ Imos Detail แสดงไม่เปลี่ยน
+         จำนวนชุด · ค่าที่แก้เอง (✎) · Export · โหมดรวม · ทำทั้งชุด · เอกสาร ใช้ยอดเดียวกับตาราง (ไม่ต้องแก้ทีละที่)
+       • บนตาราง: ช่องจำนวนของแถวขอบที่บวกเผื่อมีคำว่า "เผื่อ" ตัวเล็กสีจาง (CSS ::before — ข้อความในช่องยังเป็นตัวเลขเท่าเดิม)
+         ชี้ = รายละเอียด (กี่เส้น · ยาวตามแบบ · เผื่อกี่เมตร · ไม่เผื่อได้เท่าไร) · ไฟล์ Export มีแค่ยอด ไม่มีคำว่าเผื่อ
+       • ไม่บวก: แถว "ขอบเพิ่ม" (FrontStyle Config) · แถวที่แก้จำนวนเอง (✎ ใช้ค่าที่พิมพ์)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#ea161{display:inline-flex;align-items:center;gap:6px;background:var(--s2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 9px;font-size:11.5px;font-weight:600;color:var(--text2,#475569);white-space:nowrap}
+#ea161 input{width:52px;font-size:12.5px;font-weight:700;border:1.5px solid #94a3b8;border-radius:6px;padding:2px 5px;font-family:inherit;color:#334155;background:#fff;text-align:center}
+#ea161.on{border-color:#7dd3fc;background:#f0f9ff;color:#0369a1}
+#ea161.on input{border-color:#38bdf8;color:#0369a1}
+#ea161 input:disabled{opacity:.6}
+#ea161Note{font-size:10.5px;color:var(--text3,#94a3b8);white-space:normal}
+#ea161Note b{font-weight:700;color:var(--text2,#64748b)}
+#ea161Note.bad{color:#b91c1c}
+td[data-ea161]::before{content:attr(data-ea161);font-size:9px;font-weight:600;color:var(--text3,#94a3b8);opacity:.85;margin-right:4px;letter-spacing:.2px;vertical-align:1px}
+html[data-theme="dark"] #ea161{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.3);color:#cbd5e1}
+html[data-theme="dark"] #ea161 input{background:#0f172a;color:#e2e8f0;border-color:#64748b}
+html[data-theme="dark"] #ea161.on{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.45);color:#7dd3fc}
+html[data-theme="dark"] #ea161.on input{color:#7dd3fc;border-color:#38bdf8}
+html[data-theme="dark"] #ea161Note b{color:#cbd5e1}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__v161ea) return;
+window.__v161ea = true;
+
+var KEY = 'edge_allow', LS = 'pv2_edge_allow', MAX = 200;
+var EA = { mm:0, loadedAt:0, triedAt:0, loading:null, saving:false, info:{}, err:'', flash:'' };
+
+function clamp(v){ v = Math.round((parseFloat(v) || 0) * 10) / 10; if(!(v > 0)) return 0; return v > MAX ? MAX : v; }
+function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function f2(n){ return (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function fmm(n){ return Math.round(n).toLocaleString('en-US'); }
+try{ var c0 = JSON.parse(localStorage.getItem(LS) || 'null'); if(c0 && isFinite(c0.mm)) EA.mm = clamp(c0.mm); }catch(e){}
+function keepLS(){ try{ localStorage.setItem(LS, JSON.stringify({ mm:EA.mm, at:Date.now() })); }catch(e){} }
+
+/* ── จำนวนเส้นต่อรหัส · นับแบบเดียวกับ getEdgeAgg ทุกตัวอักษร (ถึงจะจับคู่กับยอดที่มันรวม) ── */
+function isNoEdge(v){ return !v || /no[_\s]?edge/i.test(String(v)); }
+function scan(d){
+  var n = {}, hasT7 = false;
+  (d && d.groups || []).forEach(function(g){ (g && g.rows || []).forEach(function(r){ if(r && r._tp === 7) hasT7 = true; }); });
+  (d && d.groups || []).forEach(function(g){
+    (g && g.rows || []).forEach(function(r){
+      if(!r) return;
+      if(hasT7){
+        if(r._tp !== 7) return;
+        var k = String(r.NAME2 || '').trim() || String(r.NAME || '').trim();
+        n[k] = (n[k] || 0) + 1;
+      } else {
+        if(r._tp !== 3) return;
+        [r._e1, r._e2, r._e3, r._e4].forEach(function(v){
+          var k2 = String(v || '').trim();
+          if(isNoEdge(k2)) return;
+          n[k2] = (n[k2] || 0) + 1;
+        });
+      }
+    });
+  });
+  return { n:n, hasT7:hasT7 };
+}
+/* ความยาวขอบ = ขอบชิ้นพอดี (ต้องเผื่อ) : Furtech V.1 · ไม่มีแถว TYP7 (โปรแกรมคิดจากขนาดชิ้นเอง) · IMOS = เผื่อมาแล้ว */
+function kindOf(d, hasT7){
+  if(d && d.source === 'boardforge') return 'furtech';
+  if(!hasT7) return (d && d._isManualBOM) ? 'manual' : 'calc';
+  return 'imos';
+}
+var KLBL = { furtech:'Furtech V.1', manual:'Manual BOM', calc:'คิดจากขนาดชิ้น', imos:'IMOS' };
+
+var ORIG = window.getEdgeAgg;
+if(typeof ORIG === 'function'){
+  var mine = function(d){
+    var out = ORIG.apply(this, arguments);
+    try{
+      var oid = '';
+      try{ oid = String(currentOrder == null ? '' : currentOrder); }catch(e){}
+      var s = scan(d), kind = kindOf(d, s.hasT7), apply = kind !== 'imos', a = apply ? EA.mm : 0;
+      var rec = { kind:kind, apply:apply, a:a, codes:{}, at:Date.now() };
+      (out || []).forEach(function(r){
+        if(!r) return;
+        var k = String(r.NAME2 || '').trim() || String(r.NAME || '').trim();
+        var net = parseFloat(r._lenMM) || 0, n = s.n[k] || 0;
+        rec.codes[k] = { n:n, net:net };
+        if(a > 0 && n > 0) r._lenMM = net + n * a * 2;   /* LENGTH (ที่ Imos Detail แสดง) ไม่แตะ */
+      });
+      EA.info[oid] = rec;
+    }catch(e){ try{ console.warn('[v161 เผื่อเอจ]', e); }catch(_e){} }
+    return out;
+  };
+  mine.__v161 = true;
+  window.getEdgeAgg = mine;
+}
+
+/* ── อ่าน / บันทึกค่า (ทุกเครื่อง) ── */
+function dbx(){ try{ return (typeof db !== 'undefined' && db) ? db : null; }catch(e){ return null; } }
+function load(force){
+  if(EA.loading) return EA.loading;
+  if(!force && Date.now() - EA.triedAt < 60000) return Promise.resolve(false);   /* อ่านซ้ำได้ไม่เกินนาทีละครั้ง (อ่านไม่ได้ก็ไม่วนอ่าน) */
+  var d = dbx(); if(!d) return Promise.resolve(false);
+  EA.triedAt = Date.now();
+  EA.loading = Promise.resolve().then(function(){
+    return d.from('app_settings').select('value').eq('key', KEY);
+  }).then(function(r){
+    if(!r || r.error || !Array.isArray(r.data)){ EA.triedAt = Date.now() - 50000; return false; }   /* อ่านไม่ได้ → คงค่าเดิม (ไม่รีเซ็ตเป็น 0 เอง) · ลองใหม่ใน 10 วินาที */
+    EA.loadedAt = Date.now();
+    var v = r.data.length ? r.data[0].value : null;
+    var mm = (v && isFinite(v.mm)) ? clamp(v.mm) : 0;
+    if(mm === EA.mm || EA.saving) return false;
+    EA.mm = mm; keepLS(); rerender();
+    return true;
+  }).catch(function(){ EA.triedAt = Date.now() - 50000; return false; }).then(function(x){ EA.loading = null; return x; });
+  return EA.loading;
+}
+function save(mm){
+  var d = dbx();
+  if(!d) return Promise.reject(new Error('ยังไม่ได้เชื่อมไฟล์กลาง / ฐานข้อมูล'));
+  return Promise.resolve(d.from('app_settings').upsert({ key:KEY, value:{ mm:mm, at:new Date().toISOString() } }, { onConflict:'key' }))
+    .then(function(r){ if(r && r.error) throw new Error(r.error.message || String(r.error)); return true; });
+}
+
+function bomShown(){ var h = document.getElementById('contentBOM'); return !!(h && h.offsetParent !== null); }
+function rerender(){
+  try{ if(bomShown() && typeof renderBOM === 'function') renderBOM(); else paintSoon(); }catch(e){}
+}
+
+/* ── แถบ: ช่องค่าเผื่อ (ข้าง 📦 จำนวนชุด) ── */
+function mbOn(){ try{ var s = window.MBOM_state ? window.MBOM_state() : null; return !!(s && s.on && s.fit > 0); }catch(e){ return false; } }
+function curInfo(){ var oid = ''; try{ oid = String(currentOrder == null ? '' : currentOrder); }catch(e){} return EA.info[oid] || null; }
+function noteHtml(){
+  if(EA.saving) return 'กำลังบันทึก…';
+  if(EA.err) return EA.err;
+  var mm = EA.mm, fl = EA.flash ? '<b>' + esc(EA.flash) + '</b> · ' : '';
+  return fl + noteBody(mm);
+}
+function noteBody(mm){
+  if(mbOn()) return mm > 0 ? ('โหมดรวม: ยอดขอบคิดตอนกดรวม BOM — เปลี่ยนค่าแล้วกดรวมใหม่') : 'ใส่ค่าแล้วกดรวม BOM ใหม่ ยอดขอบจะบวกเผื่อ';
+  if(!(mm > 0)) return 'ปิดอยู่ · ใส่ค่าแล้วยอดขอบเปลี่ยนตาม (ทุก Order ทุกเครื่อง · IMOS ไม่บวก)';
+  var I = curInfo();
+  if(!I) return '';
+  if(!I.apply) return 'Order นี้เป็น IMOS — ไม่บวก (IMOS เผื่อมาในความยาวแล้ว)';
+  var n = 0, add = 0;
+  Object.keys(I.codes).forEach(function(k){ n += I.codes[k].n; add += I.codes[k].n * I.a * 2; });
+  if(!n) return 'Order นี้ไม่มีขอบ';
+  return 'Order นี้: ขอบ <b>' + n + '</b> เส้น · เผื่อรวม <b>+' + f2(add / 1000) + ' ม.</b> (' + esc(KLBL[I.kind] || I.kind) + ')';
+}
+function exampleTip(mm){
+  var a = mm > 0 ? mm : 20;
+  return 'เผื่อหัว-ท้ายของเอจทุกเส้น (มม. ต่อด้าน)\n'
+    + 'เช่น ใส่ ' + a + ': ชิ้น 100×400 ปิดเอจ 4 ด้าน → เอจ ' + (100 + 2 * a) + ' + ' + (400 + 2 * a) + ' + ' + (100 + 2 * a) + ' + ' + (400 + 2 * a)
+    + ' = ' + fmm(1000 + 8 * a) + ' มม. (เดิม 1,000)\n'
+    + 'ยอดขอบ = ปัดขึ้น((ยาวตามแบบ + เผื่อ) ÷ 1000) + 1 ม. · คูณจำนวนชุดเหมือนเดิม\n'
+    + 'ใช้กับ Order Furtech V.1 / Manual BOM (ความยาวขอบ = ขอบชิ้นพอดี) · Order IMOS ไม่บวก (IMOS เผื่อมาแล้วเส้นละ 60 มม.)\n'
+    + 'ค่าเดียวใช้ทุก Order ทุกเครื่อง · 0 = ไม่เผื่อ · ไฟล์ Export มีแค่ยอด ไม่มีคำว่าเผื่อ';
+}
+function bar(host){
+  var setsIn = host.querySelector('#bomSets');
+  var wrap = setsIn && setsIn.closest('label') && setsIn.closest('label').parentElement;
+  if(!wrap) return;
+  var lab = wrap.querySelector('#ea161');
+  if(!lab){
+    lab = document.createElement('label');
+    lab.id = 'ea161';
+    lab.innerHTML = '✂️ เผื่อเอจ หัว-ท้าย ด้านละ <input id="ea161In" type="number" min="0" max="' + MAX + '" step="1" inputmode="decimal" aria-label="เผื่อเอจหัว-ท้าย มม. ต่อด้าน"> มม.';
+    var note = document.createElement('span'); note.id = 'ea161Note';
+    wrap.appendChild(lab); wrap.appendChild(note);
+    var inp = lab.querySelector('input');
+    inp.addEventListener('change', function(){ onSet(inp); });
+    inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); } });
+    inp.addEventListener('focus', function(){ load(false); });
+  }
+  var inp2 = lab.querySelector('input');
+  if(document.activeElement !== inp2) inp2.value = String(EA.mm);
+  inp2.disabled = !!EA.saving;
+  lab.className = EA.mm > 0 ? 'on' : '';
+  lab.title = exampleTip(EA.mm);
+  var nt = wrap.querySelector('#ea161Note');
+  if(nt){ nt.innerHTML = noteHtml(); nt.className = EA.err ? 'bad' : ''; }
+}
+function onSet(inp){
+  var raw = String(inp.value).trim(), v = clamp(raw);
+  if(raw !== '' && (parseFloat(raw) || 0) > MAX){ try{ alert('✂️ เผื่อเอจ: ใส่ได้ไม่เกิน ' + MAX + ' มม. ต่อด้าน'); }catch(e){} }
+  inp.value = String(v);
+  if(v === EA.mm || EA.saving) return;
+  var prev = EA.mm;
+  EA.saving = true; EA.err = ''; paintSoon();
+  save(v).then(function(){
+    EA.saving = false; EA.mm = v; EA.loadedAt = Date.now(); keepLS();
+    EA.flash = '✓ บันทึกแล้ว ' + (v > 0 ? ('เผื่อด้านละ ' + v + ' มม.') : 'ปิดการเผื่อ (0)') + ' · ใช้ทุกเครื่อง';
+    rerender();
+    setTimeout(function(){ EA.flash = ''; paintSoon(); }, 5000);
+  }, function(e){
+    EA.saving = false; EA.mm = prev;
+    EA.err = '⚠ บันทึกไม่สำเร็จ — ยังใช้ค่าเดิม ' + prev + ' มม. (' + esc((e && e.message) || e) + ')';
+    rerender();
+    setTimeout(function(){ EA.err = ''; paintSoon(); }, 8000);
+  });
+}
+
+/* ── แถวขอบ: "เผื่อ" ตัวเล็กหน้ายอด + รายละเอียดตอนชี้ ── */
+function edMapOf(oid){ try{ return (oid && bomEdits && bomEdits[oid]) || {}; }catch(e){ return {}; } }
+function setsOf(oid){ try{ return (typeof bomSetsOf === 'function') ? bomSetsOf(oid) : 1; }catch(e){ return 1; } }
+function rowTip(c, a, sets){
+  var add = c.n * a * 2, withA = Math.ceil((c.net + add) / 1000) + 1, noA = Math.ceil(c.net / 1000) + 1;
+  return 'เผื่อหัว-ท้าย ด้านละ ' + a + ' มม. (เส้นละ +' + (a * 2) + ' มม.)\n'
+    + 'ขอบตามแบบ ' + c.n + ' เส้น ยาว ' + f2(c.net / 1000) + ' ม. + เผื่อ ' + f2(add / 1000) + ' ม. = ' + f2((c.net + add) / 1000) + ' ม.\n'
+    + '→ ปัดขึ้น + 1 ม. = ' + withA + ' ม. (ไม่เผื่อ = ' + noA + ' ม.)'
+    + (sets > 1 ? ('\n× ' + sets + ' ชุด = ' + (withA * sets) + ' ม.') : '')
+    + '\nค่าเผื่อไม่ติดไปในไฟล์ Export (มีแค่ยอด)';
+}
+function rows(host){
+  var cur = ''; try{ cur = String(currentOrder == null ? '' : currentOrder); }catch(e){}
+  Array.prototype.forEach.call(host.querySelectorAll('table.bom-table tbody tr'), function(tr){
+    var key = '', qtd = null;
+    var sel = tr.querySelector('input.bomSel');
+    if(sel){ key = sel.getAttribute('data-k') || ''; var sp = tr.querySelector('span.ax-num'); qtd = sp && sp.closest('td'); }
+    else { var qi = tr.querySelector('input[data-field="qty"]'); if(qi){ key = qi.getAttribute('data-rowkey') || ''; qtd = qi.closest('td'); } }
+    if(!qtd) return;
+    var m = /^(?:(.*)::)?Edge:(.*)$/.exec(key);
+    var own = m ? (m[1] != null ? m[1] : cur) : '';
+    var I = m ? EA.info[own] : null, c = I && I.codes[m[2]];
+    var on = !!(I && I.apply && I.a > 0 && c && c.n > 0);
+    if(on){
+      var e1 = edMapOf(own)['Edge:' + m[2]];                    /* แก้จำนวนเองใน Order นั้น (✎) */
+      var e2 = m[1] != null ? edMapOf(cur)[key] : null;         /* แก้ในโหมดรวม */
+      if((e1 && e1.qty !== undefined) || (e2 && e2.qty !== undefined)) on = false;   /* → ใช้ค่าที่พิมพ์ ไม่มีป้าย */
+    }
+    if(!on){
+      if(qtd.hasAttribute('data-ea161')){ qtd.removeAttribute('data-ea161'); if(qtd.hasAttribute('data-ea161t')){ qtd.removeAttribute('title'); qtd.removeAttribute('data-ea161t'); } }
+      return;
+    }
+    var tip = rowTip(c, I.a, setsOf(own));
+    qtd.setAttribute('data-ea161', 'เผื่อ');
+    qtd.setAttribute('data-ea161t', '1');
+    qtd.title = tip;
+    var num = qtd.querySelector('span.ax-num'); if(num) num.title = tip;   /* ชี้ที่ตัวเลขก็เห็น (แทนป้าย × ชุด เดิม — ในนี้บอก × ชุดด้วย) */
+  });
+}
+var _pt = 0;
+function paint(){
+  var host = document.getElementById('contentBOM');
+  if(!host) return;
+  try{ bar(host); }catch(e){}
+  try{ rows(host); }catch(e){}
+}
+function paintSoon(){ clearTimeout(_pt); _pt = setTimeout(paint, 0); }
+function init(){
+  var host = document.getElementById('contentBOM');
+  if(!host) return setTimeout(init, 500);
+  try{ new MutationObserver(function(){ paintSoon(); if(bomShown()) load(false); }).observe(host, { childList:true }); }catch(e){}
+  paintSoon();
+}
+init();
+/* อ่านค่าจากไฟล์กลางหลังโปรแกรมพร้อม (ระหว่างนี้ใช้ค่าที่เครื่องนี้จำไว้ล่าสุด) */
+/* โหมดไฟล์กลาง (db = SXL_DB) → รอให้ตาราง app_settings อ่านเสร็จก่อน · โหมด Supabase อ่านได้เลย */
+function sxlReady(){ try{ if(typeof SXL_DB === 'undefined' || dbx() !== SXL_DB) return true; var a = SXL.s && SXL.s.app_settings; return !!(a && a.ready); }catch(e){ return true; } }
+(function first(t){
+  if(document.getElementById('splash') || !dbx() || !sxlReady()){ if(t < 600) setTimeout(function(){ first(t + 1); }, 1000); return; }
+  load(true);
+})(0);
+
+window.EA161_state = function(){ return { mm:EA.mm, saving:EA.saving, err:EA.err, loadedAt:EA.loadedAt, info:JSON.parse(JSON.stringify(EA.info)) }; };
+window.EA161_reload = function(){ return load(true); };
 })();
 </script>
 </body>
