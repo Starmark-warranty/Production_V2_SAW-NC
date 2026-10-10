@@ -13766,6 +13766,7 @@ window.MBOM_rescale165 = function(oid, n){
   });
   return c;
 };
+window.MBOM_iidsOf165 = function(oid){ for(var i = 0; i < MBOM.ax.length; i++){ var r = MBOM.ax[i]; if(r && r.__mbOrder === oid){ var v = String(r['Item Id Set'] || '').trim(); if(v) return v; } } return ''; };   /* v169 */
 window.MBOM_setIids165 = function(oid, val){
   if(!(MBOM.on && MBOM.ax.length) || MBOM.busy) return 0;
   var v = String(val == null ? '' : val).trim(), c = 0;
@@ -14333,7 +14334,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '167', D = '10/10/2026';
+  var V = '169', D = '10/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -35111,6 +35112,7 @@ function setSt(oid, st, m){
   clearTimeout(IS.okT[oid]);
   if(st === 'ok') IS.okT[oid] = setTimeout(function(){ if(IS.st[oid] === 'ok'){ IS.st[oid] = ''; paintIids(); } }, 3500);
   paintIids();
+  try{ if(window.IIDS165_onStatus) window.IIDS165_onStatus(oid, st, m || ''); }catch(e){}   /* v169 */
 }
 function flashGreen(oid){
   try{
@@ -35156,6 +35158,9 @@ function userSave(oid, val, now){
   clearTimeout(IS.tm[oid]);
   IS.tm[oid] = setTimeout(function(){ IS.tm[oid] = null; writeIids(oid); }, now ? 0 : 400);
 }
+/* v169: ช่อง Item Id Set ในแถบ BOM Fitting ใช้ทางเดียวกัน */
+window.IIDS165_save = function(oid, val, now){ if(!oid) return; userSave(String(oid), String(val == null ? '' : val), !!now); };
+window.IIDS165_status = function(oid){ return { st:IS.st[oid] || '', msg:IS.msg[oid] || '' }; };
 function flushIids(){
   Object.keys(IS.tm).forEach(function(oid){
     if(!IS.tm[oid]) return;
@@ -35187,10 +35192,10 @@ function paintSS(){
   var el = q('ss165'); if(!el) return;
   if(!SS.st){ el.className = ''; el.textContent = ''; el.title = ''; return; }
   el.className = 'on ' + SS.st;
-  el.textContent = SS.st === 'wait' ? ('⏳ กำลังบันทึกจำนวนชุด' + (SS.n > 1 ? ' ' + SS.n + ' Order' : '') + '…')
-                 : SS.st === 'ok' ? '✓ บันทึกจำนวนชุดแล้ว'
-                 : '⚠ บันทึกจำนวนชุดไม่สำเร็จ';
-  el.title = SS.st === 'err' ? SS.msg : 'ตารางใช้ค่าใหม่แล้ว · บันทึกลงฐานข้อมูล/ไฟล์กลางให้ทุกเครื่อง';
+  el.textContent = SS.st === 'wait' ? ('⏳ กำลังบันทึก…' + (SS.n > 1 ? ' ' + SS.n : ''))
+                 : SS.st === 'ok' ? '✓ บันทึกแล้ว'
+                 : '⚠ ไม่สำเร็จ';
+  el.title = SS.st === 'err' ? ('บันทึกจำนวนชุดไม่สำเร็จ — ' + SS.msg) : SS.st === 'wait' ? ('กำลังบันทึกจำนวนชุด' + (SS.n > 1 ? ' ' + SS.n + ' Order' : '') + ' ลงฐานข้อมูล/ไฟล์กลาง (ตารางใช้ค่าใหม่แล้ว)') : 'บันทึกจำนวนชุดแล้ว · ใช้ทุกเครื่อง';   /* v169: ข้อความสั้น กว้างคงที่ */
 }
 function ssDone(){
   var busy = Object.keys(SS.w).filter(function(k){ return SS.w[k] > 0; }).length;
@@ -35820,6 +35825,7 @@ async function run(opts){
   return out;
 }
 window.SXL_compact166 = function(opts){ opts = opts || {}; if(!opts.yes) return Promise.resolve({ ok:false, err:'ต้องยืนยัน (yes:true)' }); return run(opts); };
+window.SXL_compactUI166 = function(){ return start().catch(function(e){ alert('รวมไฟล์ไม่สำเร็จ: ' + emsg(e)); close(); }); };   /* v168: ป้ายเตือน → กล่องยืนยันเดิม */
 
 /* ── หน้าจอ ── */
 function ov(){
@@ -35945,6 +35951,251 @@ var f = function(p){
 f.__v167 = true;
 window.boardToAX = f;
 window.PREP167_orig = o;   /* ชุดทดสอบ: เทียบกับตัวเดิม */
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v168 — เตือนให้กด "🧹 รวมไฟล์ _changes เข้าไฟล์ฐาน" เอง เมื่อไฟล์สะสมเยอะ (ผู้ใช้ 10/10/2026 13:00 "ทำเลย")
+       ไฟล์ใน _changes (app_settings + imos_orders) ตั้งแต่ 1,000 ไฟล์ขึ้นไป → ป้ายมุมขวาล่าง:
+         "🧹 ไฟล์ใน _changes สะสม 1,234 ไฟล์ — เปิด / บันทึกจะช้าลง" [รวมไฟล์…] [ไว้ทีหลัง]
+         · รวมไฟล์… = กล่องยืนยันเดิมของปุ่ม 🧹 (ยังต้องกดเริ่มเอง)
+         · ไว้ทีหลัง = ไม่เตือนอีก 1 วัน (ในเครื่องนี้)
+       • เตือนเฉพาะเครื่องที่รวมไฟล์ได้ (อนุญาตแก้ไขโฟลเดอร์ · ไม่ใช่ Windows 7) · เครื่องอื่นไม่เตือน
+       • กรอบ 🧹 ในหน้าไฟล์กลาง: จำนวนไฟล์เป็นสีส้ม + "ควรกดรวม" เมื่อเกินเกณฑ์
+       • ไม่แตะข้อมูล ไม่อ่านไฟล์เพิ่ม (ใช้รายชื่อที่โปรแกรมไล่ไว้อยู่แล้ว)
+       • เปลี่ยนเกณฑ์: localStorage pv2_compact_warn = จำนวนไฟล์ (0 = ปิดการเตือน)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#cw168{position:fixed;right:16px;bottom:16px;z-index:100050;max-width:min(430px,calc(100vw - 32px));box-sizing:border-box;
+  background:#fff7ed;border:1.5px solid #fdba74;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:11px 14px;
+  font:13px/1.5 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;color:#7c2d12;display:none}
+#cw168.on{display:block}
+#cw168 b{color:#c2410c}
+#cw168 .cw-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap}
+#cw168 button{padding:6px 12px;border-radius:8px;border:1px solid #fdba74;background:#fff;color:#9a3412;cursor:pointer;font:inherit;font-weight:700}
+#cw168 button.pri{background:#c2410c;border-color:#c2410c;color:#fff}
+#cp166 .cp-st.cw-over{color:#c2410c;font-weight:700}
+html[data-theme="dark"] #cw168{background:#2a1608;border-color:#9a3412;color:#fed7aa}
+html[data-theme="dark"] #cw168 b{color:#fdba74}
+html[data-theme="dark"] #cw168 button{background:#1c1917;color:#fdba74;border-color:#9a3412}
+html[data-theme="dark"] #cw168 button.pri{background:#c2410c;color:#fff}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__v168cw || typeof SXL === 'undefined' || typeof window.SXL_compactInfo !== 'function') return;
+window.__v168cw = true;
+
+var LS_SNOOZE = 'pv2_compact_snooze', LS_TH = 'pv2_compact_warn', DAY = 86400000;
+var shown = false, lastN = 0;
+function q(id){ return document.getElementById(id); }
+function fmt(n){ try{ return (+n || 0).toLocaleString('en-US'); }catch(e){ return String(n); } }
+function th(){ try{ var v = localStorage.getItem(LS_TH); if(v !== null && v !== ''){ var n = parseInt(v, 10); if(n >= 0) return n; } }catch(e){} return 1000; }
+function snoozed(){ try{ var t = parseInt(localStorage.getItem(LS_SNOOZE), 10); return t > Date.now(); }catch(e){ return false; } }
+function total(){
+  try{
+    var I = window.SXL_compactInfo();
+    if(I.running) return -1;
+    var n = 0, ready = true;
+    I.tables.forEach(function(x){ if(!x || !x.ready) ready = false; else n += x.files || 0; });
+    return ready ? n : -1;
+  }catch(e){ return -1; }
+}
+function canDo(){
+  try{
+    if(!SXL.dir || !SXL.canWrite || SXL.plus === true) return false;
+    if(typeof db !== 'undefined' && typeof SXL_DB !== 'undefined' && db !== SXL_DB) return false;
+    return true;
+  }catch(e){ return false; }
+}
+function hide(){ var b = q('cw168'); if(b) b.classList.remove('on'); }
+function show(n){
+  var b = q('cw168');
+  if(!b){ b = document.createElement('div'); b.id = 'cw168'; b.setAttribute('role', 'status'); document.body.appendChild(b); }
+  b.innerHTML = '🧹 ไฟล์ใน <b>_changes</b> สะสม <b>' + fmt(n) + '</b> ไฟล์ — เปิดโปรแกรม / บันทึกจะช้าลง<br>'
+    + '<span style="font-size:12px">กดรวมไฟล์เข้าไฟล์ฐาน (ทำเครื่องเดียวพอ · ตอนเครื่องอื่นไม่ได้กดบันทึก · ใช้เวลาหลายนาที)</span>'
+    + '<div class="cw-btns"><button data-a="later">ไว้ทีหลัง</button><button class="pri" data-a="go">รวมไฟล์…</button></div>';
+  b.classList.add('on');
+  b.querySelector('[data-a="later"]').onclick = function(){ try{ localStorage.setItem(LS_SNOOZE, String(Date.now() + DAY)); }catch(e){} hide(); };
+  b.querySelector('[data-a="go"]').onclick = function(){ hide(); try{ if(window.SXL_compactUI166) window.SXL_compactUI166(); }catch(e){} };
+}
+function paintBox(n, t){
+  var st = document.querySelector('#cp166 .cp-st'); if(!st) return;
+  var over = t > 0 && n >= t;
+  st.classList.toggle('cw-over', over);
+  var tag = st.querySelector('.cw-tag');
+  if(over){
+    if(!tag){ tag = document.createElement('div'); tag.className = 'cw-tag'; st.appendChild(tag); }
+    tag.textContent = '⚠ รวม ' + fmt(n) + ' ไฟล์ (เกิน ' + fmt(t) + ') — ควรกดรวมไฟล์';
+  } else if(tag) tag.remove();
+}
+function check(){
+  var n = total(), t = th();
+  if(n < 0) return;
+  lastN = n;
+  try{ paintBox(n, t); }catch(e){}
+  if(!(t > 0) || n < t){ hide(); return; }
+  if(shown || snoozed() || !canDo()) return;
+  shown = true;
+  show(n);
+}
+/* หน้าไฟล์กลางวาดใหม่ → กรอบ 🧹 วาดข้อความใหม่ → ใส่ป้ายเกินเกณฑ์อีกรอบ */
+var oR = window.sxlRender;
+if(typeof oR === 'function' && !oR.__v168cw){
+  var nr = function(){ var r = oR.apply(this, arguments); try{ paintBox(lastN, th()); }catch(e){} return r; };
+  nr.__v168cw = true;
+  try{ sxlRender = nr; }catch(e){}
+}
+(function loop(n){ try{ check(); }catch(e){} setTimeout(function(){ loop(n + 1); }, n < 30 ? 2000 : 60000); })(0);
+window.CW168_state = function(){ return { total:total(), threshold:th(), snoozed:snoozed(), can:canDo(), shown:shown, on:!!(q('cw168') && q('cw168').classList.contains('on')) }; };
+window.CW168_check = check;
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v169 — แถบ BOM Fitting (ผู้ใช้ 10/10/2026 13:32 "ขอเพิ่มช่อง Item set Id อีกช่อง · ตอนใส่จำนวน ค่าเอจหัวท้ายตรง tap มันเด้งไปเด้งมา")
+       1) ช่อง Item Id Set ในแถบ BOM Fitting (ไม่ต้องกลับไปแท็บ AX Detail)
+          • Order เดียว: ช่อง "🏷 Item Id Set" ถัดจากจำนวนชุด — ค่าเดียวกับช่องบนแถบ AX Detail (พิมพ์ที่ไหนก็ตรงกัน)
+          • โหมดรวมหลาย Order: ช่อง Item Id Set ในกล่องของแต่ละ Order (ถัดจาก × จำนวนชุด)
+            พิมพ์แล้วแถวของ Order นั้นในตารางรวมเปลี่ยนทันที (ชื่อ .saw / ใบสั่งตัด ใช้ค่านี้) · บันทึกลง iids:<Order> ทางเดียวกับ v165
+            (สลับ Order ไม่ยกเลิก · ระหว่างบันทึกทุกที่อ่านได้ค่าที่พิมพ์ · ป้ายสถานะ)
+       2) แถบไม่เด้ง: ป้ายสถานะการบันทึกจำนวนชุด / Item Id Set มีที่ของตัวเองกว้างคงที่ (ซ่อนตอนว่าง ไม่หุบที่)
+          เดิมป้าย "⏳ กำลังบันทึกจำนวนชุด 4 Order…" โผล่แล้วหายในแถวเดียวกัน → ช่องเผื่อเอจถูกดันขึ้น/ลงบรรทัด
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#ss165{display:inline-block !important;visibility:hidden;width:104px;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;text-align:center;white-space:nowrap}
+#ss165.on{visibility:visible}
+#ib169{display:inline-flex;align-items:center;gap:5px;background:#eff6ff;border:1.5px solid #93c5fd;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700;color:#1d4ed8;white-space:nowrap}
+#ib169 input,.ib169c{font-family:Menlo,Consolas,monospace;font-size:11.5px;font-weight:700;color:#1d4ed8;background:#fff;border:1.5px solid #93c5fd;border-radius:6px;padding:2px 6px;box-sizing:border-box}
+#ib169 input{width:150px}
+.ib169c{width:128px;margin-left:4px}
+#ms165 .ms165c input.ib169c{width:136px;text-align:left;font-size:11.5px;font-weight:700;border-color:#93c5fd;color:#1d4ed8;padding:1px 5px}
+html[data-theme="dark"] #ms165 .ms165c input.ib169c{color:#93c5fd;border-color:#1e40af}
+.ib169s{display:inline-block;width:16px;text-align:center;font-size:11px;visibility:hidden}
+.ib169s.on{visibility:visible}
+.ib169s.wait{color:#b45309}.ib169s.ok{color:#047857}.ib169s.err{color:#b91c1c;cursor:help}
+html[data-theme="dark"] #ib169{background:#0b1a33;border-color:#1e40af;color:#93c5fd}
+html[data-theme="dark"] #ib169 input,html[data-theme="dark"] .ib169c{background:#0b1220;color:#93c5fd;border-color:#1e40af}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__v169ib) return;
+window.__v169ib = true;
+
+function q(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+function cur(){ try{ return (typeof currentOrder !== 'undefined' && currentOrder) ? String(currentOrder) : ''; }catch(e){ return ''; } }
+function axV(){ try{ return String((typeof axItemIdSet !== 'undefined' && axItemIdSet) || ''); }catch(e){ return ''; } }
+function merged(){ try{ var m = window.MBOM_state ? window.MBOM_state() : null; return !!(m && m.on && m.fit > 0) && !(window.MBOM_busy && window.MBOM_busy()); }catch(e){ return false; } }
+function rowIids(oid){ try{ return window.MBOM_iidsOf165 ? (window.MBOM_iidsOf165(oid) || '') : ''; }catch(e){ return ''; } }
+function stOf(oid){ try{ return window.IIDS165_status ? window.IIDS165_status(oid) : { st:'', msg:'' }; }catch(e){ return { st:'', msg:'' }; } }
+function stTxt(s){ return s.st === 'wait' ? '⏳' : s.st === 'ok' ? '✓' : s.st === 'err' ? '⚠' : ''; }
+function stTip(s){ return s.st === 'wait' ? 'กำลังบันทึก Item Id Set…' : s.st === 'ok' ? 'บันทึกแล้ว' : s.st === 'err' ? ('บันทึกไม่สำเร็จ — ' + s.msg + '\nพิมพ์ใหม่หรือกด Enter เพื่อลองอีกครั้ง') : ''; }
+function paintSt(el, oid){
+  if(!el) return;
+  var s = stOf(oid);
+  el.textContent = stTxt(s) || '·';
+  el.title = stTip(s);
+  el.className = 'ib169s' + (s.st ? ' on ' + s.st : '');
+}
+/* พิมพ์ในช่องของแถบนี้ = เหมือนพิมพ์ในช่องบนแถบ AX Detail (Order ที่เปิดอยู่) */
+function mirrorTop(oid, v){
+  if(oid !== cur()) return;
+  try{ axItemIdSet = v; }catch(e){}
+  var t = q('itemIdSetInput');
+  if(t){ t.value = v; try{ if(typeof _resizeIidsInput === 'function') _resizeIidsInput(t); }catch(e){} }
+}
+function save(oid, v, now){
+  if(!oid || typeof window.IIDS165_save !== 'function') return;
+  mirrorTop(oid, v);
+  window.IIDS165_save(oid, v, now);
+  if(oid === cur() && !merged()){ try{ if(typeof renderAX === 'function') renderAX(); }catch(e){} }
+}
+function bind(inp, oidFn){
+  if(inp.__ib169) return;
+  inp.__ib169 = true;
+  inp.addEventListener('input', function(){ save(oidFn(), inp.value, false); });
+  inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); save(oidFn(), inp.value, true); inp.blur(); } });
+}
+function decorate(){
+  var host = q('contentBOM'); if(!host) return;
+  var sets = host.querySelector('#bomSets'); if(!sets) return;
+  var lab = sets.closest('label'), wrap = lab && lab.parentElement; if(!wrap) return;
+  var ib = wrap.querySelector('#ib169');
+  if(merged()){
+    if(ib){ ib.remove(); var s0 = wrap.querySelector('#ib169St'); if(s0) s0.remove(); }
+    Array.prototype.forEach.call(wrap.querySelectorAll('#ms165 label.ms165c'), function(c){
+      var si = c.querySelector('input[data-ms165]'); if(!si) return;
+      var oid = si.getAttribute('data-ms165');
+      var x = c.querySelector('input.ib169c');
+      if(!x){
+        x = document.createElement('input');
+        x.className = 'ib169c'; x.type = 'text'; x.spellcheck = false; x.setAttribute('data-ib169', oid);
+        x.placeholder = 'Item Id Set'; x.title = 'Item Id Set ของ ' + oid + ' — พิมพ์แล้วแถวของ Order นี้ในตารางรวมเปลี่ยนทันที · บันทึกให้ Order นี้';
+        x.setAttribute('aria-label', 'Item Id Set ' + oid);
+        c.appendChild(x);
+        var st = document.createElement('span'); st.className = 'ib169s'; st.setAttribute('data-ib169s', oid); c.appendChild(st);
+        bind(x, function(){ return oid; });
+      }
+      if(document.activeElement !== x){ var v = rowIids(oid); if(x.value !== v) x.value = v; }
+      paintSt(c.querySelector('[data-ib169s]'), oid);
+    });
+    return;
+  }
+  if(!ib){
+    ib = document.createElement('label'); ib.id = 'ib169';
+    ib.title = 'Item Id Set ของ Order ที่เปิดอยู่ — ช่องเดียวกับบนแถบ AX Detail (ชื่อ .saw / ใบสั่งตัด / zip ตั้งจากค่านี้)';
+    ib.innerHTML = '🏷 Item Id Set <input id="ib169In" type="text" spellcheck="false" placeholder="RE-XXXX-XXXX" aria-label="Item Id Set">';
+    var after = wrap.querySelector('#ss165') || lab;
+    wrap.insertBefore(ib, after.nextSibling);
+    var st2 = document.createElement('span'); st2.id = 'ib169St'; st2.className = 'ib169s';
+    wrap.insertBefore(st2, ib.nextSibling);
+    bind(ib.querySelector('input'), cur);
+  }
+  var inp = ib.querySelector('input');
+  if(document.activeElement !== inp){ var v2 = axV(); if(inp.value !== v2) inp.value = v2; }
+  paintSt(wrap.querySelector('#ib169St'), cur());
+}
+var OBS = false;
+function observe(){
+  var host = q('contentBOM'); if(!host || OBS) return !!OBS;
+  OBS = true;
+  try{ new MutationObserver(function(){ try{ decorate(); }catch(e){} }).observe(host, { childList:true }); }catch(e){}
+  return true;
+}
+(function boot(n){ var ok = observe(); try{ decorate(); }catch(e){} if(!ok && n < 120) setTimeout(function(){ boot(n + 1); }, 500); })(0);
+/* ค่าที่เปลี่ยนจากที่อื่น (ช่องบนแถบ AX · เปิด Order · อ่านจากไฟล์กลาง) → ตามให้ตรง (ไม่แตะช่องที่กำลังพิมพ์) */
+setInterval(function(){ try{ if(q('bomSets')) decorate(); }catch(e){} }, 700);
+var oS = window.IIDS165_onStatus;
+window.IIDS165_onStatus = function(oid, st, m){
+  try{ if(oS) oS.apply(this, arguments); }catch(e){}
+  try{
+    var el = document.querySelector('[data-ib169s="' + (window.CSS && CSS.escape ? CSS.escape(oid) : oid) + '"]');
+    if(el) paintSt(el, oid);
+    if(oid === cur()) paintSt(q('ib169St'), oid);
+  }catch(e){}
+};
+window.IB169_state = function(){ var i = q('ib169In'); return { single:!!i, value:i ? i.value : null, chips:Array.prototype.map.call(document.querySelectorAll('input.ib169c'), function(x){ return [x.getAttribute('data-ib169'), x.value]; }) }; };
+})();
+</script>
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v169 (3) — เผื่อเอจ (v161) อ่านค่าก่อนไฟล์กลางอ่าน _changes ครบ → ได้ 0 ค้างไว้ถึงนาที (พบตอนทดสอบเปิดโปรแกรมใหม่)
+       ต้นเหตุ: ตัวเผื่อเอจรอแค่ "อ่านไฟล์ฐาน app_settings เสร็จ" แล้วอ่านค่าทันที — ค่าที่บันทึกไว้ (edge_allow) อยู่ใน _changes ซึ่งอ่านตามหลัง
+                ตั้งแต่ v166 อ่านไฟล์ฐานจากสำเนาในเครื่อง (เร็วขึ้น) ช่องว่างนี้จึงกว้างขึ้น → เปิด BOM Fitting นาทีแรกยอดขอบไม่บวกเผื่อ
+       แก้: ไฟล์กลางใช้ข้อมูล app_settings ชุดใหม่เมื่อไหร่ (เปิดโปรแกรม · อ่านไฟล์ล่าสุด · เครื่องอื่นแก้) → อ่านค่าเผื่อเอจใหม่ (คีย์เดียว ในหน่วยความจำ)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+if(window.__v169ea || typeof sxlApply !== 'function') return;
+window.__v169ea = true;
+var o = sxlApply;
+sxlApply = async function(changed){
+  var r = await o.apply(this, arguments);
+  try{ if(changed && typeof changed.has === 'function' && changed.has('app_settings') && typeof window.EA161_reload === 'function') window.EA161_reload(); }catch(e){}
+  return r;
+};
 })();
 </script>
 
