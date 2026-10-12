@@ -11509,7 +11509,8 @@ window.SAWB_lib={ ncHtml:ncHtml, clean:clean, hasOwnShelf:hasOwnShelf, hasFileBc
   usedLetters:usedLetters, pickLetters:pickLetters, ymd:ymd, splitOn:splitOn, shelfMode:ncShelfMode };
 window.SAWB_open=function(){ try{ switchMainTab('saw'); }catch(e){} };
 window.SAWB_settingsChanged=function(){ try{ syncUI(); }catch(e){} try{ paintPanel(); }catch(e){} };   /* v117: สวิตช์ในเมนูหน้าต่าง SAW/NC เปลี่ยน → แถบซ้าย/แผงกลางอัปเดต */
-window.SAWB_busy=function(){ return !!SAWB.busy; };   /* v111 */
+window.SAWB_busy=function(){ return !!SAWB.busy; };
+window.SAWB_win=function(){ return SAWB.win; };   /* v173: หน้าต่าง SAW/NC ที่เปิดอยู่ (ปุ่มแก้ตัวอักษรของล็อตบนแท็บ SAW / NC) */   /* v111 */
 window.SAWB_send=function(oids){
   if(Array.isArray(oids)){ SAWB.seq=oids.slice(); }
   try{ switchMainTab('saw'); }catch(e){}
@@ -14334,7 +14335,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '172', D = '10/10/2026';
+  var V = '174', D = '12/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -37053,6 +37054,207 @@ setTimeout(boot, 1500);
 
 window.MD171_state = function(){ return { mode:MODE, sel:SEL.slice(), busy:BUSY, ov:!!(q('md171Ov') && q('md171Ov').classList.contains('on')), last:LAST, toast:(q('md171Toast') && q('md171Toast').classList.contains('on')) ? q('md171Toast').textContent : null }; };
 window.MD171_mode = setMode;
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     v174 — ผู้ใช้ 12/10/2026 10:40 "ทำเป็นแบบดรอปดาวดีกว่าไหม แบบนี้มันมีเยอะไป"
+       แถวปุ่มของ v173 → เหลือในแถบเดิมของแท็บ SAW / NC (ไม่มีแถวเพิ่ม): [🔄 รัน Shelf ใหม่] [🏷️ ShelfNo ▾] + "ใช้วันนี้: A · B"
+       ▾ = ปลดล็อกตัวอักษร · รีเซ็ตเลขบาร์โค้ด · รีเซ็ตเลขใบสั่งตัด · โหมด Shelf · แยกตาม Order · แก้ตัวอักษรของล็อตที่ส่งแล้ว
+       การทำงานทุกปุ่ม = v173 (ไม่เปลี่ยน)
+     ══════════════════════════════════════════════════════════════════════════
+     v173 — แท็บ ✂️ SAW / NC: ปุ่ม ShelfNo / บาร์โค้ด อยู่หน้านี้เลย (ผู้ใช้ 12/10/2026 10:20)
+       "ช่วยเพิ่มปุ่มรัน shelf ใหม่ไว้หน้านี้ให้หน่อย … ทำ test บ่อย ๆ แล้วต้องกดเข้าไป saw nc ก่อนตลอดถึงจะกดรันได้
+        เพิ่มฟังก์ชั่นที่จำเป็นเอาออกมาด้านนอกให้หน่อย แต่ของเดิมไม่ต้องลบ"
+       เดิม: อยู่ในหน้าต่าง SAW/NC → ⚙ ตั้งค่า → ⋯ เครื่องมือเพิ่มเติม (ยังอยู่ที่เดิมครบ ไม่ลบ)
+       ใหม่: แถวใต้แถบปุ่มของแท็บ SAW / NC
+         🏷️ Shelf: อัตโนมัติ / ตั้งเอง (สลับ) · 🔀 แยก ShelfNo ตาม Order: เปิด / ปิด
+         🔄 รัน Shelf ใหม่ (รีเซ็ตทั้งคู่ = เลขบาร์โค้ดเริ่ม 0001 + ปลดล็อกตัวอักษรทั้งหมด)
+         🔓 ปลดล็อกตัวอักษร (วันนี้) · 🔢 รีเซ็ตเลขบาร์โค้ด · 📄 รีเซ็ตเลขใบสั่งตัด
+         ✏️ แก้ตัวอักษรชั้นวาง (ล็อตที่อยู่ในหน้าต่าง SAW/NC — เปิดหน้าต่างนั้นให้แล้วทำแบบเดิม)
+         + บอกตัวอักษรที่ใช้ไปแล้ววันนี้ (A ×12 · B ×9 …)
+       ค่าเดียวกับปุ่มเดิมทุกตัว (localStorage เครื่องนี้ · คีย์เดียวกัน ncp_shelf_used / ncp_bcpart_seq / ncp_bcpart_day / ncp_doc_counter / ncp_shelf_mode)
+       ทุกปุ่มที่ล้าง / รีเซ็ต ถามยืนยันก่อน (ข้อความเดียวกับของเดิม)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+#sawShelf173{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap}
+#sawShelf173 .sep{width:1px;height:22px;background:var(--border,#e2e8f0);margin:0 2px}
+#sawShelf173 .sawbtn.run{background:#0369a1;border-color:#0369a1;color:#fff;font-weight:700}
+#sawShelf173 .sawbtn.run:hover{background:#075985;color:#fff}
+#sawShelf173 .dd{position:relative;display:inline-block}
+#sawShelf173 .dd.open .ddb{background:#fff;border-color:var(--accent,#007aff);color:var(--accent,#007aff)}
+#sawShelf173 .menu{display:none;position:absolute;top:calc(100% + 5px);left:0;z-index:300;min-width:340px;background:#fff;border:1px solid #e2e8f0;border-radius:11px;
+  box-shadow:0 12px 32px rgba(15,23,42,.18);padding:6px;font:12.5px/1.4 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif}
+#sawShelf173 .dd.open .menu{display:block}
+#sawShelf173 .menu .mh{padding:6px 10px 7px;font-size:11px;font-weight:800;color:#0369a1;border-bottom:1px solid #f1f5f9;margin-bottom:4px}
+#sawShelf173 .menu .mh .st{display:block;font-weight:500;color:#64748b;margin-top:2px}
+#sawShelf173 .menu .mh .st b{color:#0f172a}
+#sawShelf173 .menu button{display:block;width:100%;text-align:left;padding:7px 10px;border:none;background:none;border-radius:7px;font:inherit;font-weight:700;color:#1e293b;cursor:pointer}
+#sawShelf173 .menu button:hover{background:#f1f5f9}
+#sawShelf173 .menu button i{display:block;font-style:normal;font-weight:400;font-size:11px;color:#64748b;margin-top:1px}
+#sawShelf173 .menu button.on{color:#166534}
+#sawShelf173 .menu .ms{height:1px;background:#f1f5f9;margin:4px 6px}
+#sawShelf173 .st2{font-size:11px;color:var(--text2,#64748b);white-space:nowrap}
+#sawShelf173 .st2 b{color:var(--text,#0f172a)}
+html[data-theme="dark"] #sawShelf173 .menu{background:#1e293b;border-color:#334155}
+html[data-theme="dark"] #sawShelf173 .menu button{color:#e2e8f0}
+html[data-theme="dark"] #sawShelf173 .menu button:hover{background:#0f172a}
+#sh173Toast{position:fixed;left:50%;top:76px;transform:translateX(-50%);z-index:100065;background:#15803d;color:#fff;padding:9px 16px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.2);
+  font:13px/1.45 -apple-system,'Sarabun','Segoe UI',Tahoma,sans-serif;font-weight:700;display:none;max-width:min(560px,calc(100vw - 32px));text-align:center}
+#sh173Toast.on{display:block}
+#sh173Toast.warn{background:#b45309}
+</style>
+<script>
+(function(){
+'use strict';
+if(window.__pv173sh) return;
+window.__pv173sh = true;
+function q(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+/* อ่าน / เขียน แบบเดียวกับโปรแกรม SAW/NC (lsGet / lsSet = JSON ใน localStorage) */
+function lsGet(k, def){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : def; }catch(e){ return def; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function ymd(){ var d = new Date(), yy = ((d.getFullYear() + 543) % 100), p = function(n){ return ('0' + n).slice(-2); }; return p(yy) + p(d.getMonth() + 1) + p(d.getDate()); }
+function mode(){ return lsGet('ncp_shelf_mode', 'manual') === 'auto' ? 'auto' : 'manual'; }
+var LS_SPLIT = 'sawnc_shelf_split';   /* คีย์เดียวกับสวิตช์ "แยก ShelfNo ตาม Order" (ค่าเริ่ม = เปิด) */
+function splitOn(){ try{ return localStorage.getItem(LS_SPLIT) !== '0'; }catch(e){ return true; } }
+function today(){
+  var y = ymd(), u = lsGet('ncp_shelf_used', {}) || {}, n = lsGet('ncp_bcpart_day', {}) || {}, out = [];
+  Object.keys(u).forEach(function(k){ if(k.indexOf(y) === 0) out.push({ L:k.slice(y.length), n:parseInt(n[k], 10) || 0 }); });
+  out.sort(function(a, b){ return a.L.length - b.L.length || (a.L < b.L ? -1 : a.L > b.L ? 1 : 0); });
+  return out;
+}
+function sawWin(){ try{ var w = window.SAWB_win ? window.SAWB_win() : null; return (w && !w.closed) ? w : null; }catch(e){ return null; } }
+function refreshSaw(){ var w = sawWin(); if(!w) return; try{ if(w.ncpShelfModeRefresh) w.ncpShelfModeRefresh(); }catch(e){} }
+function toast(t, warn){
+  var e = q('sh173Toast');
+  if(!e){ e = document.createElement('div'); e.id = 'sh173Toast'; e.setAttribute('role', 'status'); document.body.appendChild(e); }
+  e.textContent = t; e.classList.toggle('warn', !!warn); e.classList.add('on');
+  clearTimeout(e.__t); e.__t = setTimeout(function(){ e.classList.remove('on'); }, 4500);
+}
+function ov(){
+  var o = q('sh173Ov');
+  if(o) return o;
+  o = document.createElement('div'); o.id = 'sh173Ov'; o.className = 'ov171'; o.setAttribute('role', 'dialog'); o.setAttribute('aria-modal', 'true');
+  document.body.appendChild(o);
+  return o;
+}
+function ask(title, lines, yes, color, fn){
+  var o = ov();
+  o.innerHTML = '<div class="bx"><h3 style="color:' + (color || '#0369a1') + '">' + esc(title) + '</h3>'
+    + '<ul>' + lines.map(function(s){ return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>'
+    + '<div class="bt"><button data-a="no">ยกเลิก</button><button data-a="yes" style="background:' + (color || '#0369a1') + ';border-color:' + (color || '#0369a1') + ';color:#fff">' + esc(yes) + '</button></div></div>';
+  o.classList.add('on');
+  o.querySelector('[data-a="no"]').onclick = function(){ o.classList.remove('on'); };
+  o.querySelector('[data-a="yes"]').onclick = function(){ o.classList.remove('on'); try{ fn(); }catch(e){ toast('ไม่สำเร็จ: ' + ((e && e.message) || e), true); } paint(); };
+}
+
+/* ── การทำงาน (ตรงกับปุ่มเดิมในหน้าต่าง SAW/NC) ── */
+var ACT = {
+  runShelf: function(){
+    ask('🔄 รัน Shelf ใหม่ (รีเซ็ตทั้งคู่)?', ['เลขบาร์โค้ด (PD…) เริ่ม 0001 ใหม่', 'ปลดล็อกตัวอักษรชั้นวางทั้งหมด — ส่งครั้งถัดไปเริ่มที่ A ใหม่', 'ไม่แตะข้อมูลที่ส่งไปแล้ว / ไฟล์ที่ออกไปแล้ว', 'เท่ากับปุ่ม "รีเซ็ตทั้งคู่ (เลข + ตัวอักษร)" ในหน้าต่าง SAW/NC'], '🔄 รัน Shelf ใหม่', '#dc2626', function(){
+      lsSet('ncp_bcpart_day', {}); lsSet('ncp_bcpart_seq', 0); lsSet('ncp_shelf_used', {});
+      refreshSaw(); toast('🔄 รัน Shelf ใหม่แล้ว — เลขบาร์โค้ดเริ่ม 0001 · ตัวอักษรเริ่ม A ใหม่');
+    });
+  },
+  unlock: function(){
+    var t = today();
+    ask('🔓 ปลดล็อกตัวอักษรชั้นวาง (ของวันนี้)?', ['ตัวอักษรที่วันนี้ใช้ไปแล้ว' + (t.length ? ' (' + t.map(function(x){ return x.L; }).join(', ') + ')' : '') + ' กลับมาเลือกซ้ำได้', 'เลขบาร์โค้ดไม่เปลี่ยน'], '🔓 ปลดล็อกตัวอักษร', '#0284c7', function(){
+      var y = ymd(), u = lsGet('ncp_shelf_used', {}) || {}, kept = {};
+      Object.keys(u).forEach(function(k){ if(k.indexOf(y) !== 0) kept[k] = u[k]; });
+      lsSet('ncp_shelf_used', kept);
+      refreshSaw(); toast('🔓 ปลดล็อกตัวอักษรชั้นวางของวันนี้แล้ว — เลือกตัวเดิมซ้ำได้ (เลขบาร์โค้ดไม่เปลี่ยน)');
+    });
+  },
+  resetBc: function(){
+    ask('🔢 รีเซ็ตเลขบาร์โค้ด (PD…) ให้เริ่ม 0001 ใหม่?', ['รีเซ็ตเฉพาะเลขรัน — ตัวอักษรชั้นวางยังล็อกเหมือนเดิม', '⚠ ถ้าส่งซ้ำวันเดียวกัน บาร์โค้ดอาจซ้ำกับที่พิมพ์ไปแล้ว'], '🔢 รีเซ็ตเลข', '#dc2626', function(){
+      lsSet('ncp_bcpart_day', {}); lsSet('ncp_bcpart_seq', 0);
+      refreshSaw(); toast('🔢 รีเซ็ตเลขบาร์โค้ดแล้ว — เริ่ม 0001 (ตัวอักษรชั้นวางยังล็อกเหมือนเดิม)');
+    });
+  },
+  resetDoc: function(){
+    var c = lsGet('ncp_doc_counter', {}) || {}, d = new Date(), ym = '' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2), cur = c['cut_' + ym] || 0;
+    ask('📄 รีเซ็ตเลขรันใบสั่งตัด ให้เริ่ม 0001 ใหม่?', ['เดือนนี้ออกไปแล้ว ' + cur + ' ใบ — ใบถัดไปจะเป็นเลข 0001', 'เลขรันแยกตามเดือนอยู่แล้ว ขึ้นเดือนใหม่เริ่ม 0001 เอง', 'ไม่กระทบใบที่ออกไปแล้ว และไม่ยุ่งกับบาร์โค้ด / ShelfNo', '⚠ ถ้าออกใบใหม่ เลขอาจซ้ำกับใบเดิมที่พิมพ์ไปแล้ว'], '📄 รีเซ็ตเลขรัน', '#dc2626', function(){
+      var cc = lsGet('ncp_doc_counter', {}) || {};
+      Object.keys(cc).forEach(function(k){ if(k.indexOf('cut_') === 0) delete cc[k]; });
+      lsSet('ncp_doc_counter', cc);
+      toast('📄 รีเซ็ตเลขรันใบสั่งตัดแล้ว — ใบถัดไปเริ่ม 0001');
+    });
+  },
+  mode: function(){
+    var next = mode() === 'auto' ? 'manual' : 'auto';
+    lsSet('ncp_shelf_mode', next);
+    refreshSaw(); paint();
+    toast(next === 'auto' ? '🏷️ Shelf: อัตโนมัติ — เลือกตัวอักษรถัดไปที่ยังไม่ใช้วันนี้ให้เอง' : '🏷️ Shelf: ตั้งเอง — ตอนส่งจะให้เลือกตัวอักษรเอง');
+  },
+  split: function(){
+    var on = splitOn();
+    try{ localStorage.setItem(LS_SPLIT, on ? '0' : '1'); }catch(e){}
+    try{ if(window.SAWB_settingsChanged) window.SAWB_settingsChanged(); }catch(e){}
+    paint();
+    toast(!on ? '🔀 แยก ShelfNo ตาม Order: เปิด — แต่ละ Order ได้ตัวอักษรของตัวเอง' : '🔀 แยก ShelfNo ตาม Order: ปิด — ให้โปรแกรม SAW/NC จัดตัวอักษรเองแบบเดิม');
+  },
+  relabel: function(){
+    var w = sawWin();
+    if(!w || typeof w.ncpRelabelShelf !== 'function'){ toast('ยังไม่มีหน้าต่าง SAW/NC ที่เปิดอยู่ — กด "▶ ส่งเข้า SAW / NC" ก่อน แล้วค่อยแก้ตัวอักษรของล็อตนั้น', true); return; }
+    try{ w.focus(); }catch(e){}
+    try{ w.ncpRelabelShelf(); }catch(e){ toast('เรียกหน้าต่าง SAW/NC ไม่ได้: ' + ((e && e.message) || e), true); }
+  }
+};
+
+function paint(){
+  var bar = q('sawShelf173'); if(!bar) return;
+  var t = today(), m = mode(), sp = splitOn();
+  var mb = bar.querySelector('[data-a="mode"]'), sb = bar.querySelector('[data-a="split"]'), st = bar.querySelector('.st'), st2 = bar.querySelector('.st2');
+  if(mb){ mb.innerHTML = '🏷️ Shelf: ' + (m === 'auto' ? 'อัตโนมัติ' : 'ตั้งเอง') + '<i>' + (m === 'auto' ? 'ระบบเลือกตัวอักษรถัดไปให้เอง' : 'ตอนส่งจะให้เลือกตัวอักษรเอง') + ' · คลิกสลับ</i>'; mb.classList.toggle('on', m === 'auto'); }
+  if(sb){ sb.innerHTML = '🔀 แยก ShelfNo ตาม Order: ' + (sp ? 'เปิด' : 'ปิด') + '<i>' + (sp ? 'แต่ละ Order ได้ตัวอักษรของตัวเอง (A, B, C…)' : 'ให้โปรแกรม SAW/NC จัดตัวอักษรเองแบบเดิม') + ' · คลิกสลับ</i>'; sb.classList.toggle('on', sp); }
+  var used = t.length ? t.map(function(x){ return '<b>' + esc(x.L) + '</b>' + (x.n ? ' ×' + x.n : ''); }).join(' · ') : '<b>—</b> (ยังไม่ได้ใช้)';
+  if(st) st.innerHTML = 'ใช้วันนี้: ' + used;
+  if(st2) st2.innerHTML = 'ใช้วันนี้: ' + (t.length ? t.map(function(x){ return '<b>' + esc(x.L) + '</b>'; }).join(' · ') : '<b>—</b>');
+}
+function closeMenu(){ var d = document.querySelector('#sawShelf173 .dd'); if(d){ d.classList.remove('open'); var b = d.querySelector('.ddb'); if(b) b.setAttribute('aria-expanded', 'false'); } }
+function build(){
+  var area = q('sawArea'); if(!area) return false;
+  if(q('sawShelf173')) return true;
+  var sb = area.querySelector('.sawbar'); if(!sb) return false;
+  var box = document.createElement('span'); box.id = 'sawShelf173';
+  box.innerHTML = '<span class="sep"></span>'
+    + '<button class="sawbtn run" data-a="runShelf" title="เลขบาร์โค้ดเริ่ม 0001 + ปลดล็อกตัวอักษรชั้นวางทั้งหมด (= รีเซ็ตทั้งคู่ ในหน้าต่าง SAW/NC)">🔄 รัน Shelf ใหม่</button>'
+    + '<span class="dd"><button class="sawbtn ddb" type="button" aria-haspopup="true" aria-expanded="false" title="ตั้งค่า / รีเซ็ต ชั้นวาง (ShelfNo) & บาร์โค้ด">🏷️ ShelfNo ▾</button>'
+    +   '<div class="menu" role="menu">'
+    +     '<div class="mh">🏷️ ชั้นวาง (ShelfNo) &amp; บาร์โค้ด<span class="st"></span></div>'
+    +     '<button data-a="unlock" role="menuitem">🔓 ปลดล็อกตัวอักษร (วันนี้)<i>ตัวอักษรที่วันนี้ใช้ไปแล้ว เลือกซ้ำได้ · เลขบาร์โค้ดไม่เปลี่ยน</i></button>'
+    +     '<button data-a="resetBc" role="menuitem">🔢 รีเซ็ตเลขบาร์โค้ด<i>เลข PD… เริ่ม 0001 ใหม่ · ตัวอักษรยังล็อก</i></button>'
+    +     '<button data-a="resetDoc" role="menuitem">📄 รีเซ็ตเลขใบสั่งตัด<i>เลข NC-…-0001 เริ่มนับใหม่</i></button>'
+    +     '<div class="ms"></div>'
+    +     '<button data-a="mode" role="menuitem"></button>'
+    +     '<button data-a="split" role="menuitem"></button>'
+    +     '<div class="ms"></div>'
+    +     '<button data-a="relabel" role="menuitem">✏️ แก้ตัวอักษรของล็อตที่ส่งแล้ว<i>เปิดกล่องเดิมในหน้าต่าง SAW/NC (สร้าง ShelfNo + BarcodePart ใหม่)</i></button>'
+    +   '</div></span>'
+    + '<span class="st2"></span>';
+  var msg = sb.querySelector('.sawmsg');
+  sb.insertBefore(box, msg || null);
+  box.addEventListener('click', function(e){
+    var t = e.target; if(!t || !t.closest) return;
+    var dd = t.closest('.ddb');
+    if(dd){ var d = dd.parentNode, open = !d.classList.contains('open'); d.classList.toggle('open', open); dd.setAttribute('aria-expanded', open ? 'true' : 'false'); if(open) paint(); return; }
+    var b = t.closest('button[data-a]');
+    if(!b || !ACT[b.getAttribute('data-a')]) return;
+    var a = b.getAttribute('data-a');
+    if(a !== 'mode' && a !== 'split') closeMenu();   /* สลับโหมด: เมนูไม่ปิด กดสลับต่อได้ (เหมือนเมนูเดิม) */
+    ACT[a]();
+  });
+  document.addEventListener('click', function(e){ var t = e.target; if(t && t.closest && t.closest('#sawShelf173 .dd')) return; closeMenu(); }, true);
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeMenu(); });
+  paint();
+  return true;
+}
+(function tryBuild(n){ if(build()) return; if(n < 80) setTimeout(function(){ tryBuild(n + 1); }, 500); })(0);
+window.addEventListener('storage', function(e){ if(!e.key || /^ncp_|^sawnc_/.test(e.key)){ try{ paint(); }catch(x){} } });
+setInterval(function(){ var a = q('sawArea'); if(a && a.offsetParent !== null){ try{ paint(); }catch(e){} } }, 3000);
+window.SH173_state = function(){ return { built:!!q('sawShelf173'), menu:!!document.querySelector('#sawShelf173 .dd.open'), mode:mode(), split:splitOn(), today:today(), seq:lsGet('ncp_bcpart_seq', 0), ov:!!(q('sh173Ov') && q('sh173Ov').classList.contains('on')) }; };
+window.SH173_act = ACT;
 })();
 </script>
 
