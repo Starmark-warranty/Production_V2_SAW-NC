@@ -9706,7 +9706,7 @@ db=SXL_DB;
 (function(){var _hs=hideSplash;hideSplash=function(){sxlBooted();return _hs.apply(this,arguments)}})();
 [4000,8000].forEach(function(ms){setTimeout(function(){try{if(document.title.indexOf('ไฟล์กลาง')<0)document.title+=' · ไฟล์กลาง (ทดลอง)'}catch(e){}},ms)});
 /* ═══════════════════════════════════════════════════════════════════════
-   GasFS 1.4 (2026-10-12) — โฟลเดอร์ Server เสมือนบน Google Drive ผ่าน Apps Script (StarNexus DB 0.3+)
+   GasFS 1.5 (2026-10-12) — โฟลเดอร์ Server เสมือนบน Google Drive ผ่าน Apps Script (StarNexus DB 0.3+)
 
    ใช้ร่วมกันใน StarNexus และ Production V2: ทั้งสองโปรแกรมอ่าน/เขียนโฟลเดอร์ Server ผ่าน
    File System Access API (getDirectoryHandle / getFileHandle / entries / getFile / createWritable / removeEntry)
@@ -9722,7 +9722,7 @@ db=SXL_DB;
    ═══════════════════════════════════════════════════════════════════════ */
 var GasFS = (function () {
   'use strict';
-  var VER = '1.4';
+  var VER = '1.5';
   var PART = 4000000;          // base64 เกินนี้ แบ่งชิ้นอัปโหลด
   var BATCH_MS = 15, BATCH_OPS = 40, BATCH_BYTES = 6000000;
   var LIST_TTL = 1500;         // รายการโฟลเดอร์เดียวกันที่ขอซ้ำภายในเวลานี้ ใช้ของเดิม (กันไล่ซ้ำในรอบเดียว)
@@ -9799,6 +9799,7 @@ var GasFS = (function () {
     this.C = new Map();   // เนื้อไฟล์ในหน่วยความจำ: p\nn → {u, c}
     this.inflight = {};   // อ่านไฟล์ซ้ำระหว่างรอ = รอตัวเดียวกัน
     this.inrec = {};      // 1.4: p\nn → {es, fg, done} — การอ่านนั้นมีคนรอ (fg) หรือโหลดล่วงหน้าเฉย ๆ
+    this.bad = badLoad(this.url);   // 1.5: ไฟล์ที่ตรวจแล้วว่าเสีย p\nn → u (เวลาแก้ไฟล์ตอนตรวจ) — ไม่โชว์ในรายการ
     this.st = { calls: 0, ops: 0, ms: 0, last: 0, err: '', bytesUp: 0, bytesDown: 0, cacheHit: 0, trace: [],
                 rx: 0, need: 0, got: 0, nNeed: 0, nGot: 0 };   // 1.2: rx = ไบต์ที่รับแล้ว (นับระหว่างรับ) · need/got = ขนาดไฟล์ที่ต้องดาวน์โหลด/ได้แล้ว · nNeed/nGot = จำนวนไฟล์
     this.cache = this.opt.cache !== false;
@@ -10033,6 +10034,19 @@ var GasFS = (function () {
     try { return await pr; } finally { delete this.inflight[k]; if (self.inrec[k] === rec) delete self.inrec[k]; }
   };
   FS.prototype.readBytes = async function (p, n, u) { return ungz(await this.readC(p, n, u)); };
+  /* ── 1.5: ไฟล์เสีย (จำในเครื่องนี้ ตามเวลาแก้ไฟล์ — ไฟล์ถูกเขียนใหม่ = ตรวจใหม่) ── */
+  FS.prototype.markBad = function (p, n) { var L = this.L[p], f = L && L.files[n]; if (!f) return false; this.bad[p + '\n' + n] = f.u; badSave(this.url, this.bad); return true; };
+  FS.prototype.isBad = function (p, n) { var L = this.L[p], f = L && L.files[n], b = this.bad[p + '\n' + n]; return !!(f && b != null && b === f.u); };
+  FS.prototype.unBad = function (p, n) { delete this.bad[p + '\n' + n]; badSave(this.url, this.bad); };
+  FS.prototype.badList = function () {
+    var out = [], ch = false;
+    for (var k in this.bad) { var i = k.indexOf('\n'), p = k.slice(0, i), n = k.slice(i + 1), L = this.L[p];
+      if (!L || !L.ok) continue;                                   // ยังไม่ได้ไล่โฟลเดอร์นั้น — ยังไม่รู้
+      var f = L.files[n]; if (!f || f.u !== this.bad[k]) { delete this.bad[k]; ch = true; continue; }   // ถูกลบ/เขียนใหม่แล้ว
+      out.push({ p: p, n: n, u: f.u, s: f.s }); }
+    if (ch) badSave(this.url, this.bad);
+    return out;
+  };
 
   /* ── เขียนไฟล์ ── */
   FS.prototype.write = async function (p, n, bytes) {
@@ -10108,7 +10122,10 @@ var GasFS = (function () {
        เดิม: รอบตรวจ 10 วิ เห็นชื่อไฟล์ใหม่ระหว่างที่ตัวเขียนยังส่งไม่เสร็จ (ไฟล์ใหญ่ส่งหลายวินาที) อ่านได้ไฟล์ว่าง
        → “อ่าน app_settings …json ไม่ได้ — Unexpected end of JSON input ×3” (ผู้ใช้ 12/10/2026 15:33 ถามว่าเตือนอะไร) · ข้อมูลไม่เสีย แต่เตือนให้ตกใจ
        ตอนนี้: ข้ามไฟล์ที่ยังรอเขียน (เปิดด้วยชื่อตรง ๆ ยังได้เหมือนเดิม) */
-    var dirs = Array.from(L.dirs), files = Object.keys(L.files).filter(function (n) { return !L.files[n].local; });
+    /* GasFS 1.5: + ไฟล์ที่ตรวจแล้วว่าเสีย (ข้อมูลไม่ครบ อ่านไม่ได้) ไม่โชว์ = ตัวอ่านใช้รุ่นก่อนหน้าของกลุ่มนั้นเอง
+       หมายเหตุ: คำเตือนที่ผู้ใช้ถาม (15:33 และ 16:50) สาเหตุจริงคือไฟล์เสียตั้งแต่ 5/10 ที่ย้ายมาจากโฟลเดอร์ Server ไม่ใช่ไฟล์ที่กำลังส่ง (ดูตัวเชื่อมส่วน “ไฟล์เสียบน Drive”) */
+    var bad = fs.bad || {};
+    var dirs = Array.from(L.dirs), files = Object.keys(L.files).filter(function (n) { var f = L.files[n]; return !f.local && !(bad[p + '\n' + n] != null && bad[p + '\n' + n] === f.u); });
     for (var i = 0; i < dirs.length; i++) yield [dirs[i], new DirH(fs, join(p, dirs[i]), dirs[i])];
     for (var j = 0; j < files.length; j++) yield [files[j], new FileH(fs, p, files[j])];
   };
@@ -10287,6 +10304,9 @@ var GasFS = (function () {
 
   /* ═════════ ค่าตั้ง (เก็บในเบราว์เซอร์เครื่องนี้เท่านั้น) ═════════ */
   var LSK = 'sxlocaltrial:furnitech:gas';
+  var BADK = 'sxlocaltrial:furnitech:gasBad';                 // 1.5: { url: { 'p\nn': u } }
+  function badLoad(url) { try { var o = JSON.parse(localStorage.getItem(BADK) || '{}'); return (o && o[url]) || {}; } catch (e) { return {}; } }
+  function badSave(url, m) { try { var o = JSON.parse(localStorage.getItem(BADK) || '{}') || {}; if (m && Object.keys(m).length) o[url] = m; else delete o[url]; localStorage.setItem(BADK, JSON.stringify(o)); } catch (e) {} }
   function cfgGet() { try { return JSON.parse(localStorage.getItem(LSK) || 'null') || {}; } catch (e) { return {}; } }
   function cfgSet(v) { try { if (v == null) localStorage.removeItem(LSK); else localStorage.setItem(LSK, JSON.stringify(v)); } catch (e) {} }
 
@@ -11235,6 +11255,105 @@ function ordUi(){
   var b=document.getElementById('gasOrdGo'); if(b) b.onclick=function(){ ordSplitDialog(false); };
 }
 (function(){ var _u=gasUiRefresh; gasUiRefresh=function(){ _u.apply(this,arguments); try{ ordUi(); }catch(e){} }; })();
+
+
+/* ═════════ StarNexus v1.438 / Production V2 v181: ไฟล์เสียบน Google Drive — ตรวจ · ข้าม · บอกครั้งเดียว · ย้ายออกได้ ═════════
+   ผู้ใช้ 12/10/2026 16:50 (ถามซ้ำหลัง 1.436) “ทำไมถึงยังขึ้นเตือน หาสาเหตุไม่ได้หรอ ผมไม่ได้ยุ่งกับ order นั้นแล้วนิ”
+     “[Google Drive] อ่าน app_settings order_base_data_2606012207_IPD_MSU_7B9R~545d0ddc@0muurc1zr-qmlm.json ไม่ได้ — รอบหน้าลองใหม่
+      Unexpected end of JSON input ×3”
+   สาเหตุจริง: ไฟล์รุ่นล่าสุดของกลุ่มนั้นเสีย (เนื้อไฟล์ขาดกลางทาง) · ชื่อไฟล์บอกเวลาเขียน 0muurc1zr = 5/10/2026 11:36 (ก่อนย้ายขึ้น Drive)
+     = ภาพถ่าย BOM ของ Order 2606012207 ที่ Production เก็บไว้เทียบ “ต้นทางแก้” เขียนลงโฟลเดอร์ Server ไม่จบตั้งแต่วันนั้น แล้วถูกย้ายขึ้น Drive ไปทั้งอย่างนั้น
+     ตัวอ่านไฟล์กลางเจอไฟล์อ่านไม่ได้ = ข้ามแล้ว “รอบหน้าลองใหม่” → รอบตรวจทุก 10 วิ อ่านซ้ำ เตือนซ้ำไม่จบ (ไม่เกี่ยวกับว่าเปิด Order นั้นหรือไม่)
+     1.436 เดาว่าเป็นไฟล์ที่เครื่องตัวเองกำลังส่ง — ผิด (ตัวกรองไฟล์ที่กำลังส่งของ GasFS 1.3 ยังเก็บไว้ ไม่เสียหาย)
+   ตอนนี้:
+     · คำเตือนนี้ครั้งแรกของไฟล์นั้น → ดาวน์โหลดมาตรวจ (แกะ gzip + อ่าน JSON)
+       เสียจริง = จำว่าเสีย (เครื่องนี้ · ตามเวลาแก้ไฟล์) แล้วไม่โชว์ในรายการไฟล์ → ตัวอ่านใช้รุ่นก่อนหน้าของกลุ่มนั้นเอง (ไม่มีรุ่นก่อน = ค่าในไฟล์ฐาน)
+       แจ้งครั้งเดียวว่าไฟล์ไหนเสีย เขียนเมื่อไหร่ · อ่านได้ปกติ (สะดุดชั่วคราว) = ไม่จำ รอบหน้าอ่านใหม่ตามเดิม
+     · หน้า Google Drive: “⚠ ไฟล์เสียบน Google Drive n ไฟล์” + ปุ่ม “ย้ายไป _backup/broken” (ถามยืนยันก่อน) = หายจากทุกเครื่อง รวมรุ่นเก่าที่ยังไม่อัปเดต
+   ปิดได้: SN_OFF.gasBad=1 (กลับไปเตือนแบบเดิม) */
+var GAS_BAD={chk:{}}, GAS_W0=console.warn;
+function gasBadOn(){ return !gasSw('gasBad'); }
+function gasVerTime(n){ var m=/@([0-9a-z]{6,10})-/.exec(String(n||'')); if(!m) return ''; var t=parseInt(m[1],36);
+  if(!(t>1500000000000&&t<Date.now()+86400000)) return '';
+  try{ return new Date(t).toLocaleString('th-TH',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return new Date(t).toISOString(); } }
+/* ตรวจเนื้อไฟล์ JSON บน Drive: {ok} · {ok:false,…} = เสียจริง · null = ดาวน์โหลดไม่ได้/ไม่มีไฟล์ (ยังไม่ตัดสิน) */
+async function gasBadVerify(p,n){
+  var fs=GasFS.current(); if(!fs) return null;
+  var L=await fs.list(p), f=L&&L.files[n]; if(!f) return null;
+  var c; try{ c=await fs.readC(p,n,f.u); }catch(e){ return null; }
+  var txt;
+  try{ txt=new TextDecoder().decode(await GasFS.ungz(c)); }catch(e){ return {ok:false,u:f.u,s:f.s,len:0,msg:'แกะไฟล์ไม่ได้ ('+(e&&e.message||e)+')'}; }
+  try{ JSON.parse(txt); return {ok:true}; }catch(e){ return {ok:false,u:f.u,s:f.s,len:txt.length,msg:e&&e.message||String(e)}; }
+}
+async function gasBadHandle(p,n,a){
+  var k=p+'\n'+n, r=null; try{ r=await gasBadVerify(p,n); }catch(e){}
+  var fs=GasFS.current();
+  if(r&&!r.ok&&fs&&fs.markBad(p,n)){
+    var when=gasVerTime(n), tb=p.replace(/^_changes\//,'');
+    GAS_W0.call(console,'[Google Drive] ไฟล์เสียบน Drive: '+tb+' / '+n+(when?(' (เขียนเมื่อ '+when+')'):'')
+      +' — เนื้อไฟล์ไม่ครบ อ่านไม่ได้ ('+r.msg+') · ข้ามไฟล์นี้แล้ว ใช้ข้อมูลรุ่นก่อนหน้าแทน ไม่ต้องทำอะไร · ย้ายออกจาก Drive ได้ที่หน้า Google Drive (เตือนครั้งเดียว)');
+    try{ gasUiRefresh(); }catch(e){}
+    /* อ่านตารางนั้นใหม่ทันที (ไม่รอรอบตรวจ — รอบตรวจของ StarNexus ดูเฉพาะตารางที่มีไฟล์เปลี่ยน) → ได้รุ่นก่อนหน้าของกลุ่มนั้น */
+    try{ var T=sxlCfg(tb), S=SXL.s[tb];
+      if(T&&S&&S.ready){ var ch=await sxlLocked(function(){ return sxlScanOver(T,S,null); }); if(ch&&typeof sxlApply==='function') await sxlApply(new Set([tb]),'check'); } }
+    catch(e){ console.info('[Google Drive] อ่าน '+tb+' ใหม่หลังข้ามไฟล์เสียไม่สำเร็จ',e&&e.message); }
+    return;
+  }
+  if(r&&r.ok){ setTimeout(function(){ delete GAS_BAD.chk[k]; },60000); return; }   // อ่านได้ปกติ = สะดุดชั่วคราว (ไม่จำ)
+  delete GAS_BAD.chk[k]; GAS_W0.apply(console,a);                                  // ตรวจไม่ได้ (เน็ต) = เตือนแบบเดิม
+}
+/* ดักคำเตือน “[ไฟล์กลาง] อ่าน <ตาราง> <ไฟล์> ไม่ได้ — รอบหน้าลองใหม่ <สาเหตุ>” (ตัวอ่านของทั้งสองโปรแกรมใช้ข้อความนี้) */
+(function(){
+  console.warn=function(){
+    var a=arguments;
+    try{
+      if(gasBadOn()&&a.length>=3&&a[0]==='[ไฟล์กลาง] อ่าน'&&typeof a[1]==='string'&&typeof a[2]==='string'&&typeof SXL!=='undefined'&&SXL.dir&&sxlIsGas(SXL.dir)){
+        var p='_changes/'+a[1], n=a[2], k=p+'\n'+n, fs=GasFS.current();
+        if(fs&&fs.isBad(p,n)) return;                              // รู้แล้วว่าเสีย (เตือนไปแล้ว) — เงียบ
+        if(GAS_BAD.chk[k]) return;                                 // กำลังตรวจ / เพิ่งตรวจว่าอ่านได้
+        GAS_BAD.chk[k]=1; gasBadHandle(p,n,a); return;
+      }
+    }catch(e){}
+    return GAS_W0.apply(console,a);
+  };
+})();
+/* ย้ายไฟล์เสียไป _backup/broken/<ตาราง>/ (เก็บเนื้อเดิมไว้ดู) แล้วลบออกจาก _changes — ทุกเครื่องเลิกเห็นไฟล์นี้ */
+async function gasDirAt(path,create){ var d=SXL.dir;
+  var segs=String(path).split('/').filter(Boolean); for(var i=0;i<segs.length;i++) d=await d.getDirectoryHandle(segs[i],{create:!!create}); return d; }
+async function gasBadMove(){
+  var fs=GasFS.current(); if(!fs||!sxlIsGas(SXL.dir)) throw Error('ยังไม่ได้เชื่อมต่อ Google Drive');
+  var list=fs.badList(); if(!list.length) return 0;
+  var txt=list.map(function(f){ var w=gasVerTime(f.n); return '• '+f.p.replace(/^_changes\//,'')+' / '+f.n+(w?(' (เขียนเมื่อ '+w+')'):''); }).join('\n');
+  if(!confirm('ย้ายไฟล์เสีย '+list.length+' ไฟล์ ไปไว้ที่ _backup/broken บน Google Drive?\n\n'+txt+'\n\nไฟล์เหล่านี้อ่านไม่ได้อยู่แล้ว (เนื้อไฟล์ไม่ครบ) — ย้ายแล้วทุกเครื่องใช้ข้อมูลรุ่นก่อนหน้าแทน และหยุดเตือน')) return -1;
+  var n=0;
+  for(var i=0;i<list.length;i++){ var f=list[i], tb=f.p.replace(/^_changes\//,'');
+    var c=await fs.readC(f.p,f.n,f.u), bytes=null; try{ bytes=await GasFS.ungz(c); }catch(e){ bytes=null; }
+    var dst=await gasDirAt('_backup/broken/'+tb,true);
+    var fh=await dst.getFileHandle(bytes?f.n:(f.n+'.gz64.txt'),{create:true}), w=await fh.createWritable(); await w.write(bytes||c); await w.close();
+    var src=await gasDirAt(f.p,false); await src.removeEntry(f.n);
+    fs.unBad(f.p,f.n); n++;
+  }
+  try{ SXL.pollEnd=0; if(typeof sxlRefresh==='function') sxlRefresh(); }catch(e){}
+  return n;
+}
+/* หน้า Google Drive: รายการไฟล์เสีย + ปุ่มย้ายออก */
+function gasBadUi(){
+  var box=document.getElementById('gasBox'); if(!box) return;
+  var el=document.getElementById('gasBad'), fs=GasFS.current();
+  var list=(fs&&sxlIsGas(SXL.dir))?fs.badList():[];
+  if(!list.length){ if(el) el.style.display='none'; return; }
+  if(!el){ el=document.createElement('div'); el.id='gasBad'; el.style.cssText='border-top:1px dashed #e0b4a8;margin-top:10px;padding-top:8px'; box.appendChild(el); }
+  var key=list.map(function(f){ return f.p+'/'+f.n; }).join('|'); el.style.display='';
+  if(el.dataset.k===key) return; el.dataset.k=key;
+  el.innerHTML='<b style="color:#b42318">⚠ ไฟล์เสียบน Google Drive '+list.length+' ไฟล์</b> <small>(เนื้อไฟล์ไม่ครบ อ่านไม่ได้ — โปรแกรมข้ามให้แล้ว ใช้ข้อมูลรุ่นก่อนหน้าแทน)</small>'
+    +'<div style="font:12px/1.5 ui-monospace,Consolas,monospace;color:#5b6b78;margin:4px 0;word-break:break-all">'+list.map(function(f){ var w=gasVerTime(f.n); return esc2(f.p.replace(/^_changes\//,'')+' / '+f.n)+(w?(' <span style="font-family:system-ui,Sarabun,sans-serif">· เขียนเมื่อ '+esc2(w)+'</span>'):''); }).join('<br>')+'</div>'
+    +'<div class="gb"><button id="gasBadGo">ย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน)…</button></div><div id="gasBadSt" style="font-size:12px;color:#5b6b78"></div>';
+  var b=document.getElementById('gasBadGo'); if(b) b.onclick=async function(){ var st=document.getElementById('gasBadSt'); b.disabled=true;
+    try{ var r=await gasBadMove(); if(st) st.textContent=(r>0)?('✓ ย้ายแล้ว '+r+' ไฟล์ ไปที่ _backup/broken'):(r<0?'':'ไม่มีไฟล์ให้ย้าย'); }
+    catch(e){ if(st) st.textContent='✗ '+(e&&e.message||e); }
+    b.disabled=false; el.dataset.k=''; try{ gasBadUi(); }catch(e){} };
+}
+(function(){ var _u=gasUiRefresh; gasUiRefresh=function(){ _u.apply(this,arguments); try{ gasBadUi(); }catch(e){} }; })();
 
 sxlStart();
 </script>
@@ -15915,7 +16034,13 @@ else setTimeout(run, 6000);
        — ไม่เคยได้ใช้ แค่เปลือง/ช้า · v179 เพิ่มป้ายดาวน์โหลดเลยเพิ่งเห็น
      ตอนนี้: โหลดล่วงหน้าเฉพาะตารางที่ Production ใช้ · GasFS 1.4 ไฟล์ที่โหลดล่วงหน้าไม่นับว่า “มีคนรอ”
        · ป้ายกลางล่างจอขึ้นเฉพาะตอนเปิด Order ที่ยังไม่โหลด (บอกเลข Order) · ตัวเชื่อมร่วมกับ StarNexus 1.437 */
-  var V = '180', D = '12/10/2026';
+  /* ───────── v181 (12/10/2026): ไฟล์เสียบน Google Drive — ตรวจ · ข้าม · เตือนครั้งเดียว · ย้ายออกได้ ─────────
+     ผู้ใช้ 12/10/2026 16:50: คำเตือน “อ่าน app_settings order_base_data_2606012207_IPD_MSU_7B9R~545d0ddc@0muurc1zr-qmlm.json ไม่ได้ — Unexpected end of JSON input”
+       ยังขึ้นซ้ำ ทั้งที่ไม่ได้ยุ่งกับ Order นั้น · สาเหตุจริง: ไฟล์ภาพถ่าย BOM (RevGuard) ของ Order 2606012207 เขียนลงโฟลเดอร์ Server ไม่จบตั้งแต่ 5/10/2026 11:36
+       แล้วถูกย้ายขึ้น Drive ไปด้วย ตัวอ่านข้ามแล้วลองใหม่ทุกรอบตรวจ จึงเตือนไม่หยุด
+     ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
+       หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
+  var V = '181', D = '12/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
