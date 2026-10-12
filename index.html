@@ -14335,7 +14335,7 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '174', D = '12/10/2026';
+  var V = '175', D = '12/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -36226,6 +36226,10 @@ sxlApply = async function(changed){
          • "กดเพิ่ม part / เพิ่มตู้ ให้มีแถบไฮไลต์ มองไม่ออกว่าอันไหนใหม่" → แถวชิ้นที่เพิ่ม = พื้นเขียว + ป้าย "🆕 Part ใหม่"
              แถวของตู้ที่เพิ่ม = พื้นฟ้า + ป้าย "🆕 ตู้ใหม่" · กดแล้วเลื่อนไปที่แถวใหม่ + กะพริบ · บันทึก / ทิ้งแล้วไฮไลต์หาย
          • "Order Import ทำไม่ได้?" → Order นำเข้า (จากไฟล์) เก็บข้อมูลคนละแบบ ปุ่ม +Part / +ตู้ / ✕ เดิมไม่ทำอะไรเลย → บอกบนจอแทนการเงียบ
+       v175 (ผู้ใช้ 12/10/2026 11:10 "ทำไมช่องว่างมันห่างกันไป จัดให้มัน ok กว่านี้ให้หน่อย ไม่เอาแบบนี้ มันดูตลก"):
+         v171 ใส่ข้อความเผื่อเอจไว้ใต้ช่องแบบกว้างเท่าช่อง → ข้อความหัก 4 บรรทัด แถบสูง เหลือช่องว่างใต้ช่องจำนวนชุด / Item Id Set
+         ใหม่: ช่อง "✂️ เผื่อเอจ" ชิดขวาของแถบ · ข้อความ (= หัว … + ท้าย … · Order นี้: ขอบ …) เป็นบรรทัดเดียวใต้แถบ ชิดขวาตรงกับช่อง
+               ช่องอื่นในแถบกลับมาเรียงกึ่งกลางแบบเดิม (ไม่มีช่องว่างค้าง)
        ไม่แตะ: การบันทึก (ใช้ปุ่ม 💾 บันทึก ตัวเดิม) · ข้อมูล Order นำเข้า (ทางเดิมทั้งหมด) · ลำดับ/คำนวณของแถว AX
      ══════════════════════════════════════════════════════════════════════════ -->
 <style>
@@ -36244,10 +36248,10 @@ sxlApply = async function(changed){
 html[data-theme="dark"] .ov171 .bx{background:#1e293b;color:#e2e8f0}
 html[data-theme="dark"] .ov171 button{background:#0f172a;color:#e2e8f0;border-color:#475569}
 html[data-theme="dark"] .ov171 button.sv{background:#2563eb;color:#fff}
-#ea171{display:inline-flex;flex-direction:column;align-items:stretch;gap:2px;vertical-align:top}
-.ea171w{align-items:flex-start!important}
-#ea171 > #ea161Hint,#ea171 > #ea161Note{width:0;min-width:100%;white-space:normal;line-height:1.35}   /* กว้างเท่าช่องเผื่อเอจ · ข้อความยาวขึ้นบรรทัดใหม่ */
-#ea171 #ea161Note:empty{display:none}
+#contentBOM #ea161{margin-left:auto}   /* v175: ช่องเผื่อเอจชิดขวาของแถบ */
+#ea175cap{flex-basis:100%;order:99;text-align:right;font-size:11px;line-height:1.4;margin-top:-3px;white-space:normal}
+#ea175cap #ea161Hint,#ea175cap #ea161Note{display:inline;white-space:normal}
+#ea175cap #ea161Note:not(:empty)::before{content:'  ·  ';white-space:pre;color:var(--text3,#94a3b8)}
 .ov171 .ol{max-height:180px;overflow:auto;margin:4px 0 2px;padding-left:20px;font-size:12px}
 .ov171 .ol b{color:#c2410c}
 #contentAX tr.nw172p > td{background:#dcfce7!important}
@@ -36637,20 +36641,15 @@ window.addEventListener('beforeunload', function(e){
   return '';
 });
 
-/* ══ (3) ข้อความเผื่อเอจ → ใต้ช่องเผื่อเอจ ══ */
+/* ══ (3) ข้อความเผื่อเอจ → บรรทัดเดียวใต้แถบ ชิดขวาตรงช่องเผื่อเอจ (v175) ══ */
 function fixEA(){
   var lab = q('ea161'); if(!lab || !lab.parentElement) return;
-  var c = lab.parentElement;
-  if(c.id !== 'ea171'){
-    var nc = document.createElement('div'); nc.id = 'ea171';
-    c.insertBefore(nc, lab);
-    nc.appendChild(lab);
-    c = nc;
-  }
-  if(c.parentElement && !c.parentElement.classList.contains('ea171w')) c.parentElement.classList.add('ea171w');
+  var wrap = lab.parentElement;
+  var cap = q('ea175cap');
+  if(!cap || cap.parentElement !== wrap){ if(cap) cap.remove(); cap = document.createElement('div'); cap.id = 'ea175cap'; wrap.appendChild(cap); }
   var h = q('ea161Hint'), n = q('ea161Note');
-  if(h && h.parentElement !== c) c.appendChild(h);
-  if(n && n.parentElement !== c) c.appendChild(n);
+  if(h && h.parentElement !== cap) cap.appendChild(h);
+  if(n && n.parentElement !== cap) cap.appendChild(n);
 }
 var eaT = 0;
 function eaSoon(){ if(eaT) return; eaT = setTimeout(function(){ eaT = 0; try{ fixEA(); }catch(e){} }, 0); }
