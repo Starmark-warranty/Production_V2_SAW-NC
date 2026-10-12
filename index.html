@@ -9365,6 +9365,10 @@ async function sxlWrite(st){
  if(T.w&&T.w.deny)return sxlE(T.w.deny,'SXL_DENY',403);
  if(!SXL.dir)return sxlE('ยังบันทึกไม่ได้ — ต้องเลือกโฟลเดอร์ Server ที่ปุ่ม “ไฟล์กลาง” ก่อน','SXL_NODIR',403);
  if(!await sxlCanWrite())return sxlE('ยังไม่ได้อนุญาตให้บันทึกลงโฟลเดอร์ Server — กดปุ่ม “ไฟล์กลาง” → “เชื่อมตำแหน่งที่จำไว้” แล้วเลือกอนุญาตให้แก้ไข','SXL_NOPERM',403);
+ /* ───────── v176: ตารางหลักยังโหลดรอบแรกไม่เสร็จ — รอสูงสุด 90 วิ ก่อนเขียน ─────────
+    เดิม: มีตัวบันทึกเบื้องหลังตอนเปิดโปรแกรมที่เขียนก่อนตารางโหลดเสร็จ → SXL_NOBASE · โหมด Google Drive โหลดนานกว่าโฟลเดอร์ในเครื่อง เจอบ่อยขึ้น
+    ตอนนี้: กำลังโหลดรอบแรกอยู่ (SXL.loading) = รอให้ตารางพร้อมก่อนค่อยเขียน · ไม่ได้โหลดอยู่ = ตอบ NOBASE ทันทีแบบเดิม */
+ if(T.load!==false&&!T.lazy&&!S.ready&&SXL.loading){ var _lw0=Date.now(); while(!S.ready&&!S.err&&SXL.loading&&Date.now()-_lw0<90000) await new Promise(function(r){setTimeout(r,200)}) }
  if(T.load!==false&&!T.lazy&&!S.ready)return sxlE('ยังไม่ได้อ่านไฟล์ '+T.t+' — บันทึกไม่ได้จนกว่าจะอ่านข้อมูลเดิมครบ','SXL_NOBASE',409);
  return sxlLocked(async function(){try{return await sxlWriteIn(T,S,st)}catch(e){console.error('[ไฟล์กลาง] บันทึก',T.t,e);return sxlE('บันทึกลงโฟลเดอร์ Server ไม่สำเร็จ: '+(e&&e.message||e),'SXL_IO',500)}})}
 async function sxlWriteIn(T,S,st){
@@ -9701,6 +9705,1537 @@ db=SXL_DB;
 /* บูตของ Production จบที่ hideSplash — รอให้จบก่อนค่อยเอาข้อมูลจากไฟล์กลางมาใช้ */
 (function(){var _hs=hideSplash;hideSplash=function(){sxlBooted();return _hs.apply(this,arguments)}})();
 [4000,8000].forEach(function(ms){setTimeout(function(){try{if(document.title.indexOf('ไฟล์กลาง')<0)document.title+=' · ไฟล์กลาง (ทดลอง)'}catch(e){}},ms)});
+/* ═══════════════════════════════════════════════════════════════════════
+   GasFS 1.4 (2026-10-12) — โฟลเดอร์ Server เสมือนบน Google Drive ผ่าน Apps Script (StarNexus DB 0.3+)
+
+   ใช้ร่วมกันใน StarNexus และ Production V2: ทั้งสองโปรแกรมอ่าน/เขียนโฟลเดอร์ Server ผ่าน
+   File System Access API (getDirectoryHandle / getFileHandle / entries / getFile / createWritable / removeEntry)
+   ตัวนี้ทำตัวเหมือน FileSystemDirectoryHandle ทุกประการที่สองโปรแกรมใช้ แต่ส่งคำสั่งไป Apps Script แทน
+   → โค้ดไฟล์กลางเดิมไม่ต้องแก้ แค่ตอนเปิดใส่ SXL.dir = GasFS.root() แทนโฟลเดอร์ที่เลือก
+
+   ทำให้เร็วด้วย
+     · รวมคำขอที่เกิดพร้อมกัน (ภายใน ~15 ms) เป็นการเรียกครั้งเดียว — Apps Script เสียค่าเดินทาง ~1.2 วิ ต่อครั้ง
+     · getFile() ให้ชื่อ/ขนาด/เวลาแก้ได้ทันทีจากรายการ ไม่ดาวน์โหลดเนื้อจนกว่าจะอ่านจริง
+     · จำเนื้อไฟล์ไว้ใน IndexedDB ของเครื่อง (ตามเวลาแก้) — F5 / เปิดครั้งต่อไปไม่ต้องโหลดซ้ำ
+     · รายการไฟล์ขอแค่ส่วนที่เปลี่ยน (since) และไฟล์เล็กได้เนื้อมาพร้อมรายการเลย
+   ความลับ: URL + กุญแจ เก็บใน localStorage ของเบราว์เซอร์เครื่องนั้นเท่านั้น (ไม่ลงไฟล์งาน/โฟลเดอร์/การส่งออก)
+   ═══════════════════════════════════════════════════════════════════════ */
+var GasFS = (function () {
+  'use strict';
+  var VER = '1.4';
+  var PART = 4000000;          // base64 เกินนี้ แบ่งชิ้นอัปโหลด
+  var BATCH_MS = 15, BATCH_OPS = 40, BATCH_BYTES = 6000000;
+  var LIST_TTL = 1500;         // รายการโฟลเดอร์เดียวกันที่ขอซ้ำภายในเวลานี้ ใช้ของเดิม (กันไล่ซ้ำในรอบเดียว)
+  var LAZY_MIN = 2000000;      // ไฟล์ใหญ่กว่านี้ที่ยังไม่มีในเครื่อง getFile() คืนตัวอ่านภายหลัง (ไม่ดาวน์โหลดทันที)
+  var IDB = 'starnexus-gasfs-v1';
+
+  /* ───────── บีบ/คลาย ───────── */
+  var te = new TextEncoder();
+  function toBytes(x) {
+    if (x == null) return new Uint8Array(0);
+    if (typeof x === 'string') return te.encode(x);
+    if (x instanceof Uint8Array) return x;
+    if (x instanceof ArrayBuffer) return new Uint8Array(x);
+    if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+    throw new TypeError('ชนิดข้อมูลเขียนไม่ได้');
+  }
+  async function gz(bytes) {
+    var s = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    var u = new Uint8Array(await new Response(s).arrayBuffer()), bin = '';
+    for (var i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  async function ungz(b64) {
+    var bin = atob(b64), u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    var s = new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+  function dex(name, msg) { try { return new DOMException(msg, name); } catch (e) { var er = new Error(msg); er.name = name; return er; } }
+  function join(p, n) { return p ? p + '/' + n : n; }
+
+  /* ───────── ที่จำไฟล์ในเครื่อง (IndexedDB) ───────── */
+  var _db = null;
+  function idb() {
+    if (_db) return _db;
+    _db = new Promise(function (res) {
+      try {
+        var r = indexedDB.open(IDB, 1);
+        r.onupgradeneeded = function () { var d = r.result; if (!d.objectStoreNames.contains('f')) d.createObjectStore('f'); if (!d.objectStoreNames.contains('l')) d.createObjectStore('l'); };
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = r.onblocked = function () { res(null); };
+      } catch (e) { res(null); }
+    });
+    return _db;
+  }
+  async function idbGet(store, k) {
+    var d = await idb(); if (!d) return null;
+    return new Promise(function (res) {
+      try { var q = d.transaction(store).objectStore(store).get(k); q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); }; }
+      catch (e) { res(null); }
+    });
+  }
+  async function idbAll(store, prefix) {
+    var d = await idb(); if (!d) return [];
+    return new Promise(function (res) {
+      var out = [];
+      try {
+        var rq = d.transaction(store).objectStore(store).openCursor(IDBKeyRange.bound(prefix, prefix + '\uffff'));
+        rq.onsuccess = function () { var c = rq.result; if (!c) { res(out); return; } out.push([c.key, c.value]); c.continue(); };
+        rq.onerror = function () { res(out); };
+      } catch (e) { res(out); }
+    });
+  }
+  async function idbPut(store, k, v) {
+    var d = await idb(); if (!d) return;
+    try { var tx = d.transaction(store, 'readwrite'); if (v == null) tx.objectStore(store).delete(k); else tx.objectStore(store).put(v, k); } catch (e) {}
+  }
+
+  /* ═════════ ตัวเชื่อม 1 ชุด = Apps Script 1 ตัว ═════════ */
+  function FS(url, key, opt) {
+    this.url = String(url || '').trim(); this.key = String(key || '').trim(); this.opt = opt || {};
+    this.q = []; this.timer = 0;
+    this.L = {};          // รายการโฟลเดอร์ในหน่วยความจำ: p → {files:{n:{u,s,d?}}, dirs:Set, hi, at, ok}
+    this.C = new Map();   // เนื้อไฟล์ในหน่วยความจำ: p\nn → {u, c}
+    this.inflight = {};   // อ่านไฟล์ซ้ำระหว่างรอ = รอตัวเดียวกัน
+    this.inrec = {};      // 1.4: p\nn → {es, fg, done} — การอ่านนั้นมีคนรอ (fg) หรือโหลดล่วงหน้าเฉย ๆ
+    this.st = { calls: 0, ops: 0, ms: 0, last: 0, err: '', bytesUp: 0, bytesDown: 0, cacheHit: 0, trace: [],
+                rx: 0, need: 0, got: 0, nNeed: 0, nGot: 0 };   // 1.2: rx = ไบต์ที่รับแล้ว (นับระหว่างรับ) · need/got = ขนาดไฟล์ที่ต้องดาวน์โหลด/ได้แล้ว · nNeed/nGot = จำนวนไฟล์
+    this.cache = this.opt.cache !== false;
+  }
+  FS.prototype.root = function (name) { return new DirH(this, '', name || 'Server (Google Drive)'); };
+
+  /* ── ส่งคำขอ: รวมก้อน ── */
+  FS.prototype.call = function (op) {
+    var self = this;
+    return new Promise(function (res, rej) {
+      var size = JSON.stringify(op).length;
+      self.st.trace.push([Date.now(), op.a, op.p != null ? op.p : (op.names ? op.names.length + 'f' : '')]); if (self.st.trace.length > 80) self.st.trace.shift();   // ไว้ดูว่าเรียกอะไรบ้าง (หน้าไฟล์กลาง)
+      var solo = !!op._solo; if (solo) delete op._solo;                       // ไฟล์ใหญ่: แยกส่ง ไม่ให้คำตอบก้อนเดียวใหญ่เกิน
+      self.q.push({ op: op, res: res, rej: rej, size: size, solo: solo });
+      if (solo || size > BATCH_BYTES / 2) { clearTimeout(self.timer); self.timer = 0; self._flush(); return; }
+      if (!self.timer) self.timer = setTimeout(function () { self.timer = 0; self._flush(); }, BATCH_MS);
+    });
+  };
+  FS.prototype._flush = function () {
+    while (this.q.length) {
+      var take = [], bytes = 0;
+      while (this.q.length && take.length < BATCH_OPS) {
+        var it = this.q[0];
+        if (take.length && (it.solo || bytes + it.size > BATCH_BYTES)) break;
+        if (it.solo) { take.push(this.q.shift()); break; }
+        take.push(this.q.shift()); bytes += it.size;
+      }
+      this._send(take);
+    }
+  };
+  FS.prototype._send = async function (items, tryNo) {
+    tryNo = tryNo || 0;
+    var self = this, t0 = performance.now();
+    var body = items.length === 1 ? Object.assign({ key: this.key }, items[0].op) : { key: this.key, ops: items.map(function (x) { return x.op; }) };
+    var txt = JSON.stringify(body), r, out;
+    self.st.calls++; self.st.ops += items.length; self.st.bytesUp += txt.length;
+    var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var tm = ac ? setTimeout(function () { try { ac.abort(); } catch (e) {} }, txt.length > 2e6 ? 300000 : 120000) : 0;
+    try {
+      r = await fetch(this.url, { method: 'POST', body: txt, redirect: 'follow', signal: ac ? ac.signal : undefined });
+      /* GasFS 1.2: อ่านคำตอบทีละก้อน นับไบต์ที่รับแล้วระหว่างรับ (หน้าต่างโหลดบอก MB ได้ ไม่ค้าง 0% จนไฟล์มาครบ) */
+      var rt;
+      if (r.body && r.body.getReader && typeof TextDecoder !== 'undefined') {
+        var rd = r.body.getReader(), dec = new TextDecoder(), chunks = [];
+        for (;;) { var ch = await rd.read(); if (ch.done) break; self.st.rx += ch.value.length; chunks.push(dec.decode(ch.value, { stream: true })); }
+        chunks.push(dec.decode()); rt = chunks.join('');
+      } else { rt = await r.text(); self.st.rx += rt.length; }
+      self.st.bytesDown += rt.length;
+      try { out = JSON.parse(rt); } catch (e) { throw dex('NetworkError', 'Apps Script ตอบไม่ใช่ข้อมูล (HTTP ' + r.status + ') — ตรวจว่า Deploy เป็น Web app · Who has access = Anyone'); }
+    } catch (e) {
+      clearTimeout(tm);
+      if (tryNo < 2 && (e.name === 'TypeError' || e.name === 'AbortError')) {          // เน็ตสะดุด: ลองใหม่ 2 ครั้ง
+        await new Promise(function (z) { setTimeout(z, 800 * (tryNo + 1)); });
+        return self._send(items, tryNo + 1);
+      }
+      self.st.err = e.message || String(e);
+      items.forEach(function (x) { x.rej(e.name === 'AbortError' ? dex('NetworkError', 'Apps Script ไม่ตอบ (หมดเวลา)') : e); });
+      return;
+    }
+    clearTimeout(tm);
+    self.st.ms = Math.round(performance.now() - t0); self.st.last = Date.now();
+    var results = items.length === 1 ? [out] : (out.ok ? out.results : items.map(function () { return out; }));
+    var retry = [];
+    items.forEach(function (x, i) {
+      var o = results[i] || out;
+      if (o && o.ok) { self.st.err = ''; x.res(o); return; }
+      if (o && o.code === 503 && /บันทึกอยู่หลายรายการ/.test(o.error || '') && (x.tries || 0) < 3) { x.tries = (x.tries || 0) + 1; retry.push(x); return; }
+      var err = dex(o && o.code === 404 ? 'NotFoundError' : o && o.code === 409 ? 'InvalidModificationError' : o && o.code === 401 ? 'NotAllowedError' : 'NetworkError', (o && o.error) || 'Apps Script ผิดพลาด');
+      err.code2 = o && o.code; self.st.err = err.message; x.rej(err);
+    });
+    if (retry.length) setTimeout(function () { retry.forEach(function (x) { self.q.push(x); }); self._flush(); }, 700);
+  };
+
+  /* ── รายการโฟลเดอร์ ── */
+  FS.prototype.list = async function (p, fresh) {
+    var L = this.L[p], now = Date.now(), self = this;
+    if (L && L.ok && !fresh && (now - L.at < LIST_TTL || now < (L.warm || 0))) return L;
+    /* รอบตรวจ: ขอรายการทุกโฟลเดอร์ในการเรียกเดียว (fsTree) แทนทีละโฟลเดอร์ · Apps Script รุ่นเก่าไม่มี = ทีละโฟลเดอร์แบบเดิม */
+    if (!fresh && this.tree !== false) {
+      var okT = await this._treeRefresh();
+      if (okT === false) this.tree = false;
+      else { var L2 = this.L[p]; if (L2 && L2.ok) return L2; L = this.L[p]; }
+    }
+    if (L && L.pending) return L.pending;
+    if (!L) {
+      L = this.L[p] = { files: {}, dirs: new Set(), hi: 0, at: 0, ok: false };
+      if (this.cache) {                         // รายการรอบก่อนที่จำไว้ → ขอแค่ส่วนที่เปลี่ยน
+        var sv = await idbGet('l', this.url + '\n' + p);
+        if (sv && sv.files && now - (sv.at || 0) < 7 * 86400000) { L.files = sv.files; L.hi = sv.hi || 0; L.ver = sv.ver || 0; L.dirs = new Set(sv.dirs || []); }
+      }
+    }
+    L.pending = (async function () {
+      try {
+        var o = await self.call({ a: 'fsList', p: p, since: L.hi || 0, inl: 1 });
+        if (L.hi && (o.ver || 0) < (L.ver || 0)) {            // ฝั่ง Drive ถูกล้าง/เริ่มใหม่ → รายการที่จำไว้ใช้ไม่ได้ ขอใหม่ทั้งหมด
+          L.hi = 0; o = await self.call({ a: 'fsList', p: p, since: 0, inl: 1 });
+        }
+        if (!L.hi) { var keepLocal = {}; Object.keys(L.files).forEach(function (n) { if (L.files[n].local) keepLocal[n] = L.files[n]; }); L.files = keepLocal; }
+        o.files.forEach(function (f) {
+          if (f.d) { delete L.files[f.n]; return; }
+          L.files[f.n] = { u: f.u, s: f.s || 0 };
+          if (f.c != null) { self.C.set(p + '\n' + f.n, { u: f.u, c: f.c }); if (self.cache) idbPut('f', self.url + '\n' + p + '\n' + f.n, { u: f.u, c: f.c }); }
+        });
+        L.hi = Math.max(L.hi || 0, o.hi || 0); L.ver = o.ver || 0; L.dirs = new Set(o.dirs || []); L.at = Date.now(); L.ok = true;
+        if (self.cache) idbPut('l', self.url + '\n' + p, { files: savable(L.files), hi: L.hi, ver: L.ver, dirs: Array.from(L.dirs), at: Date.now() });
+        return L;
+      } catch (e) {
+        if (e.name === 'NotFoundError') { delete self.L[p]; if (self.cache) idbPut('l', self.url + '\n' + p, null); }
+        throw e;
+      } finally { L.pending = null; }
+    })();
+    return L.pending;
+  };
+  function savable(files) { var o = {}; Object.keys(files).forEach(function (n) { if (!files[n].local) o[n] = files[n]; }); return o; }
+  /* ไล่ทางผ่านโฟลเดอร์ (getDirectoryHandle/getFileHandle): ใช้รายการที่มีอยู่แล้วแม้เก่า — โฟลเดอร์ไม่ค่อยเปลี่ยน
+     ไม่เจอค่อยขอใหม่ · ลดการเรียกซ้อนกันหลายชั้นในรอบตรวจ (บนสุด → _changes → ตาราง) */
+  FS.prototype.listCached = async function (p) { var L = this.L[p]; if (L && L.ok) return L; return this.list(p); };
+  /* ไม่เจอในรายการที่มี: รายการยังสด (เพิ่งขอ / อยู่ในช่วงอุ่นเครื่อง) = เชื่อได้ว่าไม่มีจริง · เก่าแล้ว = ขอใหม่ก่อนตัดสิน
+     (ตารางที่ยังไม่มีโฟลเดอร์ใน _changes เช่น part_index · furnitech_share ถูกถามทุกรอบ — เดิมขอใหม่ทุกครั้ง ครั้งละ ~1.2 วิ) */
+  FS.prototype.isFresh = function (L) { var now = Date.now(); return !!(L && L.ok && (now - L.at < LIST_TTL || now < (L.warm || 0))); };
+  /* อุ่นเครื่องตอนเปิดโปรแกรม: รายการทุกโฟลเดอร์ในการเรียกเดียว (fsTree) แล้วใช้ต่อได้ 20 วิ
+     ไม่ต้องไล่ทีละชั้นทีละตาราง (เดิม F5 เรียกต่อกัน ~16 ครั้ง ≈ 18 วิ) · รอบตรวจหลังจากนั้นขอใหม่ตามปกติ */
+  FS.prototype._treeRefresh = function () {
+    var self = this;
+    if (this._treeP) return this._treeP;
+    this._treeP = (async function () { try { return await self.warm(LIST_TTL); } finally { self._treeP = null; } })();
+    return this._treeP;
+  };
+  FS.prototype.warm = async function (ms) {
+    var self = this, since = {}, pre = this.url + '\n', now = Date.now();
+    if (this.cache && !this._idbDone) {
+      this._idbDone = true;
+      var all = await idbAll('l', pre);
+      all.forEach(function (kv) {
+        var p = kv[0].slice(pre.length), sv = kv[1];
+        if (!sv || !sv.files || now - (sv.at || 0) > 7 * 86400000 || self.L[p]) return;
+        self.L[p] = { files: sv.files, hi: sv.hi || 0, ver: sv.ver || 0, dirs: new Set(sv.dirs || []), at: 0, ok: false };
+        since[p] = sv.hi || 0;
+      });
+    }
+    Object.keys(this.L).forEach(function (p) { if (self.L[p].hi) since[p] = self.L[p].hi; });
+    var o;
+    try { o = await this.call({ a: 'fsTree', since: since, inl: 1 }); }
+    catch (e) { if (/ไม่รู้จักคำสั่ง/.test(e.message || '')) { this.tree = false; return false; } throw e; }   // Apps Script รุ่นเก่า: ไล่ทีละชั้นแบบเดิม
+    var until = Date.now() + (ms || 20000);
+    Object.keys(o.tree).forEach(function (p) {
+      var r = o.tree[p], L = self.L[p] || (self.L[p] = { files: {}, dirs: new Set(), hi: 0, at: 0, ok: false });
+      if (L.hi && (r.ver || 0) < (L.ver || 0)) { L.files = {}; }       // ฝั่ง Drive เริ่มใหม่ — ใช้ชุดนี้ไม่ได้ (ปล่อยให้ list ขอเต็มรอบหน้า)
+      if (!since[p]) L.files = {};
+      r.files.forEach(function (f) {
+        if (f.d) { delete L.files[f.n]; return; }
+        L.files[f.n] = { u: f.u, s: f.s || 0 };
+        if (f.c != null) { self.C.set(p + '\n' + f.n, { u: f.u, c: f.c }); if (self.cache) idbPut('f', self.url + '\n' + p + '\n' + f.n, { u: f.u, c: f.c }); }
+      });
+      L.hi = Math.max(L.hi || 0, r.hi || 0); L.ver = r.ver || 0; L.dirs = new Set(r.dirs || []); L.at = Date.now(); L.ok = true; L.warm = until;
+      if (self.cache) idbPut('l', self.url + '\n' + p, { files: savable(L.files), hi: L.hi, ver: L.ver, dirs: Array.from(L.dirs), at: Date.now() });
+    });
+    Object.keys(this.L).forEach(function (p) { if (!o.tree[p]) delete self.L[p]; });   // โฟลเดอร์ที่ถูกลบไปแล้ว
+    return true;
+  };
+  /* โหลดเนื้อไฟล์ที่ยังไม่มีในเครื่องล่วงหน้าแบบขนาน (เปิดโปรแกรมครั้งแรกบนเครื่องใหม่)
+     เดิมโปรแกรมอ่านทีละตาราง ทีละไฟล์ = เรียกต่อกันหลายสิบครั้ง · ตอนนี้ยิงพร้อมกัน ตัวรวมก้อนจัดเป็นไม่กี่ครั้ง
+     ฝั่ง Apps Script อ่านไฟล์ในก้อนเดียวกันแบบขนาน · ไฟล์ใหญ่แยกส่งทีละไฟล์ · keep(p,n) = เลือกเฉพาะที่ต้องใช้ */
+  FS.prototype.prefetch = async function (keep) {
+    var self = this, jobs = [];
+    for (var p in this.L) {
+      var L = this.L[p]; if (!L || !L.ok) continue;
+      for (var n in L.files) {
+        var f = L.files[n]; if (f.local || (keep && !keep(p, n, f))) continue;
+        var m = this.C.get(p + '\n' + n); if (m && m.u === f.u) continue;
+        jobs.push([p, n, f.u]);
+      }
+    }
+    if (this.cache) {                                      // มีใน IndexedDB แล้วไม่ต้องโหลด
+      var left = [];
+      await Promise.all(jobs.map(async function (j) { var d = await idbGet('f', self.url + '\n' + j[0] + '\n' + j[1]); if (d && d.u === j[2]) self.C.set(j[0] + '\n' + j[1], d); else left.push(j); }));
+      jobs = left;
+    }
+    await Promise.all(jobs.map(function (j) { return self.readC(j[0], j[1], j[2], true).catch(function () {}); }));   // 1.4: โหลดล่วงหน้า = ไม่นับว่ามีคนรอ
+    return jobs.length;
+  };
+  FS.prototype._touch = function (p, n, u, s, c) {        // หลังเขียนเอง: อัปเดตรายการ/ที่จำ ทันที
+    var L = this.L[p];
+    if (L) { if (u == null) delete L.files[n]; else L.files[n] = { u: u, s: s }; }
+    var k = p + '\n' + n;
+    if (u == null) { this.C.delete(k); if (this.cache) idbPut('f', this.url + '\n' + k, null); return; }
+    if (c != null) { this.C.set(k, { u: u, c: c }); if (this.cache) idbPut('f', this.url + '\n' + k, { u: u, c: c }); }
+  };
+  FS.prototype._dirAdd = function (p) {
+    if (!p) return;
+    var i = p.lastIndexOf('/'), par = i < 0 ? '' : p.slice(0, i), nm = i < 0 ? p : p.slice(i + 1);
+    if (this.L[par]) this.L[par].dirs.add(nm);
+    this._dirAdd(par);
+  };
+
+  /* ── อ่านเนื้อไฟล์ (จำในเครื่องตามเวลาแก้) ── */
+  /* ───────── GasFS 1.4: แยก “โหลดล่วงหน้า” ออกจาก “มีคนรออยู่” ─────────
+     เดิม (1.2) ทุกการดาวน์โหลดนับเข้า need/nNeed → ป้าย/แถบความคืบหน้านับไฟล์ที่โหลดล่วงหน้าเบื้องหลังด้วย
+     ผู้ใช้ 12/10/2026 16:17 (Production v179): ป้าย “กำลังโหลดจาก Google Drive · 0.0 MB / 1.3 MB · 0/120 ไฟล์” โผล่เฉย ๆ หลังเปิดโปรแกรม
+       = ไฟล์ที่โหลดล่วงหน้า (ไม่มีใครรอ) · ตอนนี้: bg=true ไม่นับ จนกว่าจะมีคนมารอไฟล์ตัวเดียวกัน (นับตอนนั้น · นับครั้งเดียว) */
+  FS.prototype.readC = async function (p, n, u, bg) {
+    var k = p + '\n' + n, self = this;
+    var m = this.C.get(k);
+    if (m && (u == null || m.u === u)) { this.st.cacheHit++; return m.c; }
+    if (this.cache) {
+      var d = await idbGet('f', this.url + '\n' + k);
+      if (d && (u == null || d.u === u)) { this.C.set(k, d); this.st.cacheHit++; return d.c; }
+    }
+    if (this.inflight[k]) {
+      var r0 = this.inrec[k]; if (!bg && r0 && !r0.fg && !r0.done) { r0.fg = true; self.st.need += r0.es; self.st.nNeed++; }   // 1.4: มีคนมารอไฟล์ที่กำลังโหลดล่วงหน้า
+      return this.inflight[k];
+    }
+    var L = this.L[p], big = !!(L && L.files[n] && L.files[n].s > 1500000), es = (L && L.files[n] && L.files[n].s) || 0;
+    var rec = { es: es, fg: !bg, done: false }; this.inrec[k] = rec;
+    if (rec.fg) { self.st.need += es; self.st.nNeed++; }      // 1.2: ไว้บอกความคืบหน้าการดาวน์โหลด (1.4: เฉพาะที่มีคนรอ)
+    var pr = (async function () {
+      try {
+      var o = await self.call({ a: 'fsRead', p: p, names: [n], _solo: big });
+      var f = o.files[0];
+      if (!f || f.missing) throw dex('NotFoundError', 'ไม่พบไฟล์ ' + join(p, n));
+      var c = f.c;
+      if (f.parts) {
+        var arr = await Promise.all(Array.from({ length: f.parts }, function (_, i) { return self.call({ a: 'fsReadPart', p: p, n: n, i: i }); }));
+        c = arr.map(function (x) { return x.c; }).join('');
+      }
+      self.C.set(k, { u: f.u, c: c });
+      if (self.cache) idbPut('f', self.url + '\n' + k, { u: f.u, c: c });
+      return c;
+      } finally { rec.done = true; if (rec.fg) { self.st.got += es; self.st.nGot++; } }
+    })();
+    this.inflight[k] = pr;
+    try { return await pr; } finally { delete this.inflight[k]; if (self.inrec[k] === rec) delete self.inrec[k]; }
+  };
+  FS.prototype.readBytes = async function (p, n, u) { return ungz(await this.readC(p, n, u)); };
+
+  /* ── เขียนไฟล์ ── */
+  FS.prototype.write = async function (p, n, bytes) {
+    var c = await gz(bytes), o, self = this;
+    if (c.length > PART) {
+      var parts = [];
+      for (var i = 0; i < c.length; i += PART) parts.push(c.slice(i, i + PART));
+      var pids = [];
+      for (var j = 0; j < parts.length; j++) pids.push((await self.call({ a: 'fsPartPut', c: parts[j], _solo: true })).pid);
+      o = await this.call({ a: 'fsWrite', p: p, n: n, parts: pids, s: c.length });
+    } else {
+      o = await this.call({ a: 'fsWrite', p: p, n: n, c: c, _solo: c.length > 20000 });   // ไฟล์ไม่เล็ก: ส่งแยก ให้ Apps Script ทำขนานกันได้ (ก้อนเดียวกันทำทีละคำสั่ง)
+    }
+    var f = o.files[0];
+    this._dirAdd(p);
+    this._touch(p, n, f.u, c.length, c);
+    return f;
+  };
+  FS.prototype.del = async function (p, n) {
+    await this.call({ a: 'fsDel', p: p, n: n });
+    this._touch(p, n, null);
+  };
+
+  /* ═════════ ตัวแทนโฟลเดอร์ ═════════ */
+  function DirH(fs, p, name) { this._fs = fs; this._p = p; this.name = name; this.kind = 'directory'; }
+  DirH.prototype.queryPermission = async function () { return 'granted'; };
+  DirH.prototype.requestPermission = async function () { return 'granted'; };
+  DirH.prototype.isSameEntry = async function (o) { return !!(o && o._fs === this._fs && o._p === this._p && o.kind === this.kind && o._n === this._n); };
+  DirH.prototype.getDirectoryHandle = async function (name, opt) {
+    name = String(name); var cp = join(this._p, name);
+    var L = await this._fs.listCached(this._p);
+    if (!L.dirs.has(name) && !L.files[name] && !(opt && opt.create) && !this._fs.isFresh(L)) L = await this._fs.list(this._p, true);   // สร้างอยู่แล้ว (fsMkdir ซ้ำได้) ไม่ต้องถามก่อน
+    if (L.files[name]) throw dex('TypeMismatchError', name + ' เป็นไฟล์ ไม่ใช่โฟลเดอร์');
+    if (!L.dirs.has(name)) {
+      if (!(opt && opt.create)) throw dex('NotFoundError', 'ไม่มีโฟลเดอร์ ' + cp);
+      await this._fs.call({ a: 'fsMkdir', p: cp });
+      this._fs._dirAdd(cp);
+      this._fs.L[cp] = { files: {}, dirs: new Set(), hi: 0, at: Date.now(), ok: true };
+    }
+    return new DirH(this._fs, cp, name);
+  };
+  DirH.prototype.getFileHandle = async function (name, opt) {
+    name = String(name);
+    var L = await this._fs.listCached(this._p);
+    if (!L.files[name] && !L.dirs.has(name) && !(opt && opt.create) && !this._fs.isFresh(L)) L = await this._fs.list(this._p, true);   // สร้าง = จะเขียนทับอยู่แล้ว ไม่ต้องถามก่อน
+    if (L.dirs.has(name)) throw dex('TypeMismatchError', name + ' เป็นโฟลเดอร์ ไม่ใช่ไฟล์');
+    if (!L.files[name]) {
+      if (!(opt && opt.create)) throw dex('NotFoundError', 'ไม่มีไฟล์ ' + join(this._p, name));
+      /* สร้างแบบรอเขียน: ยังไม่ส่งไฟล์ว่างขึ้นไป (โปรแกรมเขียนทันทีอยู่แล้ว = ส่งครั้งเดียวแทนสองครั้ง)
+         ระหว่างนี้เครื่องนี้เห็นเป็นไฟล์ว่าง ส่วนเครื่องอื่นจะเห็นเมื่อเขียนเสร็จ */
+      L.files[name] = { u: Date.now(), s: 0, local: true };
+    }
+    return new FileH(this._fs, this._p, name);
+  };
+  DirH.prototype.removeEntry = async function (name, opt) {
+    name = String(name);
+    var L = await this._fs.listCached(this._p);
+    if (!L.files[name] && !L.dirs.has(name)) L = await this._fs.list(this._p, true);
+    if (L.files[name] && L.files[name].local) { delete L.files[name]; return; }
+    if (L.files[name]) { await this._fs.del(this._p, name); return; }
+    if (L.dirs.has(name)) {
+      var cp = join(this._p, name);
+      await this._fs.call({ a: 'fsRmdir', p: cp, recursive: !!(opt && opt.recursive) });
+      L.dirs.delete(name);
+      var self = this; Object.keys(this._fs.L).forEach(function (k) { if (k === cp || k.indexOf(cp + '/') === 0) delete self._fs.L[k]; });
+      return;
+    }
+    throw dex('NotFoundError', 'ไม่มี ' + join(this._p, name));
+  };
+  DirH.prototype.entries = async function* () {
+    var L = await this._fs.list(this._p), fs = this._fs, p = this._p;
+    /* GasFS 1.3: ไฟล์ที่เพิ่งสร้างแต่ยังเขียนไม่เสร็จ (รอส่งขึ้น Drive) ไม่โชว์ในรายการ
+       เดิม: รอบตรวจ 10 วิ เห็นชื่อไฟล์ใหม่ระหว่างที่ตัวเขียนยังส่งไม่เสร็จ (ไฟล์ใหญ่ส่งหลายวินาที) อ่านได้ไฟล์ว่าง
+       → “อ่าน app_settings …json ไม่ได้ — Unexpected end of JSON input ×3” (ผู้ใช้ 12/10/2026 15:33 ถามว่าเตือนอะไร) · ข้อมูลไม่เสีย แต่เตือนให้ตกใจ
+       ตอนนี้: ข้ามไฟล์ที่ยังรอเขียน (เปิดด้วยชื่อตรง ๆ ยังได้เหมือนเดิม) */
+    var dirs = Array.from(L.dirs), files = Object.keys(L.files).filter(function (n) { return !L.files[n].local; });
+    for (var i = 0; i < dirs.length; i++) yield [dirs[i], new DirH(fs, join(p, dirs[i]), dirs[i])];
+    for (var j = 0; j < files.length; j++) yield [files[j], new FileH(fs, p, files[j])];
+  };
+  DirH.prototype.values = async function* () { for await (var e of this.entries()) yield e[1]; };
+  DirH.prototype.keys = async function* () { for await (var e of this.entries()) yield e[0]; };
+  DirH.prototype[Symbol.asyncIterator] = DirH.prototype.entries;
+  DirH.prototype.resolve = async function (h) { if (!h || h._fs !== this._fs) return null; var full = h._n != null ? join(h._p, h._n) : h._p; if (this._p && full.indexOf(this._p + '/') !== 0) return this._p === full ? [] : null; return (this._p ? full.slice(this._p.length + 1) : full).split('/').filter(Boolean); };
+
+  /* ═════════ ตัวแทนไฟล์ ═════════ */
+  function FileH(fs, p, name) { this._fs = fs; this._p = p; this._n = name; this.name = name; this.kind = 'file'; }
+  FileH.prototype.queryPermission = DirH.prototype.queryPermission;
+  FileH.prototype.requestPermission = DirH.prototype.requestPermission;
+  FileH.prototype.isSameEntry = DirH.prototype.isSameEntry;
+  FileH.prototype.getFile = async function () {
+    var fs = this._fs, L = await fs.list(this._p), meta = L.files[this._n];
+    if (!meta) throw dex('NotFoundError', 'ไม่มีไฟล์ ' + join(this._p, this._n));
+    if (meta.local) return new File([], this._n, { lastModified: meta.u, type: mime(this._n) });
+    var k = this._p + '\n' + this._n, m = fs.C.get(k);
+    var have = m && m.u === meta.u;
+    if (!have && fs.cache && meta.s < LAZY_MIN * 4) { var d = await idbGet('f', fs.url + '\n' + k); if (d && d.u === meta.u) { fs.C.set(k, d); have = true; } }
+    if (have || meta.s < LAZY_MIN) {                         // เล็ก/มีในเครื่องแล้ว = File จริง (ใช้ได้ทุกที่)
+      var b = await fs.readBytes(this._p, this._n, meta.u);
+      return new File([b], this._n, { lastModified: meta.u, type: mime(this._n) });
+    }
+    return new LazyFile(fs, this._p, this._n, meta);           // ใหญ่และยังไม่มี = อ่านตอนใช้จริง
+  };
+  FileH.prototype.createWritable = async function (opt) {
+    var keep = !!(opt && opt.keepExistingData), init = null;
+    if (keep) { try { init = await (await this.getFile()).arrayBuffer(); } catch (e) { init = null; } }
+    return new Writable(this, init);
+  };
+  function mime(n) { return /\.json$/i.test(n) ? 'application/json' : /\.csv$/i.test(n) ? 'text/csv' : /\.xls[xm]$/i.test(n) ? 'application/vnd.ms-excel' : ''; }
+
+  /* ไฟล์ใหญ่ที่ยังไม่โหลด: ชื่อ/ขนาด/เวลาแก้พร้อมใช้ · เนื้อโหลดตอนเรียก text/arrayBuffer/stream */
+  function LazyFile(fs, p, n, meta) { this._fs = fs; this._p = p; this.name = n; this.size = meta.s; this.lastModified = meta.u; this.type = mime(n); this._u = meta.u; this._b = null; this.webkitRelativePath = ''; }
+  LazyFile.prototype._bytes = async function () { if (!this._b) this._b = await this._fs.readBytes(this._p, this.name, this._u); return this._b; };
+  LazyFile.prototype.arrayBuffer = async function () { var b = await this._bytes(); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+  LazyFile.prototype.text = async function () { return new TextDecoder().decode(await this._bytes()); };
+  LazyFile.prototype.bytes = async function () { return await this._bytes(); };
+  LazyFile.prototype.stream = function () {
+    var self = this, done = false;
+    return new ReadableStream({ async pull(ctl) {
+      if (done) { ctl.close(); return; }
+      var b = await self._bytes(); done = true;
+      for (var i = 0; i < b.length; i += 1 << 20) ctl.enqueue(b.subarray(i, Math.min(b.length, i + (1 << 20))));
+      ctl.close();
+    } });
+  };
+  LazyFile.prototype.slice = function (a, z, type) {
+    var self = this;
+    return { size: Math.max(0, (z == null ? self.size : z) - (a || 0)), type: type || '',
+      arrayBuffer: async function () { return (await self.arrayBuffer()).slice(a || 0, z); },
+      text: async function () { return new TextDecoder().decode((await self.arrayBuffer()).slice(a || 0, z)); },
+      stream: function () { return new Blob([]).stream(); } };
+  };
+  LazyFile.prototype.toBlob = async function () { return new File([await this._bytes()], this.name, { lastModified: this.lastModified, type: this.type }); };
+
+  /* ตัวเขียน: สะสมไว้ในหน่วยความจำ ปิด (close) แล้วค่อยส่งทีเดียว — ระหว่างยังไม่ปิด ไฟล์เดิมไม่เปลี่ยน (เหมือนของจริง) */
+  function Writable(fh, init) { this._fh = fh; this._buf = init ? new Uint8Array(init) : new Uint8Array(0); this._pos = 0; this._closed = false; this.locked = false; }
+  Writable.prototype._put = function (bytes, at) {
+    var end = at + bytes.length;
+    if (end > this._buf.length) { var nb = new Uint8Array(end); nb.set(this._buf); this._buf = nb; }
+    this._buf.set(bytes, at); this._pos = end;
+  };
+  Writable.prototype.write = async function (data) {
+    if (this._closed) throw dex('InvalidStateError', 'ปิดไปแล้ว');
+    if (data && typeof data === 'object' && !(data instanceof Blob) && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data) && data.type) {
+      if (data.type === 'seek') { this._pos = +data.position || 0; return; }
+      if (data.type === 'truncate') { var sz = +data.size || 0, nb = new Uint8Array(sz); nb.set(this._buf.subarray(0, Math.min(sz, this._buf.length))); this._buf = nb; if (this._pos > sz) this._pos = sz; return; }
+      if (data.type === 'write') { if (data.position != null) this._pos = +data.position; data = data.data; }
+    }
+    var bytes = (data instanceof Blob) ? new Uint8Array(await data.arrayBuffer()) : toBytes(data);
+    this._put(bytes, this._pos);
+  };
+  Writable.prototype.seek = async function (pos) { this._pos = +pos || 0; };
+  Writable.prototype.truncate = async function (size) { return this.write({ type: 'truncate', size: size }); };
+  Writable.prototype.close = async function () {
+    if (this._closed) return; this._closed = true;
+    await this._fh._fs.write(this._fh._p, this._fh._n, this._buf);
+  };
+  Writable.prototype.abort = async function () { this._closed = true; this._buf = null; };
+  Writable.prototype.getWriter = function () { var self = this; return { write: function (d) { return self.write(d); }, close: function () { return self.close(); }, abort: function () { return self.abort(); }, releaseLock: function () {} }; };
+
+  /* ═════════ ย้ายโฟลเดอร์ Server ในเครื่องขึ้น Drive ═════════
+     src = FileSystemDirectoryHandle ของโฟลเดอร์ในเครื่อง
+     opt.skip(path, name) → true = ไม่อัปโหลด (เช่น .xlsm ที่มีรหัสผ่าน / ไฟล์รุ่นเก่าที่ถูกแทนแล้ว)
+     opt.onPlan(plan) / opt.onProgress(st) / opt.signal (หยุดกลางทาง) · อัปซ้ำได้ ไฟล์ที่มีแล้วขนาดเท่าเดิมจะข้าม */
+  FS.prototype.migrate = async function (src, opt) {
+    opt = opt || {};
+    /* ───────── GasFS 1.1: ไล่รายการไฟล์เร็วขึ้น + บอกความคืบหน้าระหว่างไล่ ─────────
+       เดิม: getFile() ทีละไฟล์ต่อกัน (ต้องรู้ขนาด) และไม่บอกอะไรจนไล่ครบ — โฟลเดอร์ Server บนเครื่องอื่นในวง LAN
+             ไฟล์ละหลายสิบ ms × ไฟล์เป็นหมื่น = ค้างที่ “กำลังอ่านรายการไฟล์…” หลายนาทีโดยไม่รู้ว่ายังทำงานอยู่
+       ตอนนี้: getFile() พร้อมกันทีละ SCAN_PAR ไฟล์ · opt.onScan(scan) ทุก ~250 ms (จำนวนไฟล์/โฟลเดอร์/MB/โฟลเดอร์ที่กำลังอ่าน)
+               กดยกเลิกระหว่างไล่ได้ (opt.signal) · ไฟล์ที่อ่านไม่ได้ (ถูกลบ/ล็อกอยู่) ข้ามแล้วแจ้งในรายการข้าม แทนที่จะหยุดทั้งหมด */
+    var SCAN_PAR = 16;
+    var self = this, plan = { files: [], bytes: 0, skipped: [], dirs: 0, unreadable: [] };
+    var scan = { seen: 0, files: 0, dirs: 0, bytes: 0, skipped: 0, path: '', t0: Date.now() }, lastTick = 0;
+    var aborted = function () { return !!(opt.signal && opt.signal.aborted); };
+    function tick(force) {
+      if (!opt.onScan) return;
+      var now = Date.now(); if (!force && now - lastTick < 250) return; lastTick = now;
+      scan.dirs = plan.dirs; scan.bytes = plan.bytes; scan.skipped = plan.skipped.length;
+      try { opt.onScan(scan); } catch (e) {}
+    }
+    async function walk(dh, p) {
+      if (aborted()) return;
+      plan.dirs++; scan.path = p; tick();
+      var names = [];
+      for await (var e of dh.entries()) { names.push(e); scan.seen++; if (!(scan.seen & 255)) { tick(); if (aborted()) return; } }
+      names.sort(function (a, b) { return a[0] < b[0] ? -1 : 1; });
+      var inDir = names.filter(function (e) { return e[1].kind === 'file'; }).map(function (e) { return e[0]; });
+      var subs = [], need = [];
+      for (var i = 0; i < names.length; i++) {
+        var n = names[i][0], h = names[i][1];
+        if (h.kind === 'directory') { if (opt.skip && opt.skip(join(p, n), n, true, inDir)) { plan.skipped.push(join(p, n) + '/'); continue; } subs.push([h, join(p, n)]); continue; }
+        if (opt.skip && opt.skip(p, n, false, inDir)) { plan.skipped.push(join(p, n)); continue; }
+        var it = { p: p, n: n, h: h, size: 0 }; plan.files.push(it); need.push(it);
+      }
+      var k = 0;
+      async function worker() {
+        while (k < need.length) {
+          if (aborted()) return;
+          var it = need[k++];
+          try { var f = await it.h.getFile(); it.size = f.size; plan.bytes += f.size; }
+          catch (er) { it.bad = 1; plan.unreadable.push(join(it.p, it.n) + ' (' + (er && er.name || 'อ่านไม่ได้') + ')'); }
+          scan.files++; tick();
+        }
+      }
+      var ws = []; for (var w = 0; w < Math.min(SCAN_PAR, need.length); w++) ws.push(worker());
+      await Promise.all(ws);
+      for (var j = 0; j < subs.length; j++) { if (aborted()) return; await walk(subs[j][0], subs[j][1]); }
+    }
+    await walk(src, '');
+    if (aborted()) return { cancelled: true, plan: plan };
+    if (plan.unreadable.length) { plan.files = plan.files.filter(function (f) { return !f.bad; }); plan.skipped = plan.skipped.concat(plan.unreadable); }
+    tick(true);
+    if (opt.onPlan) { var go = await opt.onPlan(plan); if (go === false) return { cancelled: true, plan: plan }; }
+    var st = { done: 0, total: plan.files.length, bytes: 0, totalBytes: plan.bytes, skippedSame: 0, t0: Date.now(), errors: [] };
+    var byDir = {};
+    plan.files.forEach(function (f) { (byDir[f.p] = byDir[f.p] || []).push(f); });
+    var dirsList = Object.keys(byDir);
+    for (var di = 0; di < dirsList.length; di++) {
+      var p = dirsList[di];
+      if (opt.signal && opt.signal.aborted) break;
+      var remote = {};
+      try { var Lr = await self.list(p, true); remote = Lr.files; } catch (e) { remote = {}; }
+      var small = [], smallBytes = 0;
+      var flushSmall = async function () {
+        if (!small.length) return;
+        var batch = small.splice(0); smallBytes = 0;
+        var o = await self.call({ a: 'fsWrite', p: p, files: batch.map(function (x) { return { n: x.n, c: x.c }; }), bulk: 1 });
+        o.files.forEach(function (r, i) { self._touch(p, r.n, r.u, batch[i].c.length, batch[i].c); });
+        self._dirAdd(p);
+        batch.forEach(function (x) { st.done++; st.bytes += x.size; });
+        if (opt.onProgress) opt.onProgress(st);
+      };
+      var big = [];
+      for (var k = 0; k < byDir[p].length; k++) {
+        var it = byDir[p][k];
+        if (opt.signal && opt.signal.aborted) break;
+        if (remote[it.n] && opt.resume !== false) { st.done++; st.bytes += it.size; st.skippedSame++; if (opt.onProgress) opt.onProgress(st); continue; }
+        try {
+          var bytes = new Uint8Array(await (await it.h.getFile()).arrayBuffer());
+          var c = await gz(bytes);
+          if (c.length <= 8000) { small.push({ n: it.n, c: c, size: it.size }); smallBytes += c.length; if (small.length >= 300 || smallBytes > 1500000) await flushSmall(); }
+          else big.push({ it: it, bytes: bytes });
+          if (big.length >= 4) { await Promise.all(big.splice(0).map(function (b) { return self.write(p, b.it.n, b.bytes).then(function () { st.done++; st.bytes += b.it.size; if (opt.onProgress) opt.onProgress(st); }, function (e) { st.errors.push(join(p, b.it.n) + ': ' + e.message); }); })); }
+        } catch (e) { st.errors.push(join(p, it.n) + ': ' + e.message); }
+      }
+      try { await flushSmall(); } catch (e) { st.errors.push(p + ': ' + e.message); }
+      if (big.length) await Promise.all(big.splice(0).map(function (b) { return self.write(p, b.it.n, b.bytes).then(function () { st.done++; st.bytes += b.it.size; if (opt.onProgress) opt.onProgress(st); }, function (e) { st.errors.push(join(p, b.it.n) + ': ' + e.message); }); }));
+    }
+    st.ms = Date.now() - st.t0;
+    return { plan: plan, st: st };
+  };
+
+  /* ═════════ ค่าตั้ง (เก็บในเบราว์เซอร์เครื่องนี้เท่านั้น) ═════════ */
+  var LSK = 'sxlocaltrial:furnitech:gas';
+  function cfgGet() { try { return JSON.parse(localStorage.getItem(LSK) || 'null') || {}; } catch (e) { return {}; } }
+  function cfgSet(v) { try { if (v == null) localStorage.removeItem(LSK); else localStorage.setItem(LSK, JSON.stringify(v)); } catch (e) {} }
+
+  var _cur = null;
+  return {
+    VER: VER,
+    open: function (url, key, opt) { _cur = new FS(url, key, opt); return _cur; },
+    current: function () { return _cur; },
+    cfgGet: cfgGet, cfgSet: cfgSet,
+    isOn: function () { var c = cfgGet(); return !!(c && c.on && c.url && c.key); },
+    gz: gz, ungz: ungz, toBytes: toBytes,
+    clearCache: async function () { var d = await idb(); if (!d) return; try { var tx = d.transaction(['f', 'l'], 'readwrite'); tx.objectStore('f').clear(); tx.objectStore('l').clear(); } catch (e) {} },
+    _FS: FS
+  };
+})();
+
+/* ═════════ StarNexus v1.432 / Production V2 v177: ใช้ Google Drive อย่างเดียว (ตัดโหมดโฟลเดอร์ Server) — รายละเอียดที่ส่วนท้าย ═════════ */
+/* ═════════ StarNexus v1.429–1.430 / Production V2 v173–174: ที่เก็บ Google Drive (Apps Script) — โฟลเดอร์ Server เสมือน ═════════
+   (โค้ดชุดเดียวกันทั้งสองโปรแกรม — แก้ที่หนึ่งให้ยกไปอีกที่ด้วย)
+   ผู้ใช้: ตอนนี้ทำอะไรก็ช้า + อยากทำงานได้ทุกที่ → ทดสอบ Apps Script แล้ว (บันทึก ~3 วิ · เปิด ~1.5 วิ) → ให้ย้ายทั้ง StarNexus และ Production V2
+   เดิม: ไฟล์กลาง = โฟลเดอร์ Server ในวงออฟฟิศ (เลือกด้วย showDirectoryPicker) ใช้ได้เฉพาะคอมที่เข้าโฟลเดอร์นั้น
+   ตอนนี้: เลือกได้ว่าไฟล์กลางอยู่ที่ "โฟลเดอร์ในเครื่อง" หรือ "Google Drive (Apps Script)"
+     · Google Drive = GasFS ทำตัวเหมือนโฟลเดอร์ Server ทุกอย่าง (SXL.dir = GasFS root) → ตรรกะไฟล์กลางเดิมไม่แก้สักบรรทัด
+       รูปแบบไฟล์เหมือนเดิม (_rows.csv + _changes) · Production V2 ต่อ Apps Script ตัวเดียวกันก็เห็นข้อมูลชุดเดียวกัน
+     · URL + กุญแจ เก็บในเบราว์เซอร์เครื่องนี้เท่านั้น (localStorage sxlocaltrial:furnitech:gas) ไม่ลงไฟล์งาน/ค่าตั้ง/โฟลเดอร์
+     · ย้ายข้อมูล: อัปโหลดโฟลเดอร์ Server ขึ้น Drive ครั้งเดียว — เอาเฉพาะรุ่นล่าสุดของแต่ละกลุ่มใน _changes
+       (ไฟล์รุ่นหนึ่ง = ทั้งกลุ่ม ไม่ใช่ส่วนต่าง จึงได้ข้อมูลครบเหมือนเดิม) · ไม่อัปโหลดไฟล์ Excel (.xlsm มีรหัสผ่านฐานข้อมูล AX)
+     · Fitting Global บน Drive = fitting_global_rows.csv ที่แปลงจาก Excel ในเครื่องออฟฟิศ (ส่งเฉพาะรหัส/ชื่อ/หน่วย ไม่มีรหัสผ่าน)
+       ตั้งให้เครื่องนั้นส่งเองเมื่อ Excel เปลี่ยนได้
+   ปิดได้: SN_OFF.gasfs=1 (กลับไปใช้โฟลเดอร์ในเครื่องอย่างเดียว ปุ่ม Drive หายไป) */
+/* ───────── v1.432 / PV2 v177: สวิตช์ส่วนนี้ไม่ขึ้นกับ SN_SAFE (โหมดปลอดภัยของ StarNexus) ─────────
+   เดิม SN_SAFE=1 ปิด Drive ด้วย → โปรแกรมกลับไปหาโฟลเดอร์ในเครื่องที่ไม่มีข้อมูลล่าสุด (ดูเหมือนข้อมูลหาย) · ข้อมูลอยู่บน Drive อย่างเดียวแล้ว
+   ตอนนี้: ปิดเฉพาะเมื่อตั้ง SN_OFF.gasfs / SN_OFF.driveOnly ตรง ๆ */
+function gasSw(k){ try{ return !!(window.SN_OFF&&window.SN_OFF[k]); }catch(e){ return false; } }
+function gasOffSw(){ return gasSw('gasfs'); }
+function gasDriveOnly(){ return !gasOffSw() && !gasSw('driveOnly'); }
+function gasCfgOk(){ var c=GasFS.cfgGet(); return !!(c&&c.url&&c.key); }
+/* v1.432: Drive อย่างเดียว = มี URL + กุญแจ ก็ต่อ (ไม่สนค่า on เดิม ที่เคยกด “กลับไปใช้โฟลเดอร์ในเครื่อง”) */
+function gasOn(){ return !gasOffSw() && (gasDriveOnly()?gasCfgOk():GasFS.isOn()); }
+/* ตัวช่วยที่ StarNexus มีแต่ Production V2 ไม่มี — ไม่มีก็ทำงานแบบเรียบ ๆ */
+function gasBusy(title,fn){ return (typeof sxlWithBusy==='function')?sxlWithBusy(title,fn):fn(); }
+function gasHide(){ try{ if(typeof sxlHideIfReady==='function') return sxlHideIfReady(); var p=document.getElementById('sxLocalPanel'); if(p&&SXL.cfg.tables.every(function(T){ return !T.core||!sxlLoadable(T)||SXL.s[T.t].ready; })) p.style.display='none'; }catch(e){} }
+function gasLd(){ try{ return (typeof sxlLdTxt==='function')?sxlLdTxt():''; }catch(e){ return ''; } }
+function sxlIsGas(d){ return !!(d && d._fs && (d._fs instanceof GasFS._FS)); }
+function gasFS(){ var c=GasFS.cfgGet(), cur=GasFS.current(); if(cur&&cur.url===c.url&&cur.key===c.key) return cur; return GasFS.open(c.url,c.key); }
+var GAS_FG_AUTO='sxlocaltrial:furnitech:gasFgAuto', GAS_FG_MOD='sxlocaltrial:furnitech:gasFgMod';
+function gasLs(k,v){ try{ if(v===undefined) return localStorage.getItem(k); if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,String(v)); }catch(e){ return null; } }
+
+/* เปิดโปรแกรม: ตั้งให้ใช้ Drive ไว้ = ต่อ Drive เลย ไม่ต้องเลือกโฟลเดอร์/ขอสิทธิ์ */
+(function(){
+  var _restore0=sxlRestore;
+  /* SXL.loading = กำลังโหลดรอบแรก (sxlWrite รอให้โหลดเสร็จก่อนเขียนตารางหลัก แทนที่จะตอบ SXL_NOBASE) */
+  sxlRestore=async function(ask){
+    SXL.loading=(SXL.loading||0)+1;
+    try{ return await _gasRestore.apply(this,arguments); } finally{ SXL.loading=Math.max(0,(SXL.loading||0)-1); }
+  };
+  var _gasRestore=async function(ask){
+    if(!gasOn()){ if(gasDriveOnly()) return gasNoCfg();   /* v1.432: ไม่คืนโฟลเดอร์/ไฟล์ในเครื่องที่จำไว้ */
+      var r0=await _restore0.apply(this,arguments); gasMovedCheck(); return r0; }
+    SXL.dir=gasFS().root('Server (Google Drive)'); SXL.canWrite=true; SXL.dirErr=''; gasBadge();
+    if(gasDriveOnly()) try{ gasDriveRender(); }catch(e){}   /* v1.432: ปุ่มบนเปลี่ยนทันทีที่ต่อ (ไม่ค้าง “ยังไม่เชื่อมต่อ” ระหว่างโหลด) */
+    SXL.cfg.tables.forEach(function(T){ var S=SXL.s[T.t]; if(S&&S.src==='file'){ S.src=''; S.handle=null; } });   // ไฟล์ที่เลือกแยกในเครื่อง ไม่ใช้ในโหมด Drive
+    try{
+      await gasBusy('กำลังโหลดจาก Google Drive',async function(){
+        try{ if(SXL._prog) SXL._prog('ขอรายการไฟล์ทั้งหมดจาก Google Drive …',3); await SXL.dir._fs.warm(20000);
+          /* โหลดไฟล์ที่ยังไม่มีในเครื่องล่วงหน้าแบบขนาน (เครื่องใหม่/ไฟล์ใหม่) — ไม่รอ ตารางที่อ่านถึงก่อนจะรอไฟล์ตัวเดียวกันเอง
+             เว้นตารางที่ไม่ได้โหลดเข้าโปรแกรม (imos_orders · part_index · furnitech_share) และโฟลเดอร์สำรอง */
+          var _skipT={}; SXL.cfg.tables.forEach(function(T){ if(!sxlLoadable(T)) _skipT[T.t]=1; });
+          /* v1.436 / PV2 v179: Order แยกไฟล์แล้ว (ไฟล์ฐานเล็ก) = ไม่โหลดไฟล์ Order ล่วงหน้า (โหลดตอนเปิด Order) */
+          try{ var _ob=SXL.dir._fs.L['']&&SXL.dir._fs.L[''].files['imos_orders_rows.csv']; if(ordIdxOn()&&SXL.cfg.app==='Production'&&_ob&&_ob.s<2000000) _skipT.imos_orders=1; }catch(e){}
+          /* ───────── v1.437 / PV2 v180: โหลดล่วงหน้าเฉพาะตารางที่โปรแกรมนี้ใช้ ─────────
+             เดิม: เว้นเฉพาะตารางในรายการของโปรแกรมที่ไม่โหลด (_skipT) · ตารางที่ไม่อยู่ในรายการเลยหลุดไปโหลดหมด
+             Production ไม่มี furnitech_cabinets / xml_history / furnitech_parts ในรายการ → ดาวน์โหลดโมเดลตู้ ประวัติ XML ของ StarNexus
+             ทั้งไฟล์ฐาน (หลาย MB) และ _changes ทุกไฟล์ ที่ไม่เคยได้ใช้ (ผู้ใช้ 12/10/2026 16:17 เห็นป้าย “… 0.0 MB / 1.3 MB · 0/120 ไฟล์”
+             หลังเปิด Production = _changes/furnitech_cabinets 120 ไฟล์) · ตอนนี้: เฉพาะตารางในรายการที่โหลดจริง (_useT) */
+          var _useT={}; SXL.cfg.tables.forEach(function(T){ if(sxlLoadable(T)&&!_skipT[T.t]) _useT[T.t]=1; });
+          SXL.dir._fs.prefetch(function(p,n){ if(/^_backup|^_parts/.test(p)) return false; var m=/^_changes\/([^\/]+)$/.exec(p); if(m) return !!_useT[m[1]]; return p===''&&/_rows\.csv$/i.test(n)&&!!_useT[(sxlMatchName(n)||'')]; }).catch(function(){});
+        }catch(e){ console.warn('[Drive] warm',e); }
+        return sxlSync(true,'restore'); });
+      gasHide(); if(gasDriveOnly()) try{ gasDriveRender(); }catch(e){}
+      setTimeout(function(){ try{ ordSplitCheck(); }catch(e){} },2500);   /* v1.436 / PV2 v179 */
+      sxlStatus('ใช้ Google Drive · พร้อม '+sxlReadyN()+' ตาราง'+(gasLd()?(' · '+gasLd()):''));
+    }catch(e){ SXL.dirErr='Google Drive: '+(e.message||e); sxlStatus('ต่อ Google Drive ไม่ได้: '+(e.message||e),true); sxLocalSettings(); }
+    gasAxAuto(false).catch(function(){});   /* v1.432: ข้อมูล Excel ของ AX (เดิม gasFgAutoCheck เฉพาะ Fitting Global) */
+  };
+  var _pick0=sxlPickDir;
+  sxlPickDir=async function(){
+    if(gasDriveOnly()){ try{ sxLocalSettings(); var u=document.getElementById('gasUrl'); if(u) u.focus(); }catch(e){}
+      throw Error('ไม่ใช้โฟลเดอร์ Server แล้ว — ข้อมูลอยู่บน Google Drive: ใส่ URL + กุญแจ แล้วกด “เชื่อมต่อ”'); }
+    if(gasOn()){ if(!confirm('ตอนนี้ใช้ Google Drive อยู่\n\nเปลี่ยนเครื่องนี้กลับไปใช้โฟลเดอร์ในเครื่อง?')) return; gasSetOn(false); }
+    return _pick0.apply(this,arguments);
+  };
+  var _render0=sxlRender;
+  sxlRender=function(){
+    _render0.apply(this,arguments);
+    gasBadge();   // ป้าย ☁ Drive ต่อท้ายด้วย CSS (ข้อความปุ่มถูกเขียนใหม่ทุกรอบ)
+    try{ gasUiRefresh(); }catch(e){}
+    if(gasDriveOnly()) try{ gasDriveRender(); }catch(e){ console.error('gasDriveRender',e); }
+  };
+  var _mount0=sxLocalMount;
+  sxLocalMount=function(){ _mount0.apply(this,arguments); try{ gasUiMount(); if(gasDriveOnly()){ gasDriveUi(); gasDriveRender(); } }catch(e){ console.error('gasUiMount',e); }
+    try{ ordInstall(); }catch(e){ console.error('ordInstall',e); } };   /* v1.436 / PV2 v179: หลังสคริปต์ทุกโมดูลโหลดครบ = ตัวห่อชั้นนอกสุด */
+})();
+
+function gasSetOn(on){ var c=GasFS.cfgGet(); c.on=!!on; GasFS.cfgSet(c); }
+var GAS_ACT=0;
+function gasMsg(t,kind){ var el=document.getElementById('gasMsg'); if(!el) return; el.textContent=t||''; el.className=t?(kind||'ok'):''; }
+/* ระหว่างกดปุ่มในส่วน ☁ ข้อความที่ขึ้นท้ายหน้าต่าง (sxlStatus) ก็ขึ้นใต้ปุ่มด้วย — เช่นขั้นตอนตอนต่อ Drive */
+(function(){ var _st=sxlStatus; sxlStatus=function(text,bad){ var r=_st.apply(this,arguments); try{ if(GAS_ACT>0&&text) gasMsg(String(text),bad?'bad':'busy'); }catch(e){} return r; }; })();
+/* ป้ายในโฟลเดอร์ Server เดิมหลังย้ายขึ้น Drive: เครื่องที่ยังใช้โฟลเดอร์ในเครื่องอยู่จะเห็นคำเตือน
+   (ถ้าบางเครื่องยังบันทึกลงโฟลเดอร์เดิม ข้อมูลจะแยกเป็นสองชุด — ของที่บันทึกตรงนั้นไม่ขึ้น Drive) */
+var GAS_MOVED='_MOVED_TO_GOOGLE_DRIVE.json';
+async function gasMovedCheck(){
+  try{ if(!SXL.dir||sxlIsGas(SXL.dir)) return; var h=await SXL.dir.getFileHandle(GAS_MOVED); var o=JSON.parse(await (await h.getFile()).text()||'{}');
+    var msg='⚠ โฟลเดอร์ Server นี้ย้ายขึ้น Google Drive แล้ว'+(o.at?' ('+new Date(o.at).toLocaleString('th-TH')+')':'')+' — ของที่บันทึกในโฟลเดอร์นี้จะไม่ขึ้น Drive · ใส่ URL/กุญแจในส่วน ☁ Google Drive แล้วกด “ใช้ Google Drive”';
+    SXL.dirErr='ย้ายขึ้น Google Drive แล้ว'; sxlStatus(msg,true); try{ sxLocalSettings(); }catch(e){} try{ sxlNotify&&sxlNotify(msg); }catch(e){}
+  }catch(e){ /* ไม่มีป้าย = ยังไม่ได้ย้าย */ } }
+function gasBadge(){ try{ var top=document.getElementById('sxLocalTop'); if(top) top.dataset.gas=(!gasDriveOnly()&&sxlIsGas(SXL.dir))?'1':''; }catch(e){} }   /* v1.432: Drive อย่างเดียว = ปุ่มเขียนว่า ☁ Google Drive เองแล้ว */
+
+/* ───────── ส่วน Google Drive ในหน้าไฟล์กลาง ───────── */
+function gasUiMount(){
+  if(gasOffSw()) return;
+  var box=document.querySelector('#sxLocalPanel .sl-box'); if(!box||document.getElementById('gasBox')) return;
+  var st=document.createElement('style');
+  st.textContent='#sxLocalTop[data-gas="1"]::after{content:" · ☁ Drive"}#gasBox{border:1px solid #c9dbe6;background:#f3f9fc;border-radius:10px;padding:10px 12px;margin:10px 0}#gasBox h3{margin:0 0 6px;font-size:15px}#gasBox input[type=text],#gasBox input[type=password]{width:100%;padding:6px 8px;border:1px solid #c9d3dc;border-radius:6px;font:12px ui-monospace,monospace;box-sizing:border-box}#gasBox .gr{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0}#gasBox .gb{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}#gasBox small{color:#5b6b78}#gasBox .on{color:#1a7f37;font-weight:700}#gasBox .off{color:#6b6a65}#gasMsg{display:none;margin-top:8px;padding:7px 10px;border-radius:8px;font-size:13px;line-height:1.5;white-space:pre-wrap}#gasMsg.busy{display:block;background:#e8f1fb;color:#174a7c}#gasMsg.ok{display:block;background:#e6f4ea;color:#1a6b35}#gasMsg.bad{display:block;background:#fdecea;color:#a3271c}#gasBox button:disabled{opacity:.55;cursor:progress}#gasAx{border-top:1px dashed #c9dbe6;margin-top:10px;padding-top:8px}@media(max-width:640px){#gasBox .gr{grid-template-columns:1fr}}';
+  document.head.append(st);
+  var c=GasFS.cfgGet();
+  var div=document.createElement('div'); div.id='gasBox';
+  div.innerHTML='<h3>☁ Google Drive (Apps Script) <small id="gasMode"></small></h3>'
+   +'<small>เก็บไฟล์กลางบน Google Drive — ใช้ได้ทุกที่ที่มีอินเทอร์เน็ต ไม่ต้องเข้าโฟลเดอร์ Server · Production V2 ต่อ Apps Script ตัวเดียวกันก็เห็นข้อมูลชุดเดียวกัน · URL กับกุญแจจำไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น</small>'
+   +'<div class="gr"><label><small>Web app URL (ลงท้าย /exec)</small><input id="gasUrl" type="text" spellcheck="false" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>'
+   +'<label><small>กุญแจ API</small><input id="gasKey" type="password" spellcheck="false" autocomplete="off"></label></div>'
+   +'<div class="gb"><button id="gasTest">ทดสอบการเชื่อมต่อ</button><button id="gasUse" class="pri">ใช้ Google Drive</button><button id="gasLocal">กลับไปใช้โฟลเดอร์ในเครื่อง</button></div>'
+   +'<div id="gasMsg" role="status" aria-live="polite"></div>'
+   +'<div class="gb"><button id="gasMig">⬆ ย้ายข้อมูลจากโฟลเดอร์ Server ขึ้น Drive…</button>'
+   +'<button id="gasCode" title="URL + กุญแจ ในข้อความเดียว — วางในช่อง URL ของเครื่องใหม่แล้วกด เชื่อมต่อ">📋 คัดลอกรหัสเชื่อมต่อ</button>'
+   +'<button id="gasClr" title="ใช้เมื่อสงสัยว่าข้อมูลในเครื่องไม่ตรงกับบน Drive — เปิดครั้งต่อไปจะโหลดจาก Drive ใหม่ทั้งหมด">ล้างไฟล์ที่จำในเครื่อง</button></div>'
+   /* v1.432: ข้อมูลจาก AX ทั้งโฟลเดอร์ (Fitting Global + FittingBOM) แทนปุ่มส่ง Fitting Global ทีละไฟล์ */
+   +'<div id="gasAx"><b>📊 ข้อมูลจาก AX (ไฟล์ Excel)</b><br><small>เฉพาะเครื่องในออฟฟิศที่เปิดไฟล์ Excel ของ AX ได้ (FittingGlobal_*.xlsm · FittingBOM_*.xlsm · FittingBOM_Manual.xlsx): เลือกโฟลเดอร์ที่มีไฟล์เหล่านี้ครั้งเดียว → โปรแกรมส่ง “เฉพาะค่าในตาราง” ขึ้น Drive (ไม่ส่งตัวไฟล์ Excel ที่มีรหัสผ่าน AX) · เครื่องอื่นไม่ต้องทำ</small>'
+   +'<div class="gb"><button id="gasAxPick">📂 เลือกโฟลเดอร์ Excel ของ AX…</button><button id="gasAxRun">⬆ ส่งข้อมูล Excel ตอนนี้</button>'
+   +'<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="gasFgAuto"><small>เครื่องนี้ส่งเองเมื่อไฟล์ Excel เปลี่ยน (ตรวจทุก 5 นาที)</small></label></div>'
+   +'<div id="gasAxInfo"><small></small></div></div>'
+   +'<div id="gasInfo" style="margin-top:6px"><small></small></div>';
+  var anchor=box.querySelector('#sxlDirInfo')||box.querySelector('p');
+  if(anchor&&anchor.parentNode===box) anchor.after(div); else box.insertBefore(div,box.children[2]||null);
+  var $g=function(id){ return document.getElementById(id); };
+  $g('gasUrl').value=c.url||''; $g('gasKey').value=c.key||'';
+  $g('gasFgAuto').checked=gasLs(GAS_FG_AUTO)==='1';
+  /* v1.432: ช่อง URL รับ “รหัสเชื่อมต่อ” (SNGAS1:…) ได้ — แยกเป็น URL + กุญแจให้เอง */
+  var pasteCode=function(){ var dc=gasCodeDec($g('gasUrl').value); if(!dc) return false; $g('gasUrl').value=dc.u; $g('gasKey').value=dc.k; return true; };
+  $g('gasUrl').addEventListener('input',function(){ if(pasteCode()) gasMsg('✓ วางรหัสเชื่อมต่อแล้ว (ได้ทั้ง URL และกุญแจ) — กด “'+(gasDriveOnly()?'เชื่อมต่อ':'ใช้ Google Drive')+'”','ok'); });
+  var save=function(){ pasteCode(); var o=GasFS.cfgGet(); o.url=$g('gasUrl').value.trim(); o.key=$g('gasKey').value.trim(); GasFS.cfgSet(o); return o; };
+  /* ───────── v1.430: ปุ่มในส่วน ☁ ต้องเห็นผลตรงที่กด ─────────
+     เดิมทุกปุ่มรายงานผลผ่าน sxlStatus ซึ่งอยู่ท้ายหน้าต่างไฟล์กลาง (ใต้ตารางทั้งหมด) ผู้ใช้กด “ทดสอบการเชื่อมต่อ” แล้วไม่เห็นอะไรเลย
+     ระหว่างรอ Apps Script ตอบ (ครั้งแรก 2–20 วิ) ก็ไม่มีอะไรบอกว่ากำลังทำงาน
+     ตอนนี้: กดแล้วขึ้น “กำลัง…” ใต้ปุ่มทันที · ปุ่มเทาระหว่างรอ · ผล/ข้อผิดพลาดขึ้นตรงนั้น (ท้ายหน้าต่างยังขึ้นเหมือนเดิม) */
+  var guard=function(fn,busy){ return async function(e){
+    var btn=e&&e.currentTarget, slow=0;
+    if(btn&&btn.disabled) return;
+    GAS_ACT++; if(btn) btn.disabled=true;
+    gasMsg(busy||'กำลังทำงาน…','busy');
+    slow=setTimeout(function(){ if(document.getElementById('gasMsg').className==='busy') gasMsg((busy||'กำลังทำงาน…')+'\nยังรอ Apps Script ตอบอยู่ — ครั้งแรกหลัง Deploy อาจใช้ 10–20 วินาที','busy'); },6000);
+    try{ var r=await fn(e); if(typeof r==='string') gasMsg(r,'ok'); else if(document.getElementById('gasMsg').className==='busy') gasMsg('เสร็จแล้ว','ok'); }
+    catch(err){ if(err&&err.name!=='AbortError'){ gasMsg('✗ '+(err.message||String(err)),'bad'); sxlStatus(err.message||String(err),true); } else gasMsg('',''); }
+    finally{ clearTimeout(slow); GAS_ACT=Math.max(0,GAS_ACT-1); if(btn) btn.disabled=false; } }; };
+  $g('gasTest').onclick=guard(async function(){
+    var o=save(); if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(o.url)&&!/^http:\/\/127\.0\.0\.1/.test(o.url)) throw Error('URL ไม่ใช่ของ Apps Script (https://script.google.com/macros/s/…/exec)');
+    if(!o.key) throw Error('ยังไม่ได้ใส่กุญแจ');
+    var fs=GasFS.open(o.url,o.key), t0=performance.now(), p=await fs.call({a:'ping'}), ms=performance.now()-t0;
+    if(String(p.ver||'0')<'0.3') throw Error('Apps Script ยังเป็นรุ่น '+p.ver+' — ต้องรุ่น 0.3 ขึ้นไป (วางโค้ดใหม่ → รัน setup → Deploy เป็น New version)');
+    var inf=await fs.call({a:'info'});
+    var L=null; try{ L=await fs.list('',true); }catch(e){}
+    var nT=L?Object.keys(L.files).filter(function(n){ return /_rows\.csv$/i.test(n); }).length:0;
+    var msg='✓ เชื่อมต่อได้ · Apps Script รุ่น '+p.ver+' · ตอบใน '+(ms/1000).toFixed(2)+' วิ · Drive ว่าง '+((inf.storage.limit-inf.storage.used)/1073741824).toFixed(2)+' GB'
+      +'\n'+(nT?'บน Drive มีไฟล์ตารางแล้ว '+nT+' ไฟล์ — กด “'+(gasDriveOnly()?'เชื่อมต่อ':'ใช้ Google Drive')+'” ได้เลย':'บน Drive ยังไม่มีข้อมูล — เครื่องที่เปิดโฟลเดอร์ Server ได้ให้กด “ย้ายข้อมูลจากโฟลเดอร์ Server '+(gasDriveOnly()?'เดิม':'ขึ้น Drive')+'” ก่อน')
+      +(inf.flushTrigger===false?'\n⚠ ยังไม่มีตัวเขียนสารบัญทุก 1 นาที — เปิดหน้าแก้สคริปต์แล้วรัน setup อีกครั้ง':'');
+    sxlStatus(msg.replace(/\n/g,' · '));
+    return msg;
+  },'กำลังทดสอบการเชื่อมต่อ…');
+  $g('gasUse').onclick=guard(async function(){
+    var o=save(); if(!o.url||!o.key) throw Error('ใส่ URL และกุญแจก่อน');
+    var fs=GasFS.open(o.url,o.key), p=await fs.call({a:'ping'});
+    if(String(p.ver||'0')<'0.3') throw Error('Apps Script ยังเป็นรุ่น '+p.ver+' — ต้องรุ่น 0.3 ขึ้นไป');
+    var L=await fs.list('',true);
+    if(!Object.keys(L.files).some(function(n){ return /_rows\.csv$/i.test(n); })&&!confirm('บน Drive ยังไม่มีไฟล์ตาราง (_rows.csv)\nยังไม่ได้ย้ายข้อมูลขึ้นไป — ใช้ Drive เปล่า ๆ ต่อไหม?\n\n(แนะนำ: กด “ย้ายข้อมูลจากโฟลเดอร์ Server '+(gasDriveOnly()?'เดิม':'ขึ้น Drive')+'” ก่อน)')) return gasDriveOnly()?'ยกเลิก — ยังไม่ได้เชื่อมต่อ':'ยกเลิก — ยังใช้โฟลเดอร์ในเครื่องอยู่';
+    gasSetOn(true); await sxlRestore(false); sxlRender();
+    return sxlIsGas(SXL.dir)&&!SXL.dirErr?(gasDriveOnly()?'✓ เชื่อมต่อ Google Drive แล้ว':'✓ ใช้ Google Drive แล้ว')+' · พร้อม '+sxlReadyN()+' ตาราง':undefined;
+  },'กำลังต่อ Google Drive และโหลดข้อมูล…');
+  $g('gasLocal').onclick=guard(async function(){
+    gasSetOn(false); SXL.dir=null; SXL.canWrite=false; gasBadge();
+    SXL.cfg.tables.forEach(function(T){ var S=SXL.s[T.t]; if(S){ S.sig=''; } });
+    await sxlRestore(true); sxlRender();
+    return SXL.dir?'✓ กลับไปใช้โฟลเดอร์ “'+SXL.dir.name+'” แล้ว':'กลับไปใช้โฟลเดอร์ในเครื่องแล้ว — กด “เลือกโฟลเดอร์ Server” ด้านบน';
+  },'กำลังกลับไปใช้โฟลเดอร์ในเครื่อง…');
+  $g('gasMig').onclick=guard(gasMigrateDialog,'กำลังเตรียมย้ายข้อมูล…');
+  $g('gasClr').onclick=guard(async function(){ if(!confirm('ล้างไฟล์ Google Drive ที่จำไว้ในเครื่องนี้?\n(ข้อมูลบน Drive ไม่หาย · เปิดครั้งต่อไปจะโหลดใหม่ทั้งหมด)')) return; await GasFS.clearCache(); var c=GasFS.current(); if(c){ c.C.clear(); c.L={}; } sxlStatus('ล้างแล้ว — กด F5 เพื่อโหลดจาก Drive ใหม่'); return '✓ ล้างแล้ว — กด F5 เพื่อโหลดจาก Drive ใหม่'; },'กำลังล้าง…');
+  /* ───────── v1.432: รหัสเชื่อมต่อ + ข้อมูลจาก AX ทั้งโฟลเดอร์ (แทนปุ่ม “ส่ง Fitting Global จาก Excel” ทีละไฟล์) ───────── */
+  $g('gasCode').onclick=guard(async function(){
+    var o=GasFS.cfgGet(); if(!o.url||!o.key) throw Error('ยังไม่มี URL/กุญแจในเครื่องนี้');
+    var code=gasCodeEnc(o.url,o.key), ok=false;
+    try{ await navigator.clipboard.writeText(code); ok=true; }catch(e){}
+    return (ok?'✓ คัดลอกรหัสเชื่อมต่อแล้ว':'คัดลอกเองจากบรรทัดนี้:\n'+code)+'\nเครื่องใหม่: วางในช่อง URL แล้วกด “'+(gasDriveOnly()?'เชื่อมต่อ':'ใช้ Google Drive')+'” · รหัสนี้มีกุญแจอยู่ด้วย ส่งให้เฉพาะคนในบริษัท';
+  },'กำลังคัดลอก…');
+  $g('gasAxPick').onclick=guard(async function(){
+    if(!sxlIsGas(SXL.dir)) throw Error('ต้องเชื่อมต่อ Google Drive ก่อน');
+    if(!window.showDirectoryPicker) throw Error('เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ใช้ Chrome/Edge');
+    var d=await showDirectoryPicker({mode:'read',id:'sxlax'});
+    var r=await gasAxSync(d,{force:true});
+    if(!r.found) throw Error('ไม่พบไฟล์ FittingGlobal_*.xls* / FittingBOM_*.xls* ในโฟลเดอร์ “'+d.name+'” (ดูชั้นแรกและโฟลเดอร์ย่อยหนึ่งชั้น)');
+    try{ await sxlIdbPut('gasAxDir',d); }catch(e){}
+    $g('gasFgAuto').checked=true; gasLs(GAS_FG_AUTO,'1'); gasAxInfo();
+    return gasAxMsg(r)+'\nเครื่องนี้จะส่งเองเมื่อไฟล์ Excel เปลี่ยน (ตรวจทุก 5 นาที)';
+  },'กำลังอ่าน Excel และส่งข้อมูลขึ้น Drive…');
+  $g('gasAxRun').onclick=guard(async function(){
+    if(!sxlIsGas(SXL.dir)) throw Error('ต้องเชื่อมต่อ Google Drive ก่อน');
+    var d=await gasAxDir(true); if(!d) throw Error('เครื่องนี้ยังไม่ได้เลือกโฟลเดอร์ Excel ของ AX — กด “📂 เลือกโฟลเดอร์ Excel ของ AX…”');
+    var r=await gasAxSync(d,{force:true}); gasAxInfo(); return gasAxMsg(r);
+  },'กำลังอ่าน Excel และส่งข้อมูลขึ้น Drive…');
+  $g('gasFgAuto').onchange=guard(async function(e){ gasLs(GAS_FG_AUTO,e.target.checked?'1':null);
+    if(e.target.checked){ var r=await gasAxAuto(true); return '✓ เครื่องนี้จะส่งข้อมูล Excel ของ AX เองเมื่อไฟล์เปลี่ยน (ตอนเปิด + ทุก 5 นาที)'+(r?'\n'+gasAxMsg(r):''); }
+    return 'ปิดการส่งอัตโนมัติแล้ว'; },'กำลังตั้งค่า…');
+  gasUiRefresh();
+}
+function gasUiRefresh(){
+  var m=document.getElementById('gasMode'), info=document.getElementById('gasInfo'); if(!m) return;
+  var on=sxlIsGas(SXL.dir);
+  m.innerHTML=gasDriveOnly()?(on?'<span class="on">● เชื่อมต่ออยู่</span>':'<span class="off">○ ยังไม่ได้เชื่อมต่อ</span>')
+    :on?'<span class="on">● ใช้อยู่</span>':'<span class="off">○ ยังไม่ได้ใช้ (ไฟล์กลาง = โฟลเดอร์ในเครื่อง)</span>';
+  var fs=GasFS.current();
+  if(info&&fs&&on){ var s=fs.st; info.innerHTML='<small>เรียก Apps Script '+s.calls+' ครั้ง ('+s.ops+' คำสั่ง) · ล่าสุด '+(s.ms/1000).toFixed(2)+' วิ · ใช้ไฟล์ที่จำในเครื่อง '+s.cacheHit+' ครั้ง'+(s.err?' · <span class="sl-bad">'+esc2(s.err)+'</span>':'')+'</small>'; }
+}
+
+/* ───────── ย้ายโฟลเดอร์ Server ขึ้น Drive ───────── */
+function gasVerKey(n){ var m=/^(.+)([~+])([0-9a-f]{8})@([0-9a-z]{9}-[0-9a-z]{4})\.json$/.exec(n); return m?{k:m[1]+m[2]+m[3],ts:m[4]}:null; }
+async function gasMigrateDialog(){
+  var o=GasFS.cfgGet(); if(!o.url||!o.key) throw Error('ใส่ URL และกุญแจ แล้วกด ทดสอบการเชื่อมต่อ ก่อน');
+  var fs=GasFS.open(o.url,o.key), p=await fs.call({a:'ping'});
+  if(String(p.ver||'0')<'0.3') throw Error('Apps Script ยังเป็นรุ่น '+p.ver+' — ต้องรุ่น 0.3 ขึ้นไป');
+  var src=(SXL.dir&&!sxlIsGas(SXL.dir))?SXL.dir:null;
+  if(src&&!confirm('ย้ายข้อมูลจากโฟลเดอร์ “'+src.name+'” ที่เชื่อมอยู่ ขึ้น Google Drive?\n\n(ยกเลิก = เลือกโฟลเดอร์อื่น)')) src=null;
+  if(!src){ if(!window.showDirectoryPicker) throw Error('เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — ใช้ Chrome/Edge'); src=await showDirectoryPicker({mode:'readwrite',id:'sxlocal'}); }   /* readwrite: เขียนป้าย “ย้ายแล้ว” ไว้ในโฟลเดอร์เดิม */
+  var ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;z-index:1000002;background:#0009;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML='<div style="background:#fff;color:#172c40;border-radius:12px;padding:16px 18px;width:min(620px,96vw);max-height:90vh;overflow:auto;font:14px/1.6 system-ui,sans-serif">'
+   +'<b style="font-size:16px">⬆ ย้ายข้อมูลขึ้น Google Drive</b><div id="gmBody" style="margin-top:8px">กำลังอ่านรายการไฟล์ในโฟลเดอร์ “'+esc2(src.name)+'” …'
+   +'<br><small style="color:#5b6b78">ขั้นนี้ยังไม่ส่งอะไรขึ้น Drive แค่นับไฟล์ · โฟลเดอร์บนเครื่องอื่นในวง LAN อ่านช้ากว่าในเครื่อง — ตัวเลขด้านล่างยังวิ่ง = ยังทำงานอยู่</small></div>'
+   +'<div style="height:10px;background:#e7edf2;border-radius:99px;overflow:hidden;margin:10px 0"><i id="gmBar" style="display:block;height:100%;width:0;background:#1f6feb"></i></div>'
+   +'<div id="gmTxt" style="font-size:13px;color:#5b6b78"></div>'
+   +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button id="gmGo" class="ibtn" style="display:none">เริ่มอัปโหลด</button><button id="gmX" class="ibtn">ยกเลิก</button></div></div>';
+  document.body.append(ov);
+  var q=function(id){ return ov.querySelector('#'+id); }, ac=new AbortController(), skXls=[], latestBy={};
+  var close=function(){ try{ ac.abort(); }catch(e){} ov.remove(); };
+  q('gmX').onclick=close;
+  var skip=function(path,n,isDir,inDir){
+    if(isDir) return (path==='_backup'||path.indexOf('_backup/')===0);         // สำรองของ Production V2 — เครื่องเดิมยังเก็บไว้
+    if(/\.xls[xmb]?$/i.test(n)){ skXls.push(path?path+'/'+n:n); return true; } // Excel อาจมีรหัสผ่านฐานข้อมูล (AX) — ไม่ส่งขึ้นคลาวด์
+    if(/^~\$|\.tmp$|^thumbs\.db$|^desktop\.ini$|^\.ds_store$/i.test(n)||n===GAS_MOVED) return true;
+    if(/^_changes\/[^\/]+$/.test(path)&&path!=='_changes/_sxl'){
+      var v=gasVerKey(n); if(!v) return false;
+      var L=latestBy[path];
+      if(!L){ L=latestBy[path]={}; inDir.forEach(function(x){ var k=gasVerKey(x); if(k&&(!L[k.k]||k.ts>L[k.k])) L[k.k]=k.ts; }); }
+      return v.ts!==L[v.k];                                                       // ไฟล์รุ่นหนึ่ง = ทั้งกลุ่ม → รุ่นล่าสุดพอ
+    }
+    return false;
+  };
+  /* ───────── v1.431 / PV2 v176: ระหว่างไล่รายการไฟล์ บอกจำนวนที่อ่านแล้ว (เดิมค้างข้อความเดียวจนไล่ครบ ไม่รู้ว่ายังทำงานไหม) ───────── */
+  var scanTxt=function(sc){
+    var el=Math.round((Date.now()-sc.t0)/1000);
+    return 'อ่านแล้ว '+sc.files.toLocaleString()+' ไฟล์ ('+(sc.bytes/1048576).toFixed(1)+' MB) · '+sc.dirs.toLocaleString()+' โฟลเดอร์'
+      +(sc.skipped?' · ข้าม '+sc.skipped.toLocaleString():'')+' · '+el+' วิ'+(sc.path?' · ตอนนี้: '+sc.path:'');
+  };
+  var res=await fs.migrate(src,{ signal:ac.signal, skip:skip,
+    onScan:function(sc){ var t=q('gmTxt'); if(t) t.textContent=scanTxt(sc); var b=q('gmBar'); if(b) b.style.width=(8+46*(1-Math.exp(-sc.files/4000))).toFixed(1)+'%'; },
+    onPlan:function(plan){ q('gmTxt').textContent=''; q('gmBar').style.width='0'; return new Promise(function(resolve){
+      var mb=(plan.bytes/1048576).toFixed(1), old=plan.skipped.filter(function(x){ return /^_changes\//.test(x)&&!/\)$/.test(x); }).length;
+      q('gmBody').innerHTML='พบ <b>'+plan.files.length.toLocaleString()+'</b> ไฟล์ · <b>'+mb+' MB</b> ที่จะอัปโหลด'
+       +'<br><small>ข้ามไฟล์รุ่นเก่าที่ถูกแทนแล้วใน _changes '+old.toLocaleString()+' ไฟล์ (ใช้รุ่นล่าสุดของแต่ละกลุ่ม ได้ข้อมูลครบ)'
+       +(plan.skipped.some(function(x){ return /^_backup/.test(x); })?' · ข้ามโฟลเดอร์ _backup (สำรองของ Production V2 ยังอยู่ในเครื่องเดิม)':'')+'</small>'
+       +(plan.unreadable&&plan.unreadable.length?'<br><small style="color:#9a4a12">อ่านไม่ได้ '+plan.unreadable.length+' ไฟล์ (ถูกลบ/เปิดค้างอยู่ระหว่างนับ) จะไม่ส่ง: '+esc2(plan.unreadable.slice(0,3).join(', '))+(plan.unreadable.length>3?' …':'')+'</small>':'')
+       +(skXls.length?'<br><small style="color:#9a4a12">ไม่อัปโหลดตัวไฟล์ Excel '+skXls.length+' ไฟล์ ('+esc2(skXls.slice(0,3).join(', '))+(skXls.length>3?' …':'')+') เพราะอาจมีรหัสผ่านฐานข้อมูล — ไฟล์ของ AX (FittingGlobal_* · FittingBOM_*) จะส่งเฉพาะค่าในตารางให้หลังอัปโหลดเสร็จ</small>':'')
+       +'<br><small>อัปซ้ำได้ ไฟล์ที่ขึ้นไปแล้วจะข้าม · ระหว่างอัปโหลดใช้โปรแกรมต่อได้ แต่อย่าปิดหน้าต่างนี้</small>';
+      var go=q('gmGo'); go.style.display=''; go.onclick=function(){ go.style.display='none'; resolve(true); };
+      q('gmX').onclick=function(){ resolve(false); close(); };
+    }); },
+    onProgress:function(st){
+      var pc=st.totalBytes?Math.min(100,st.bytes/st.totalBytes*100):(st.total?st.done/st.total*100:0), el=(Date.now()-st.t0)/1000;
+      var eta=pc>2?Math.round(el*(100-pc)/pc):0;
+      q('gmBar').style.width=pc.toFixed(1)+'%';
+      q('gmTxt').textContent=st.done.toLocaleString()+' / '+st.total.toLocaleString()+' ไฟล์ · '+(st.bytes/1048576).toFixed(1)+' / '+(st.totalBytes/1048576).toFixed(1)+' MB'+(eta?' · เหลือราว '+(eta>90?Math.round(eta/60)+' นาที':eta+' วิ'):'')+(st.errors.length?' · ผิดพลาด '+st.errors.length:'');
+    } });
+  if(res.cancelled||!document.body.contains(ov)) return;
+  var st=res.st;
+  try{ await fs.call({a:'flush'}); }catch(e){}
+  if(!st.errors.length){ try{ var mh=await src.getFileHandle(GAS_MOVED,{create:true}), mw=await mh.createWritable(); await mw.write(JSON.stringify({at:new Date().toISOString(),files:st.done,note:'ข้อมูลชุดนี้ย้ายขึ้น Google Drive (Apps Script) แล้ว — เครื่องอื่นให้เปลี่ยนไปใช้ Google Drive'})); await mw.close(); }catch(e){ /* โฟลเดอร์อ่านอย่างเดียว — ข้ามได้ */ } }
+  /* v1.432: Excel ของ AX ในโฟลเดอร์นี้ → ส่งเฉพาะค่าในตาราง (ไม่มีรหัสผ่าน) · เครื่องนี้จำโฟลเดอร์ไว้ส่งเองเมื่อไฟล์เปลี่ยน */
+  var axr=null;
+  if(skXls.length){ q('gmBody').textContent='กำลังส่งข้อมูลจาก Excel ของ AX (เฉพาะค่าในตาราง ไม่มีรหัสผ่าน)…';
+    try{ axr=await gasAxSync(src,{fs:fs,force:true}); if(axr.fg||axr.bom.length){ try{ await sxlIdbPut('gasAxDir',src); }catch(e){} gasLs(GAS_FG_AUTO,'1'); try{ var cb=document.getElementById('gasFgAuto'); if(cb) cb.checked=true; gasAxInfo(); }catch(e){} } }
+    catch(e){ axr={found:0,fg:null,bom:[],same:0,err:[e.message||String(e)]}; } }
+  q('gmBar').style.width='100%';
+  q('gmBody').innerHTML=(st.errors.length?'⚠ ':'✓ ')+'ย้ายเสร็จ · '+st.done.toLocaleString()+' ไฟล์ · '+(st.bytes/1048576).toFixed(1)+' MB · '+Math.round(st.ms/1000)+' วิ'
+   +(st.skippedSame?'<br><small>ข้ามไฟล์ที่ขึ้นไปแล้ว '+st.skippedSame+' ไฟล์</small>':'')
+   +(st.errors.length?'<br><small style="color:#b42318">ผิดพลาด '+st.errors.length+' ไฟล์ — กดย้ายอีกครั้งเพื่อส่งเฉพาะที่ยังขาด<br>'+esc2(st.errors.slice(0,5).join(' · '))+'</small>':'')
+   +(axr?'<br><small style="color:'+(axr.err.length?'#9a4a12':'#1a6b35')+'">'+esc2(gasAxMsg(axr)).replace(/\n/g,'<br>')+((axr.fg||axr.bom.length)?'<br>เครื่องนี้จะส่งข้อมูล Excel ของ AX เองเมื่อไฟล์เปลี่ยน (ตรวจทุก 5 นาที)':'')+'</small>':'');
+  var go=q('gmGo'); go.textContent=gasDriveOnly()?(sxlIsGas(SXL.dir)?'โหลดข้อมูลจาก Drive':'เชื่อมต่อ Google Drive บนเครื่องนี้'):'ใช้ Google Drive บนเครื่องนี้เลย'; go.style.display='';
+  go.onclick=async function(){ ov.remove(); gasSetOn(true); await sxlRestore(false); sxlRender(); };
+  q('gmX').textContent='ปิด'; q('gmX').onclick=function(){ ov.remove(); };
+}
+
+/* ───────── Fitting Global: Excel ในเครื่อง → fitting_global_rows.csv บน Drive (ไม่มีรหัสผ่าน) ───────── */
+function gasCsvCell(v){ if(v==null) return ''; var s=String(v); return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+/* v1.432: fs = เขียนผ่านตัวเชื่อมที่ให้มา (ตอนย้ายข้อมูลยังไม่ได้เชื่อมต่อ) · คืนจำนวนรหัส */
+async function gasFgUpload(file,quiet,fs){
+  if(!fs&&!sxlIsGas(SXL.dir)) throw Error('ต้องเชื่อมต่อ Google Drive ก่อน');
+  var T=sxlCfg('fitting_global'), text, nRows=null, fsx=fs||SXL.dir._fs;
+  var run=async function(){
+    if(sxlIsXlsx(file.name)){
+      var r=await sxlReadXlsx(T,file); nRows=r.rows.length;
+      var lines=[r.cols.join(',')]; r.rows.forEach(function(o){ lines.push(r.cols.map(function(c){ return gasCsvCell(o[c]); }).join(',')); });
+      text=lines.join('\n'); lines=null;
+    } else text=await file.text();
+    if(!/^\uFEFF?item_number|,item_number/.test(text.slice(0,400))) throw Error('ไฟล์นี้ไม่มีคอลัมน์ item_number — ไม่ใช่ Fitting Global');
+    await fsx.write('','fitting_global_rows.csv',new TextEncoder().encode(text));
+    gasLs(GAS_FG_MOD,file.lastModified||Date.now());
+    if(sxlIsGas(SXL.dir)) await sxlSync(true,'check');
+  };
+  if(quiet) await run(); else await gasBusy('ส่ง Fitting Global ขึ้น Google Drive',run);
+  var S=SXL.s.fitting_global; if(nRows==null&&S&&S.rows) nRows=S.rows.length;
+  if(sxlIsGas(SXL.dir)) sxlStatus('ส่ง Fitting Global ขึ้น Drive แล้ว · '+(nRows!=null?nRows.toLocaleString():'?')+' รหัส · เครื่องอื่นเห็นในรอบ F5/โหลดข้อมูลล่าสุดถัดไป');
+  return nRows;
+}
+/* เครื่องในออฟฟิศที่ดึง Excel จาก AX: ส่งเองเมื่อไฟล์เปลี่ยน (ตอนเปิด + ทุก 30 นาที) */
+async function gasFgAutoCheck(ask){
+  if(gasLs(GAS_FG_AUTO)!=='1'||!sxlIsGas(SXL.dir)) return;
+  var h=null; try{ h=await sxlIdbGet('gasFgSrc'); }catch(e){}
+  if(!h){ if(ask) sxlStatus('กด “ส่ง Fitting Global จาก Excel” หนึ่งครั้งเพื่อจำตำแหน่งไฟล์ Excel ของเครื่องนี้',true); return; }
+  var perm='prompt'; try{ perm=await h.queryPermission({mode:'read'}); }catch(e){}
+  if(perm!=='granted'&&ask){ try{ perm=await h.requestPermission({mode:'read'}); }catch(e){} }
+  if(perm!=='granted'){ sxlStatus('ส่ง Fitting Global อัตโนมัติ: ต้องอนุญาตอ่านไฟล์ Excel อีกครั้ง — ติ๊กช่อง “เครื่องนี้ส่ง Fitting Global เอง” ใหม่',true); return; }
+  var f=await h.getFile(), last=+gasLs(GAS_FG_MOD)||0;
+  if(f.lastModified>last){ try{ await gasFgUpload(f,true); }catch(e){ sxlStatus('ส่ง Fitting Global อัตโนมัติไม่สำเร็จ: '+e.message,true); } }
+}
+/* v1.432: ตัวตั้งเวลา 30 นาทีเดิม → gasAxAuto ทุก 5 นาที (เรียกตัวนี้ต่อเมื่อเครื่องจำไว้แค่ไฟล์ Fitting Global ไฟล์เดียวแบบ 1.429–1.431) */
+
+/* ═════════ StarNexus v1.432 / Production V2 v177: ใช้ Google Drive อย่างเดียว — ตัดโหมดโฟลเดอร์ Server ═════════
+   ผู้ใช้ 12/10/2026: “ตอนนี้ส่งเข้าที่ไหนครับ ไฟล์กลาง หรือว่า Google แล้ว ผมอยากตัดไฟล์กลางออกแล้ว”
+     → เลือก: ทั้งสองโปรแกรม · ตัดทิ้งหมด (ไม่มีปุ่มสลับกลับ) · เปลี่ยนคำบนจอ “ไฟล์กลาง” เป็น “Google Drive” ทั้งหมด
+   เดิม (1.429–1.431 / v176): ไฟล์กลางเลือกได้ว่าอยู่ที่ “โฟลเดอร์ Server ในเครื่อง” หรือ “Google Drive” · ปุ่มเขียนว่า “ไฟล์กลาง”
+     เครื่องที่ยังไม่ได้ตั้ง Drive ก็ยังเปิดโฟลเดอร์เดิมได้ → ข้อมูลแยกเป็นสองชุดได้ และผู้ใช้ไม่รู้ว่าปุ่ม “ส่งเข้าไฟล์กลาง” ส่งไปที่ไหน
+   ตอนนี้:
+     · เปิดโปรแกรม: มี URL + กุญแจ = ต่อ Drive เลย (ไม่สนค่า “ใช้/ไม่ใช้” เดิม) · ไม่มี = หน้าต่างขึ้นให้ใส่ — ไม่คืนโฟลเดอร์/ไฟล์ในเครื่องที่จำไว้
+     · หน้าต่าง: ไม่มีปุ่มเลือกโฟลเดอร์/เลือกไฟล์/เชื่อมตำแหน่งที่จำไว้/กลับไปใช้โฟลเดอร์ · ปุ่ม “ใช้ Google Drive” → “เชื่อมต่อ”
+       ปุ่มย้ายข้อมูลจากโฟลเดอร์เดิมยังอยู่ (ใช้ครั้งเดียวตอนย้าย) · ปุ่มบน = “☁ Google Drive · n/m ตาราง”
+     · ข้อมูลจาก AX (Excel ที่มีรหัสผ่านฐานข้อมูล อยู่ในออฟฟิศ): เครื่องในออฟฟิศเลือกโฟลเดอร์ Excel ครั้งเดียว →
+       ส่ง “เฉพาะค่าในตาราง” ขึ้น Drive เองเมื่อไฟล์เปลี่ยน — FittingGlobal_* → fitting_global_rows.csv · FittingBOM_* → .xlsx ค่าล้วน
+       (เดิมโหมด Drive ไม่มี FittingBOM เลย → Production V2 แตก BOM ไม้จาก AX ไม่ได้)
+     · คำบนจอ: “ไฟล์กลาง” → “Google Drive” · คำ Supabase ที่หมายถึงที่เก็บข้อมูล → Google Drive (ประวัติ/ยุคเก่าไม่แตะ)
+       แปลตอนแสดงผล (ไม่แก้ข้อความเดิมหลายร้อยจุดในโค้ด) · ไม่แตะช่องพิมพ์ ประวัติรุ่น (changelog) และโค้ด
+     · รหัสเชื่อมต่อ: คัดลอกจากเครื่องที่ใช้อยู่ ไปวางในช่อง URL ของเครื่องใหม่ = ได้ทั้ง URL และกุญแจ (ไม่ต้องพิมพ์ยาว)
+   แกนไฟล์กลาง (SXL) ยังเป็นตัวอ่าน/เขียนข้อมูลเหมือนเดิม — Google Drive คือโฟลเดอร์เสมือน (GasFS) ที่แกนนี้ใช้
+   ปิดได้: SN_OFF.driveOnly=1 = กลับไปแบบ 1.431/v176 (เลือกโฟลเดอร์หรือ Drive) · SN_OFF.gasfs=1 = โฟลเดอร์ในเครื่องอย่างเดียว (ก่อน 1.429) */
+
+/* ไม่มี URL/กุญแจ: ไม่คืนโฟลเดอร์ในเครื่อง — เปิดหน้าต่างให้ใส่ */
+async function gasNoCfg(){
+  SXL.dir=null; SXL.canWrite=false; SXL.dirErr=''; gasBadge();
+  SXL.cfg.tables.forEach(function(T){ var S=SXL.s[T.t]; if(S&&S.src==='file'){ S.src=''; S.handle=null; } });
+  try{ await sxlSync(true,'restore'); }catch(e){}
+  sxlStatus('ยังไม่ได้เชื่อมต่อ Google Drive — ใส่ Web app URL + กุญแจ (หรือวางรหัสเชื่อมต่อ) ในส่วน ☁ ด้านบน แล้วกด “เชื่อมต่อ”',true);
+  try{ sxLocalSettings(); }catch(e){}
+}
+function gasDriveRender(){
+  var on=sxlIsGas(SXL.dir);
+  var top=document.getElementById('sxLocalTop');
+  if(top){ var core=SXL.cfg.tables.filter(function(T){ return T.core&&sxlLoadable(T)&&!SXL.s[T.t].ready; }).length;
+    var t='☁ Google Drive · '+(on?(sxlReadyN()+'/'+sxlLoadN()+' ตาราง'):'ยังไม่เชื่อมต่อ');
+    if(top.textContent!==t) top.textContent=t;               // ข้อความเดิมทุกตัวอักษร = ไม่เขียนทับ (Production V2 แบ่งช่วงไว้ย่อตอนจอแคบ)
+    top.style.background=(!on||core)?'#9a4a12':'#135e73'; }
+  var err=SXL.dirErr?' <span class="sl-bad">'+esc2(SXL.dirErr)+'</span>':'';
+  var di=document.getElementById('sxlDirInfo');
+  if(di) di.innerHTML=on?('ข้อมูลอยู่บน <b>Google Drive</b> (Apps Script) · StarNexus กับ Production V2 ใช้ชุดเดียวกัน'+err)
+    :('<span class="sl-warn">ยังไม่ได้เชื่อมต่อ — ใส่ Web app URL + กุญแจ ในส่วน ☁ ด้านบน แล้วกด “เชื่อมต่อ”</span>'+err);
+  var wi=document.getElementById('sxlWInfo');
+  if(wi) wi.innerHTML=on?'<span class="sl-st ok">บันทึก: ✓ ขึ้น Google Drive</span> · เครื่องอื่นเห็นภายใน ~10 วินาที'
+    :'<span class="sl-warn">บันทึก: ต้องเชื่อมต่อ Google Drive ก่อน</span>';
+  SXL.cfg.tables.forEach(function(T){ var el=document.getElementById('sxl_st_'+T.t); if(el&&el.innerHTML.indexOf('ยังไม่ได้เลือก')===0) el.innerHTML=el.innerHTML.replace('ยังไม่ได้เลือก',on?'ยังไม่มีไฟล์บน Drive':'ยังไม่ได้โหลด'); });
+  var P=document.getElementById('sxLocalPanel'); if(P&&P.style.display!=='none') try{ gasAxInfo(); }catch(e){}   /* อ่าน IndexedDB — เฉพาะตอนหน้าต่างเปิด */
+}
+function gasDriveUi(){
+  var P=document.getElementById('sxLocalPanel'); if(!P||P.dataset.gasOnly) return; P.dataset.gasOnly='1';
+  var box=P.querySelector('.sl-box'), C=SXL.cfg; if(!box) return;
+  var h2=box.querySelector('h2'); if(h2) h2.textContent=String(C.title||C.app||'').split(' · ')[0]+' · ☁ Google Drive';
+  var intro=h2&&h2.nextElementSibling;
+  if(intro&&intro.tagName==='P') intro.innerHTML='ข้อมูลทั้งหมด (ออเดอร์ · โมเดลตู้ · ค่าตั้ง · Fitting · ประวัติ XML) อยู่บน <b>Google Drive</b> ผ่าน Apps Script · ใช้ได้ทุกเครื่องที่มีอินเทอร์เน็ต ไม่ต้องเข้าโฟลเดอร์ Server · StarNexus กับ Production V2 เห็นข้อมูลชุดเดียวกัน · บันทึกแล้วเครื่องอื่นเห็นภายใน ~10 วินาที';
+  ['sxlDir','sxLocalReconnect'].forEach(function(id){ var b=document.getElementById(id); if(b) b.style.display='none'; });
+  P.querySelectorAll('[data-sxl-pick]').forEach(function(b){ b.style.display='none'; });
+  var up=document.getElementById('sxLocalUpload'); if(up&&up.closest('p')) up.closest('p').style.display='none';
+  box.querySelectorAll('p.sl-note').forEach(function(p){ if(/เบราว์เซอร์ให้สิทธิ์/.test(p.textContent)) p.textContent='โปรแกรมตรวจของใหม่บน Google Drive ทุก 10 วินาที'+(C.note?(' · '+C.note):''); });
+  var th=box.querySelectorAll('thead th'); if(th[1]) th[1].textContent='บน Google Drive';
+  var ck=document.getElementById('sxLocalCheck');
+  if(ck){ ck.textContent='โหลดข้อมูลล่าสุด'; var oc=ck.onclick; ck.onclick=function(e){ if(!sxlIsGas(SXL.dir)){ sxlStatus('ยังไม่ได้เชื่อมต่อ Google Drive — ใส่ URL + กุญแจ แล้วกด “เชื่อมต่อ”',true); return; } return oc&&oc.call(this,e); }; }
+  var g=document.getElementById('gasBox');
+  if(g){ if(intro&&intro.parentNode===box) intro.after(g);
+    var h3=g.querySelector('h3'); if(h3&&h3.firstChild&&h3.firstChild.nodeType===3) h3.firstChild.nodeValue='☁ การเชื่อมต่อ Google Drive (Apps Script) ';
+    var sm=g.querySelector('h3+small'); if(sm) sm.textContent='ใส่ Web app URL กับกุญแจของ Apps Script ครั้งเดียวต่อเครื่อง — หรือวาง “รหัสเชื่อมต่อ” ที่คัดลอกจากเครื่องที่ใช้อยู่ลงช่อง URL · จำไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น';
+    var u=document.getElementById('gasUse'); if(u) u.textContent='เชื่อมต่อ';
+    var l=document.getElementById('gasLocal'); if(l) l.style.display='none';
+    var mg=document.getElementById('gasMig'); if(mg) mg.textContent='⬆ ย้ายข้อมูลจากโฟลเดอร์ Server เดิม (ทำครั้งเดียว)…'; }
+}
+
+/* ───────── รหัสเชื่อมต่อ (URL + กุญแจ ในข้อความเดียว) ───────── */
+var GAS_CODE='SNGAS1:';
+function gasCodeEnc(u,k){ return GAS_CODE+btoa(unescape(encodeURIComponent(JSON.stringify({u:u,k:k})))); }
+function gasCodeDec(s){ s=String(s||'').trim(); if(s.indexOf(GAS_CODE)!==0) return null; try{ var o=JSON.parse(decodeURIComponent(escape(atob(s.slice(GAS_CODE.length))))); return (o&&o.u&&o.k)?o:null; }catch(e){ return null; } }
+
+/* ───────── ข้อมูลจาก AX (Excel ในออฟฟิศ) → Drive แบบไม่มีรหัสผ่าน ─────────
+   FittingGlobal_*.xls* → fitting_global_rows.csv (เหมือนปุ่มเดิม “ส่ง Fitting Global จาก Excel”)
+   FittingBOM_*.xls* (ไฟล์ AX + FittingBOM_Manual) → ชื่อเดิมนามสกุล .xlsx ที่ตำแหน่งเดียวกัน — เขียนใหม่เฉพาะค่าในเซลล์ทุกชีต
+     ไม่มี connections.xml (รหัสผ่าน AX) · ไม่มีมาโคร · ไม่มี Power Query → Production V2 อ่านจาก Drive ด้วยตัวอ่านเดิม (หาไฟล์ FittingBOM_* เอง)
+   หาไฟล์ในชั้นแรกและโฟลเดอร์ย่อยหนึ่งชั้น (ยกเว้นที่ขึ้นต้น _ .) — กติกาเดียวกับที่ Production V2 หาไฟล์ BOM */
+var GAS_AX_MOD='sxlocaltrial:furnitech:gasAxMod', GAS_AX_AT='sxlocaltrial:furnitech:gasAxAt';
+function gasAxKind(n){ if(!/\.xls[xm]$/i.test(n)||/^~\$/.test(n)) return ''; var b=n.toLowerCase().replace(/\.xls[xm]$/,'').replace(/[^a-z0-9]/g,'');
+  return b.indexOf('fittingglobal')===0?'fg':b.indexOf('fittingbom')===0?'bom':''; }
+function gasJoin(p,n){ return p?p+'/'+n:n; }
+async function gasAxScan(dir){
+  var out=[];
+  for await (var e of dir.entries()){ var n=e[0],h=e[1];
+    if(h.kind==='file'){ var k=gasAxKind(n); if(k) out.push({p:'',n:n,h:h,k:k}); }
+    else if(!/^[_.]/.test(n)){ try{ for await (var e2 of h.entries()){ if(e2[1].kind!=='file') continue; var k2=gasAxKind(e2[0]); if(k2) out.push({p:n,n:e2[0],h:e2[1],k:k2}); } }catch(er){} } }
+  return out;
+}
+async function gasAxDir(ask){
+  var d=null; try{ d=await sxlIdbGet('gasAxDir'); }catch(e){} if(!d) return null;
+  var p='prompt'; try{ p=await d.queryPermission({mode:'read'}); }catch(e){}
+  if(p!=='granted'&&ask){ try{ p=await d.requestPermission({mode:'read'}); }catch(e){} }
+  if(p!=='granted'){ var er=Error('ต้องอนุญาตอ่านโฟลเดอร์ “'+d.name+'” อีกครั้ง — กด “⬆ ส่งข้อมูล Excel ตอนนี้” แล้วกดอนุญาต'); er.perm=1; throw er; }
+  return d;
+}
+async function gasAxSync(dir,opt){
+  opt=opt||{};
+  var fs=opt.fs||(sxlIsGas(SXL.dir)?SXL.dir._fs:null); if(!fs) throw Error('ต้องเชื่อมต่อ Google Drive ก่อน');
+  var list=await gasAxScan(dir), mods={}; try{ mods=JSON.parse(gasLs(GAS_AX_MOD)||'{}')||{}; }catch(e){ mods={}; }
+  var res={found:list.length,dir:dir.name,fg:null,bom:[],same:0,err:[]};
+  var fgs=[]; for(var x of list){ if(x.k!=='fg') continue; try{ x.f=await x.h.getFile(); fgs.push(x); }catch(e){ res.err.push(gasJoin(x.p,x.n)+': '+e.message); } }
+  fgs.sort(function(a,b){ return (a.p?1:0)-(b.p?1:0)||b.f.lastModified-a.f.lastModified; });   // ชั้นแรกก่อน · ใหม่สุดก่อน
+  if(fgs.length){ var g=fgs[0], sig=g.f.size+'|'+g.f.lastModified, key=gasJoin(g.p,g.n);
+    if(!opt.force&&mods.fg===sig) res.same++;
+    else{ try{ var nFg=await gasFgUpload(g.f,true,fs); mods.fg=sig; res.fg={n:key,rows:nFg}; }catch(e){ res.err.push(key+': '+e.message); } } }
+  for(var b of list){ if(b.k!=='bom') continue;
+    var key2=gasJoin(b.p,b.n), outN=b.n.replace(/\.xls[xm]$/i,'.xlsx');
+    try{ var f=await b.h.getFile(), sig2=f.size+'|'+f.lastModified;
+      if(!opt.force&&mods['bom:'+key2]===sig2){ res.same++; continue; }
+      var u=await gasXlsxValues(f);
+      await fs.write(b.p,outN,u); mods['bom:'+key2]=sig2; res.bom.push({n:gasJoin(b.p,outN),kb:Math.max(1,Math.round(u.length/1024))});
+    }catch(e){ res.err.push(key2+': '+(e.message||e)); } }
+  gasLs(GAS_AX_MOD,JSON.stringify(mods)); gasLs(GAS_AX_AT,Date.now());
+  return res;
+}
+function gasAxMsg(r){
+  if(!r) return '';
+  var a=[];
+  if(r.fg) a.push('Fitting Global '+(r.fg.rows!=null?Number(r.fg.rows).toLocaleString()+' รหัส':'')+' (จาก '+r.fg.n+')');
+  r.bom.forEach(function(b){ a.push(b.n+' ('+b.kb+' KB ค่าล้วน)'); });
+  return (a.length?'✓ ส่งขึ้น Drive แล้ว: '+a.join(' · '):(r.found?'✓ ไฟล์ Excel ไม่เปลี่ยน — ไม่ต้องส่งใหม่':'ไม่พบไฟล์ Excel ของ AX'))
+    +(r.same&&a.length?' · ไม่เปลี่ยน '+r.same+' ไฟล์':'')+(r.err.length?'\n⚠ ส่งไม่ได้ '+r.err.length+' ไฟล์: '+r.err.slice(0,3).join(' · '):'');
+}
+async function gasAxInfo(){
+  var el=document.getElementById('gasAxInfo'); if(!el) return;
+  var d=null; try{ d=await sxlIdbGet('gasAxDir'); }catch(e){}
+  var at=+gasLs(GAS_AX_AT)||0;
+  el.innerHTML='<small>'+(d?('โฟลเดอร์ Excel ของเครื่องนี้: <b>'+esc2(d.name)+'</b>'+(at?' · ตรวจล่าสุด '+new Date(at).toLocaleString('th-TH'):'')):'เครื่องนี้ยังไม่ได้เลือกโฟลเดอร์ Excel ของ AX (เครื่องที่ไม่มีไฟล์ Excel ไม่ต้องเลือก)')+'</small>';
+}
+/* ตอนเปิด (ต่อ Drive เสร็จ) + ทุก 5 นาที + กลับมาที่แท็บ: ส่งเองเมื่อไฟล์เปลี่ยน */
+var GAS_AX_RUN=null;
+async function gasAxAuto(ask){
+  if(gasLs(GAS_FG_AUTO)!=='1'||!sxlIsGas(SXL.dir)) return null;
+  if(GAS_AX_RUN) return GAS_AX_RUN;
+  GAS_AX_RUN=(async function(){
+    var d=null;
+    try{ d=await gasAxDir(ask); }
+    catch(e){ if(ask) throw e; if(!GAS_AX_RUN_WARNED){ GAS_AX_RUN_WARNED=1; sxlStatus('ส่งข้อมูล Excel ของ AX อัตโนมัติ: '+e.message,true); } return null; }
+    if(!d){ await gasFgAutoCheck(ask); return null; }                    // 1.429–1.431: จำไว้แค่ไฟล์ Fitting Global ไฟล์เดียว
+    var r=await gasAxSync(d,{});
+    if(r.fg||r.bom.length||r.err.length) sxlStatus(gasAxMsg(r).replace(/\n/g,' · '),!!r.err.length);
+    try{ gasAxInfo(); }catch(e){}
+    return r;
+  })();
+  try{ return await GAS_AX_RUN; } finally{ GAS_AX_RUN=null; }
+}
+var GAS_AX_RUN_WARNED=0;
+setInterval(function(){ if(!document.hidden) gasAxAuto(false).catch(function(){}); },5*60000);
+document.addEventListener('visibilitychange',function(){ if(!document.hidden) gasAxAuto(false).catch(function(){}); });
+
+/* ───────── Excel → .xlsx ใหม่ที่มีแต่ค่าในเซลล์ (ไม่มีรหัสผ่าน/มาโคร/การเชื่อมต่อ) ─────────
+   ใช้ตัวแตก zip ของแกนไฟล์กลาง (sxlUnzipIndex/sxlZipText) · ชื่อไฟล์ชีตเดิม (xl/worksheets/sheetN.xml) คงไว้ ลำดับชีตที่ตัวอ่านเห็นจึงเหมือนเดิม */
+async function gasXlsxValues(file){
+  var buf=await file.arrayBuffer(), ents=sxlUnzipIndex(buf), ss=[], m;
+  if(ents['xl/sharedStrings.xml']){ var sx=await sxlZipText(buf,ents['xl/sharedStrings.xml']), re=/<si>([\s\S]*?)<\/si>|<si\/>/g; while((m=re.exec(sx))) ss.push(m[1]?sxlXmlText(m[1]):''); sx=null; }
+  var wb=ents['xl/workbook.xml']?await sxlZipText(buf,ents['xl/workbook.xml']):'', rl=ents['xl/_rels/workbook.xml.rels']?await sxlZipText(buf,ents['xl/_rels/workbook.xml.rels']):'';
+  var rmap={}; rl.replace(/<Relationship\b[^>]*>/g,function(t){ var id=/\bId="([^"]+)"/.exec(t), tg=/\bTarget="([^"]+)"/.exec(t); if(id&&tg) rmap[id[1]]=tg[1].replace(/^\/?xl\//,'').replace(/^\//,''); return t; });
+  var names={}, order=[]; wb.replace(/<sheet\b[^>]*>/g,function(t){ var nm=/\bname="([^"]*)"/.exec(t), rid=/\br:id="([^"]+)"/.exec(t); if(nm&&rid&&rmap[rid[1]]){ var pp='xl/'+rmap[rid[1]]; names[pp]=sxlXmlDec(nm[1]); order.push(pp); } return t; });
+  /* ลำดับชีตตามสมุดงานเดิม (ตัวอ่าน BOM ใส่เองดูลำดับนี้) · ชื่อไฟล์ชีตเดิม (ตัวอ่านไฟล์ AX ดูลำดับชื่อไฟล์) */
+  var all=Object.keys(ents).filter(function(n){ return /^xl\/worksheets\/[^/]+\.xml$/.test(n); }).sort();
+  var paths=order.filter(function(pp){ return all.indexOf(pp)>=0; }); all.forEach(function(pp){ if(paths.indexOf(pp)<0) paths.push(pp); });
+  if(!paths.length) throw Error('ไม่พบชีตในไฟล์ Excel นี้');
+  var cellRe=/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g, rowRe=/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g, esc=function(s){ return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,''); };
+  var sheets=[], used={};
+  for(var pi=0;pi<paths.length;pi++){
+    var x=await sxlZipText(buf,ents[paths[pi]]), out=[], m2, rn=0;
+    rowRe.lastIndex=0;
+    while((m2=rowRe.exec(x))){
+      var ra=/\br="(\d+)"/.exec(m2[1]); rn=ra?+ra[1]:rn+1; if(!m2[2]) continue;
+      var cells=[], m3; cellRe.lastIndex=0;
+      while((m3=cellRe.exec(m2[2]))){
+        var r=/\br="([A-Z]+)\d*"/.exec(m3[1]); if(!r||m3[2]==null) continue;
+        var t=/\bt="([^"]*)"/.exec(m3[1]), ty=t?t[1]:'', inner=m3[2], v=null, isNum=false;
+        if(ty==='inlineStr'){ var is=/<is>([\s\S]*?)<\/is>/.exec(inner); v=is?sxlXmlText(is[1]):null; }
+        else{ var vv=/<v>([\s\S]*?)<\/v>/.exec(inner); if(vv){ if(ty==='s') v=ss[+vv[1]]; else if(ty==='str'||ty==='e'||ty==='d') v=sxlXmlDec(vv[1]); else if(ty==='b') v=vv[1]==='1'?'TRUE':'FALSE'; else{ v=vv[1]; isNum=/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(v); } } }
+        if(v==null||v==='') continue;
+        cells.push(isNum?'<c r="'+r[1]+rn+'"><v>'+v+'</v></c>':'<c r="'+r[1]+rn+'" t="inlineStr"><is><t xml:space="preserve">'+esc(v)+'</t></is></c>');
+      }
+      if(cells.length) out.push('<row r="'+rn+'">'+cells.join('')+'</row>');
+    }
+    x=null;
+    var nm=String(names[paths[pi]]||('Sheet'+(pi+1))).replace(/[\[\]:*?\/\\]/g,'_').slice(0,31)||('Sheet'+(pi+1));
+    while(used[nm.toLowerCase()]) nm=nm.slice(0,28)+'_'+(pi+1); used[nm.toLowerCase()]=1;
+    sheets.push({path:paths[pi],name:nm,xml:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+out.join('')+'</sheetData></worksheet>'});
+  }
+  var te=new TextEncoder(), H='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  var files=[
+    {n:'[Content_Types].xml',s:H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+      +sheets.map(function(s){ return '<Override PartName="/'+s.path+'" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join('')+'</Types>'},
+    {n:'_rels/.rels',s:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+    {n:'xl/workbook.xml',s:H+'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+      +sheets.map(function(s,i){ return '<sheet name="'+esc(s.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>'; }).join('')+'</sheets></workbook>'},
+    {n:'xl/_rels/workbook.xml.rels',s:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +sheets.map(function(s,i){ return '<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="'+s.path.replace(/^xl\//,'')+'"/>'; }).join('')+'</Relationships>'}
+  ].concat(sheets.map(function(s){ return {n:s.path,s:s.xml}; }));
+  return gasZip(files.map(function(f){ return {n:f.n,u:te.encode(f.s)}; }));
+}
+var GAS_CRC=null;
+function gasCrc(u){
+  if(!GAS_CRC){ GAS_CRC=new Uint32Array(256); for(var n=0;n<256;n++){ var c=n; for(var k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); GAS_CRC[n]=c>>>0; } }
+  var c2=0xFFFFFFFF; for(var i=0;i<u.length;i++) c2=GAS_CRC[(c2^u[i])&255]^(c2>>>8); return (c2^0xFFFFFFFF)>>>0;
+}
+async function gasDeflate(u){ if(typeof CompressionStream==='undefined') return null; try{ return new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer()); }catch(e){ return null; } }
+async function gasZip(files){
+  var te=new TextEncoder(), parts=[], cen=[], off=0;
+  for(var i=0;i<files.length;i++){
+    var f=files[i], nm=te.encode(f.n), crc=gasCrc(f.u), z=await gasDeflate(f.u), meth=(z&&z.length<f.u.length)?8:0, data=meth?z:f.u;
+    var lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true); lh.setUint16(8,meth,true); lh.setUint16(10,0,true); lh.setUint16(12,0x21,true);
+    lh.setUint32(14,crc,true); lh.setUint32(18,data.length,true); lh.setUint32(22,f.u.length,true); lh.setUint16(26,nm.length,true); lh.setUint16(28,0,true);
+    parts.push(new Uint8Array(lh.buffer),nm,data);
+    var ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true); ch.setUint16(10,meth,true); ch.setUint16(12,0,true); ch.setUint16(14,0x21,true);
+    ch.setUint32(16,crc,true); ch.setUint32(20,data.length,true); ch.setUint32(24,f.u.length,true); ch.setUint16(28,nm.length,true); ch.setUint32(42,off,true);
+    cen.push(new Uint8Array(ch.buffer),nm);
+    off+=30+nm.length+data.length;
+  }
+  var csz=0; cen.forEach(function(b){ csz+=b.length; });
+  var eo=new DataView(new ArrayBuffer(22));
+  eo.setUint32(0,0x06054b50,true); eo.setUint16(8,files.length,true); eo.setUint16(10,files.length,true); eo.setUint32(12,csz,true); eo.setUint32(16,off,true);
+  return new Uint8Array(await new Blob(parts.concat(cen,[new Uint8Array(eo.buffer)])).arrayBuffer());
+}
+
+/* ───────── คำบนจอ: “ไฟล์กลาง” → “Google Drive” ─────────
+   ข้อความเดิมอยู่ในโค้ดหลายร้อยจุด (ปุ่ม · หน้าต่าง · ข้อความเด้ง · กล่องถาม) → แปลตอนขึ้นจอแทนการแก้ทีละจุด
+   ไม่แตะ: ช่องพิมพ์ (input/textarea) · ส่วนที่แก้ข้อความได้ · โค้ด/สไตล์ · ประวัติรุ่น (กล่องข้อความยาวเกิน 3000 ตัว เช่น changelog)
+   Supabase: แปลเฉพาะวลีที่หมายถึงที่เก็บข้อมูลตอนนี้ (ส่งเข้า/บันทึกลง/เก็บใน/เชื่อม…) · “ยุค Supabase / ไม่ใช้ Supabase / ลิงก์เดิมบน Supabase” คงไว้ */
+var GAS_WORD_KEYS=['ไฟล์กลาง','Supabase','โฟลเดอร์ Server','อ่านไฟล์ล่าสุด'];
+var GAS_WORDS=[
+  [/(?:รุ่น)?ทดลองไฟล์กลาง(?: รอบ \d+)?/g,'Google Drive'],
+  [/ไฟล์กลาง \(ทดลอง\)/g,'Google Drive'],
+  [/(?:โฟลเดอร์)?ไฟล์กลาง \(โฟลเดอร์ Server\)/g,'Google Drive'],
+  [/โฟลเดอร์ไฟล์กลาง/g,'Google Drive'],
+  [/ไฟล์กลาง — อ่านแล้ว/g,'Google Drive — เชื่อมต่อแล้ว'],
+  [/ยังไม่ได้(?:เลือก|เชื่อม)ไฟล์กลาง/g,'ยังไม่ได้เชื่อมต่อ Google Drive'],
+  [/กดปุ่ม “ไฟล์กลาง” (?:→ )?เลือกโฟลเดอร์ Server ก่อน/g,'กดปุ่ม “☁ Google Drive” แล้วเชื่อมต่อก่อน'],
+  [/(?:ต้อง)?เลือกโฟลเดอร์ Server ที่(?:ปุ่ม|หน้า) “ไฟล์กลาง”(?: ก่อน)?/g,'เชื่อมต่อ Google Drive ที่ปุ่ม “☁ Google Drive” ก่อน'],
+  [/ยังไม่ได้(?:เลือก|เชื่อม)โฟลเดอร์ Server/g,'ยังไม่ได้เชื่อมต่อ Google Drive'],
+  [/บันทึกลงโฟลเดอร์ Server ไม่สำเร็จ/g,'บันทึกขึ้น Google Drive ไม่สำเร็จ'],
+  [/อ่านโฟลเดอร์ Server ไม่สำเร็จ/g,'อ่าน Google Drive ไม่สำเร็จ'],
+  [/อ่านไฟล์ล่าสุด/g,'โหลดข้อมูลล่าสุด'],
+  [/ไฟล์กลาง/g,'Google Drive'],
+  [/(ส่งเข้า|บันทึกลง|บันทึกไว้บน|เก็บใน|ยังไม่ได้เชื่อม|กำลังเชื่อมต่อ|อ่านรายชื่อ order จาก|ส่ง) ?Supabase/g,'$1 Google Drive'],
+  [/(คลาวด์|ฐานข้อมูล) \(Supabase\)/g,'$1 (Google Drive)'],
+  [/(สรุป &(?:amp;)?) Supabase/g,'$1 Google Drive'],
+  [/สิทธิ์เขียนตาราง (\S+) ของ Supabase/g,'สิทธิ์เขียนตาราง $1 ของ Google Drive'],
+  [/^Supabase — เชื่อมต่อแล้ว/g,'Google Drive — เชื่อมต่อแล้ว'],
+  [/Supabase error/g,'Google Drive error']
+];
+function gasHasWord(s){ if(!s) return false; for(var i=0;i<GAS_WORD_KEYS.length;i++) if(s.indexOf(GAS_WORD_KEYS[i])>=0) return true; return false; }
+function gasWord(s){
+  if(typeof s!=='string'||!gasHasWord(s)) return s;
+  var t=s; for(var i=0;i<GAS_WORDS.length;i++) t=t.replace(GAS_WORDS[i][0],GAS_WORDS[i][1]);
+  if(t===s) return s;
+  return t.replace(/([฀-๿])((?:☁ )?Google Drive)/g,'$1 $2').replace(/(Google Drive)([฀-๿])/g,'$1 $2');
+}
+function gasWordSkip(el){
+  for(var e=el;e&&e.nodeType===1;e=e.parentNode){
+    var tn=e.tagName; if(tn==='SCRIPT'||tn==='STYLE'||tn==='TEXTAREA'||tn==='NOSCRIPT'||tn==='CODE'||e.isContentEditable||e.hasAttribute('data-gas-keep')) return true;
+    if(tn==='BODY'||tn==='HEAD') return false; }
+  return false;
+}
+function gasWordText(n){
+  var v=n.nodeValue, t=gasWord(v);
+  if(n.parentNode&&n.parentNode.tagName==='TITLE') t=t.replace(/( · Google Drive)+/g,' · Google Drive');   // Production V2 เติมชื่อแท็บซ้ำตอน 4/8 วิ
+  if(t!==v) n.nodeValue=t;
+}
+var GAS_WORD_ATTR=['title','placeholder','aria-label'], GAS_WORD_SEL='';
+GAS_WORD_ATTR.forEach(function(a){ GAS_WORD_KEYS.forEach(function(k){ GAS_WORD_SEL+=(GAS_WORD_SEL?',':'')+'['+a+'*="'+k+'"]'; }); });
+function gasWordAttrs(el){ GAS_WORD_ATTR.forEach(function(a){ var v=el.getAttribute(a); if(v&&gasHasWord(v)){ var t=gasWord(v); if(t!==v) el.setAttribute(a,t); } }); }
+function gasWordTree(root){
+  if(!root) return;
+  if(root.nodeType===3){ if(gasHasWord(root.nodeValue)&&!gasWordSkip(root.parentNode)) gasWordText(root); return; }
+  if(root.nodeType!==1&&root.nodeType!==9&&root.nodeType!==11) return;
+  if(root.nodeType===1&&gasWordSkip(root)) return;
+  if(gasHasWord(root.textContent)){
+    var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:function(n){ return gasHasWord(n.nodeValue)?1:3; }}), a=[], x;
+    while((x=w.nextNode())) a.push(x);
+    a.forEach(function(n){ if(!gasWordSkip(n.parentNode)) gasWordText(n); });
+  }
+  if(root.querySelectorAll){ if(root.matches&&root.matches(GAS_WORD_SEL)) gasWordAttrs(root); root.querySelectorAll(GAS_WORD_SEL).forEach(gasWordAttrs); }
+}
+var GAS_WORD_OBS=null;
+function gasWordsInit(){
+  if(GAS_WORD_OBS||!gasDriveOnly()) return;
+  GAS_WORD_OBS=new MutationObserver(function(recs){
+    for(var i=0;i<recs.length;i++){ var r=recs[i];
+      if(r.type==='childList'){ for(var j=0;j<r.addedNodes.length;j++) gasWordTree(r.addedNodes[j]); }
+      else if(r.type==='characterData'){ if(gasHasWord(r.target.nodeValue)&&!gasWordSkip(r.target.parentNode)) gasWordText(r.target); }
+      else if(r.type==='attributes'){ var v=r.target.getAttribute(r.attributeName); if(v&&gasHasWord(v)) gasWordAttrs(r.target); } }
+  });
+  GAS_WORD_OBS.observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:GAS_WORD_ATTR});
+  gasWordTree(document.documentElement);
+  ['alert','confirm','prompt'].forEach(function(k){ var o=window[k]; if(typeof o!=='function'||o.__gas) return;
+    var w=function(m){ var a=[].slice.call(arguments); if(typeof m==='string'&&m.length<3000) a[0]=gasWord(m); return o.apply(window,a); }; w.__gas=1; window[k]=w; });
+}
+if(gasDriveOnly()){
+  try{ if(typeof SXL_SRC==='object'&&SXL_SRC) SXL_SRC.dir='จาก Google Drive'; }catch(e){}
+  gasWordsInit();
+}
+
+/* ───────── v1.433 / PV2 v178: ความคืบหน้าการดาวน์โหลดจาก Google Drive ─────────
+   ผู้ใช้ 12/10/2026 14:34: “ทำไมฝั่ง Production นานจังครับ” (จอค้าง “กำลังเตรียม… 0%”)
+   เดิม: หน้าต่างโหลดนับแค่ตอนแกะไฟล์ · ช่วงดาวน์โหลดจาก Drive (เครื่องใหม่ / ไฟล์ใหญ่ เช่น imos_orders ~20 MB บีบอัด) แถบไม่ขยับ ดูเหมือนค้าง
+   ตอนนี้: ระหว่างมีไฟล์กำลังดาวน์โหลด ขึ้น “ดาวน์โหลดจาก Google Drive · x / y MB · n/m ไฟล์” ทุก 0.4 วิ (GasFS 1.2 นับไบต์ระหว่างรับ)
+     Production V2 = บนหน้าต่าง “กำลังโหลด…” · StarNexus = กล่องรอ · ไม่มีหน้าต่าง = บรรทัดสถานะหน้า Google Drive (ถ้าเปิดอยู่) */
+var GAS_DL={base:null,last:'',t0:0};
+function gasMB(n){ return (Math.max(0,n)/1048576).toFixed(n>=10485760?0:1)+' MB'; }
+function gasDlState(){
+  var fs=GasFS.current(); if(!fs) return null;
+  var s=fs.st;
+  if(!(s.nNeed>s.nGot)){ GAS_DL.base=null; gasDlChip(null); return null; }
+  if(!GAS_DL.base){ GAS_DL.base={rx:s.rx,got:s.got,n:s.nGot}; GAS_DL.t0=Date.now(); }
+  var B=GAS_DL.base, total=Math.max(1,s.need-B.got), done=Math.min(total*0.99,Math.max(0,s.rx-B.rx));
+  return {total:total,done:done,pct:Math.min(99,done/total*100),n:s.nGot-B.n,nAll:s.nNeed-B.n};
+}
+function gasDlTick(){
+  var d; try{ d=gasDlState(); }catch(e){ return; }
+  if(!d) return;
+  var label='ดาวน์โหลดจาก Google Drive · '+gasMB(d.done)+' / '+gasMB(d.total)+(d.nAll>1?' · '+d.n+'/'+d.nAll+' ไฟล์':'')+(d.total>3145728?' (เก็บไว้ในเครื่อง ครั้งต่อไปไม่ต้องโหลดซ้ำ)':'');
+  try{
+    var ov=document.querySelector('#sxlLoadOv.on');
+    if(ov){ var ln=ov.querySelector('.sl-line'), fl=ov.querySelector('.sl-fill'), pc=ov.querySelector('.sl-pct');
+      if(ln&&ln.textContent!==label) ln.textContent=label; if(fl) fl.style.width=d.pct.toFixed(1)+'%'; if(pc) pc.textContent=Math.floor(d.pct)+'% ดาวน์โหลด'; return; }
+    if(typeof SXL!=='undefined'&&SXL._prog){ SXL._prog(label,Math.max(3,Math.min(88,d.pct*0.88))); return; }
+    var P=document.getElementById('sxLocalPanel'); if(P&&P.style.display!=='none'&&label!==GAS_DL.last){ GAS_DL.last=label; sxlStatus(label); }
+    /* v1.436 / PV2 v179: ไม่มีหน้าต่างโหลด (เช่น เปิด Order ที่ยังไม่โหลด) — ป้ายเล็กกลางล่างจอ เมื่อรอเกิน 0.7 วิ
+       ───────── v1.437 / PV2 v180: ขึ้นเฉพาะตอนเปิด Order ที่ยังไม่โหลด + บอกเลข Order ─────────
+       เดิม (v179) ขึ้นทุกครั้งที่มีไฟล์กำลังดาวน์โหลดแล้วไม่มีหน้าต่างโหลด (โหลดล่วงหน้า · รอบตรวจ 10 วิ)
+       ผู้ใช้ 12/10/2026 16:17 เห็น “☁ กำลังโหลดจาก Google Drive · 0.0 MB / 1.3 MB · 0/120 ไฟล์” แล้วถามว่าโหลดอะไร
+       (= ไฟล์โมเดลตู้ของ StarNexus ที่ Production โหลดล่วงหน้าโดยไม่ได้ใช้ — แก้ที่ตัวโหลดล่วงหน้าแล้ว)
+       ตอนนี้: งานเบื้องหลังไม่ขึ้นป้าย · ขึ้นเมื่อกำลังเปิด Order (ORD_HYD) นานเกิน 0.7 วิ */
+    var hk=[]; try{ hk=Object.keys(ORD_HYD||{}); }catch(e){}
+    if(hk.length&&Date.now()-GAS_DL.t0>700) gasDlChip('☁ กำลังโหลด Order '+hk.slice(0,3).join(', ')+(hk.length>3?(' และอีก '+(hk.length-3)+' Order'):'')+' จาก Google Drive · '+gasMB(d.done)+' / '+gasMB(d.total));
+    else gasDlChip(null);
+  }catch(e){}
+}
+function gasDlChip(t){
+  var el=document.getElementById('gasDlChip');
+  if(!t){ if(el) el.style.display='none'; return; }
+  if(!el){ el=document.createElement('div'); el.id='gasDlChip'; el.setAttribute('role','status');
+    el.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:595;background:#172c40;color:#fff;padding:7px 14px;border-radius:99px;font:13px/1.4 system-ui,Sarabun,sans-serif;box-shadow:0 4px 16px #0005;pointer-events:none;white-space:nowrap';
+    document.body.appendChild(el); }
+  if(el.textContent!==t) el.textContent=t; el.style.display='';
+}
+setInterval(gasDlTick,400);
+
+
+/* ═════════ StarNexus v1.436 / Production V2 v179: Production โหลดเฉพาะ Order ที่เปิด ═════════
+   ผู้ใช้ 12/10/2026 14:34 “ทำไมฝั่ง Production นานจัง” → เลือก “โหลดเฉพาะออเดอร์ที่เปิด”
+   เดิม: imos_orders = ไฟล์ฐานก้อนเดียว (264 Order · ข้อมูล ~113 MB · CSV ~126 MB) + ไฟล์รุ่นใน _changes ที่โหลดทุกไฟล์
+         Production อ่านทุก Order ทั้งก้อนทุกครั้งที่เปิด (เครื่องใหม่ต้องดาวน์โหลด ~20 MB ผ่าน Apps Script · F5 ยังต้องแกะ 126 MB)
+   ตอนนี้ (หลัง “แยกไฟล์ Order” ครั้งเดียว):
+     · ไฟล์ฐาน imos_orders_rows.csv = รายชื่อเบา (order_id · loaded_at · created_by + data ที่มีแค่ป้าย source/_isManualBOM/__impMetaStr/itemIdSet
+       ขึ้นต้น {"__lazy":…}) · ข้อมูลเต็มของแต่ละ Order อยู่ในไฟล์รุ่นของมันเองใน _changes/imos_orders (รูปแบบเดิมของไฟล์กลาง)
+     · ดัชนีรายการ _changes/_idx/imos_orders/<กลุ่ม>.json (ไฟล์เล็ก) บอกป้ายของรุ่นล่าสุดแต่ละ Order → เปิดโปรแกรมไม่ต้องอ่านไฟล์ Order เลย
+       ทุกครั้งที่บันทึก Order (ทั้ง StarNexus และ Production) เขียนดัชนีตาม · ไม่มี/ไม่ตรงรุ่น = อ่านไฟล์ Order นั้นเต็มแล้วเขียนดัชนีให้ (ซ่อมเอง)
+     · คำขอที่ต้องใช้ข้อมูลเต็ม (select data / data->> ที่ไม่ใช่ป้าย) → โหลดเฉพาะ Order ที่ขอ (eq/in order_id) แล้วเติมลงแถวเดิม (วัตถุเดิม
+       ตัวเช็คว่าต้นทางแก้ (RevGuard) จึงยังจับคู่ได้) · ก่อนเขียน Order ที่ยังไม่โหลด โหลดเต็มก่อนเสมอ (กันเขียนป้ายทับข้อมูล)
+     · ปุ่ม 🧹 รวมไฟล์ _changes ไม่รวม imos_orders แล้ว (รวมกลับ = ไฟล์ก้อนใหญ่อีก) — แก้ที่โมดูล v166 ของ Production
+     · รุ่นเก่าที่ยังไม่อัปเดตยังอ่านได้ครบ (ไฟล์ฐานเบา + ไฟล์รุ่นเต็มทุก Order = แถวเต็ม) แค่ช้าเหมือนเดิม
+   ปิดได้: SN_OFF.lazyOrders=1 (อ่านทั้งก้อนแบบเดิม · ไม่เขียนดัชนี) */
+var ORD_T='imos_orders', ORD_SPLIT_TS='000000001-base', ORD_META=['source','_isManualBOM','__impMetaStr','itemIdSet'];
+/* ตัวช่วยของตัวเอง — StarNexus ไม่มีตัวอ่านเวลาในชื่อไฟล์ / ชื่อแบบ + (ของ Production v120) */
+function ordTsOf(n){ n=String(n||''); var i=n.lastIndexOf('@'); return i<0?'':n.slice(i+1,i+15); }
+function ordAsPlus(n){ return String(n).replace(/~([0-9a-f]{8})(@|$)/,'+$1$2'); }
+function ordIdxOn(){ return !gasSw('lazyOrders'); }
+function ordIsLazy(r){ return !!(r&&typeof r.data==='string'&&r.data.charCodeAt(0)===123&&r.data.lastIndexOf('{"__lazy":',0)===0); }
+function ordBaseLight(S){ return !!(S&&S.base&&S.base.length&&ordIsLazy(S.base[0])); }
+function ordLazyOn(){ try{ if(!ordIdxOn()||!SXL.cfg||SXL.cfg.app!=='Production'||!SXL.dir) return false; var S=SXL.s[ORD_T]; return !!(S&&S.ready&&ordBaseLight(S)); }catch(e){ return false; } }
+window.SXL_ordersLazy=function(){ try{ return ordIdxOn()&&ordBaseLight(SXL.s[ORD_T]); }catch(e){ return false; } };
+function ordMetaOf(r){
+  var d=r&&r.data, m={};
+  if(typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){ d=null; } }
+  if(d&&typeof d==='object') ORD_META.forEach(function(k){ if(d[k]!=null) m[k]=d[k]; });
+  return m;
+}
+function ordMarker(ts,meta){ return JSON.stringify(Object.assign({__lazy:ts},meta||{})); }
+function ordRowCols(T,r){ var o={}; Object.keys(r||{}).forEach(function(c){ if(c!=='data'&&c.indexOf('__')!==0) o[c]=r[c]; }); return o; }
+function ordLazyRow(T,sc,ts){ var r=Object.assign({},sc.row||{}); r[T.key]=sc.k; r.data=ordMarker(ts,sc.meta); return r; }
+async function ordPool(list,n,fn){ var i=0; var w=async function(){ while(i<list.length){ var x=list[i++]; await fn(x); } }; var ws=[]; for(var k=0;k<Math.min(n,list.length);k++) ws.push(w()); await Promise.all(ws); }
+async function ordIdxDir(create){
+  if(!SXL.dir) return null;
+  try{ var a=await SXL.dir.getDirectoryHandle('_changes',{create:!!create}), b=await a.getDirectoryHandle('_idx',{create:!!create}); return await b.getDirectoryHandle(ORD_T,{create:!!create}); }
+  catch(e){ if(e&&(e.name==='NotFoundError'||e.name==='TypeMismatchError')&&!create) return null; throw e; }
+}
+function ordIdxName(bf){ return ordAsPlus(bf)+'.json'; }      // + แทน ~ (ใช้ได้ทุกเครื่อง)
+async function ordIdxRead(){
+  var out={}, d=await ordIdxDir(false); if(!d) return out;
+  var hs=[]; for await (var e of d.entries()){ if(e[1].kind==='file'&&/\.json$/.test(e[0])) hs.push(e[1]); }
+  await ordPool(hs,8,async function(h){ try{ var o=JSON.parse(await (await h.getFile()).text()); if(o&&o.k!=null&&o.ts) out[sxlBf(o.bucket||('k:'+o.k))]=o; }catch(e){} });
+  return out;
+}
+/* ดัชนีของ Order ที่เพิ่งบันทึก/อ่านเต็ม — ไฟล์ละ Order (สองเครื่องเขียนพร้อมกันไม่ชนกัน) · พังได้ไม่เป็นไร (คนอ่านถอยไปอ่านไฟล์ Order เต็ม) */
+async function ordIdxWrite(T,S,keys){
+  if(!ordIdxOn()||!SXL.dir||!keys||!keys.length) return 0;
+  var dir=await ordIdxDir(true); if(!dir) return 0;
+  var idx=sxlIdx(T,S), n=0;
+  await ordPool(keys.map(String),6,async function(k){
+    var o={}; o[T.key]=k; var b=sxlBucketOf(T,o), bf=sxlBf(b), e=S.over.get(bf); if(!e||!e.name) return;
+    var r=idx.get(k), ts=ordTsOf(e.name);
+    var body=r?{v:1,k:k,bucket:b,ts:ts,at:e.at||'',by:e.by||'',row:ordRowCols(T,r),meta:ordIsLazy(r)?ordMarkerMeta(r.data):ordMetaOf(r)}:{v:1,k:k,bucket:b,ts:ts,del:1};
+    var fh=await dir.getFileHandle(ordIdxName(bf),{create:true}), w=await fh.createWritable(); await w.write(JSON.stringify(body)); await w.close(); n++;
+  });
+  return n;
+}
+function ordMarkerMeta(s){ try{ var o=JSON.parse(s); delete o.__lazy; return o; }catch(e){ return {}; } }
+var ORD_INNER=null, ORD_HYD={};
+/* รอบอ่าน _changes/imos_orders แบบเบา: ไม่อ่านไฟล์ Order — ใช้ดัชนี (รุ่นตรงกัน) หรือแถวในไฟล์ฐานเบา (ไฟล์ที่แยกออกมาตอนแยกไฟล์) */
+async function ordScan(inner,self,T,S){
+  var d=await sxlOverDir(T.t,false); if(!d) return false;
+  var latest={}, all={};
+  for await (var ent of d.entries()){ if(ent[1].kind!=='file') continue; var v=sxlVer(ent[0]); if(!v) continue;
+    (all[v.key]=all[v.key]||[]).push(ent[0]); var L0=latest[v.key];
+    if(!L0||v.ts>L0.ts||(v.ts===L0.ts&&L0.plus&&!v.plus)) latest[v.key]={name:ent[0],ts:v.ts,plus:v.plus}; }
+  S.names=all;
+  var todo=[]; for(var bf in latest){ var cur=S.over.get(bf), L=latest[bf]; if(cur&&ordTsOf(cur.name)>=L.ts) continue; todo.push(bf); }
+  if(!todo.length) return false;
+  var ix=await ordIdxRead(), baseBy=null, ch=false, full=new Set();
+  todo.forEach(function(bf){
+    var L=latest[bf], sc=ix[bf];
+    if(sc&&sc.ts===L.ts){ S.over.set(bf,{bucket:sc.bucket||('k:'+sc.k),name:L.name,at:sc.at||'',by:sc.by||'',rows:sc.del?[]:[ordLazyRow(T,sc,L.ts)],lazy:true}); ch=true; return; }
+    if(L.ts===ORD_SPLIT_TS){
+      if(!baseBy){ baseBy=new Map(); (S.base||[]).forEach(function(r){ baseBy.set(sxlBf(sxlBucketOf(T,r)),r); }); }
+      var br=baseBy.get(bf);
+      if(br&&ordIsLazy(br)){ var r2=Object.assign({},br); r2.data=ordMarker(ORD_SPLIT_TS,ordMarkerMeta(br.data)); S.over.set(bf,{bucket:sxlBucketOf(T,br),name:L.name,at:'',by:'',rows:[r2],lazy:true}); ch=true; return; }
+    }
+    full.add(bf);
+  });
+  var ch2=false;
+  if(full.size){ ch2=await inner.call(self,T,S,full);
+    var ks=[]; full.forEach(function(bf){ var e=S.over.get(bf); if(e) (e.rows||[]).forEach(function(r){ ks.push(String(r[T.key])); }); });
+    if(ks.length) ordIdxWrite(T,S,ks).catch(function(e){ console.warn('[ดัชนี Order] ซ่อมไม่สำเร็จ',e); }); }
+  if(ch&&!ch2) sxlRebuild(T,S);
+  return ch||ch2;
+}
+/* เติมข้อมูลเต็มให้แถวที่ยังเป็นป้าย — ลงวัตถุแถวเดิม (ตัวเช็คต้นทางแก้ใช้วัตถุแถวจับคู่) */
+async function ordHydrate(T,S,keys){
+  var idx=sxlIdx(T,S), list=[];
+  (keys||[]).forEach(function(k){ k=String(k); var r=idx.get(k); if(r&&ordIsLazy(r)&&list.indexOf(k)<0) list.push(k); });
+  if(!list.length) return 0;
+  await ordPool(list,4,async function(k){
+    if(!ORD_HYD[k]) ORD_HYD[k]=ordHydrateOne(T,S,k).then(function(v){ delete ORD_HYD[k]; return v; },function(e){ delete ORD_HYD[k]; throw e; });
+    await ORD_HYD[k];
+  });
+  return list.length;
+}
+async function ordHydrateOne(T,S,k){
+  var r=sxlIdx(T,S).get(k); if(!r||!ordIsLazy(r)) return;
+  var bf=sxlBf(sxlBucketOf(T,r)), e=S.over.get(bf), name=e&&e.name, o=null;
+  var d=await sxlOverDir(T.t,false);
+  if(d&&name){ try{ o=JSON.parse(await (await (await d.getFileHandle(name)).getFile()).text()); }catch(er){ if(!(er&&(er.name==='NotFoundError'||er instanceof SyntaxError))) throw er; o=null; } }
+  if(!o){                                                          // รุ่นนั้นถูกแทน/ลบไปแล้ว → อ่านรุ่นล่าสุดแบบเต็ม (แถวใหม่ = ต้นทางแก้จริง)
+    if(ORD_INNER){ await ORD_INNER(T,S,new Set([bf])); var r3=sxlIdx(T,S).get(k); if(r3&&!ordIsLazy(r3)) return; }
+    throw Error('ไม่พบไฟล์ข้อมูลของ Order '+k+(name?(' ('+name+')'):''));
+  }
+  var full=null; (o.rows||[]).forEach(function(x){ var y=sxlFileToRaw(T,x); if(String(y[T.key])===k) full=y; });
+  if(!full) throw Error('ไฟล์ '+name+' ไม่มี Order '+k);
+  if(sxlIdx(T,S).get(k)!==r) return;                               // ระหว่างรอมีรอบอ่านใหม่แทนแถวนี้แล้ว
+  Object.keys(full).forEach(function(c){ r[c]=full[c]; }); delete r.__px;
+  if(e) e.lazy=false; S.sort=new Map();
+}
+function ordNeedData(st){
+  if(st.head) return false;
+  var cols=st.cols; if(cols==null) return true; cols=String(cols).trim(); if(!cols||cols==='*') return true;
+  var parts=cols.split(',');
+  for(var i=0;i<parts.length;i++){ var x=parts[i].trim(), m=x.match(/^([A-Za-z0-9_]+):(.+)$/); if(m) x=m[2].trim();
+    var p; try{ p=sxlPath(x); }catch(e){ return true; }
+    if(p.col!=='data') continue;
+    if(!p.steps.length||p.steps.length>1||ORD_META.indexOf(p.steps[0].k)<0) return true; }
+  return false;
+}
+async function ordExecLazy(exec,st){
+  var T=sxlCfg(ORD_T), S=SXL.s[ORD_T];
+  if(!S||!S.ready) return exec(st);
+  var keys=st.keys;
+  if(!keys){ keys=S.rows.filter(ordIsLazy).map(function(r){ return String(r[T.key]); });
+    if(keys.length) console.warn('[Order แบบเบา] คำขอใช้ข้อมูลเต็มของทุก Order (ไม่ระบุ order_id) — โหลด '+keys.length+' Order',st.cols); }
+  try{ await ordHydrate(T,S,keys); }
+  catch(e){ return sxlE('โหลดข้อมูล Order จาก Google Drive ไม่ได้: '+(e&&e.message||e),'SXL_IO',500); }
+  return exec(st);
+}
+function ordWriteKeys(T,S,st){
+  try{
+    if(st.wkind==='insert'||st.wkind==='upsert') return (Array.isArray(st.wdata)?st.wdata:[st.wdata]).map(function(p){ return p&&p[T.key]; }).filter(function(k){ return k!=null; }).map(String);
+    SXL_TBL=T; return S.rows.filter(function(r){ return (st.f||[]).every(function(f){ return f(r); }); }).map(function(r){ return String(r[T.key]); });
+  }catch(e){ return []; }
+}
+/* ติดตั้งตอนเปิดหน้าไฟล์กลาง (หลังสคริปต์ทุกโมดูลโหลดครบ = เป็นตัวห่อชั้นนอกสุด) */
+function ordInstall(){
+  if(ordInstall.done) return; ordInstall.done=1;
+  if(SXL.cfg&&SXL.cfg.app==='Production'){
+    var inner=sxlScanOver; ORD_INNER=function(T,S,only){ return inner.call(null,T,S,only); };
+    sxlScanOver=async function(T,S,only){ if(!T||T.t!==ORD_T||only||!ordLazyOn()) return inner.apply(this,arguments); return ordScan(inner,this,T,S); };
+    var exec=sxlExec;
+    sxlExec=function(st){ if(st&&st.op==='select'&&st.table===ORD_T&&ordLazyOn()&&ordNeedData(st)) return ordExecLazy(exec,st); return exec(st); };
+  }
+  if(typeof sxlWriteIn==='function'){
+    var wi=sxlWriteIn;
+    sxlWriteIn=async function(T,S,st){
+      var keys=null;
+      if(T&&T.t===ORD_T){ keys=ordWriteKeys(T,S,st); if(keys.length&&ordLazyOn()) await ordHydrate(T,S,keys); }
+      var r=await wi.apply(this,arguments);
+      if(keys&&keys.length&&!(r&&r.error)&&ordIdxOn()) ordIdxWrite(T,S,keys).catch(function(e){ console.warn('[ดัชนี Order] เขียนไม่สำเร็จ',e); });
+      return r;
+    };
+  }
+}
+
+/* ───────── แยกไฟล์ Order (ทำครั้งเดียว · เครื่องเดียวพอ) ─────────
+   ① ไฟล์รุ่นของ Order ที่ยังอยู่แค่ในไฟล์ฐาน (ชื่อเวลา 000000001-base = เก่ากว่ารุ่นจริงทุกรุ่น — บันทึกใหม่ทับได้เสมอ)
+   ② ดัชนีทุก Order ③ สำรองไฟล์ฐานเดิมใน _backup ④ ไฟล์ฐานเบา (เขียนเป็นอย่างสุดท้าย — ค้างกลางทางก็ยังอ่านได้ครบแบบเดิม) */
+function ordCsvCell(v){ if(v==null) return ''; var s=String(v); return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+async function ordSplit(step){
+  step=step||function(){};
+  var T=sxlCfg(ORD_T), S=SXL.s[ORD_T];
+  if(!S||!S.ready) throw Error('ยังโหลด Order ไม่ครบ');
+  if(ordBaseLight(S)) return {already:true};
+  if(!SXL.dir) throw Error('ยังไม่ได้เชื่อมต่อ Google Drive');
+  var found=await sxlScanDir(SXL.dir), fb=found[ORD_T]; if(!fb) throw Error('ไม่พบไฟล์ฐาน imos_orders_rows.csv');
+  var d=await sxlOverDir(T.t,true), now=new Date().toISOString();
+  var need=(S.base||[]).filter(function(r){ return !S.over.has(sxlBf(sxlBucketOf(T,r))); }), done=0;
+  step('แยกไฟล์ Order ทีละ Order…',2);
+  await ordPool(need,4,async function(r){
+    var b=sxlBucketOf(T,r), bf=sxlBf(b), name=(SXL.plus?ordAsPlus(bf):bf)+'@'+ORD_SPLIT_TS+'.json';
+    var fh=await d.getFileHandle(name,{create:true}), w=await fh.createWritable();
+    await w.write(JSON.stringify({v:1,table:T.t,bucket:b,at:r.loaded_at||now,by:'แยกไฟล์ Order',rows:[sxlRawToFile(T,r)]})); await w.close();
+    S.over.set(bf,{bucket:b,name:name,at:r.loaded_at||now,by:'แยกไฟล์ Order',rows:[r]});
+    done++; step('แยกไฟล์ Order '+done+'/'+need.length,2+70*done/Math.max(1,need.length));
+  });
+  step('เขียนดัชนีรายการ Order…',74);
+  var keys=S.rows.map(function(r){ return String(r[T.key]); });
+  await ordIdxWrite(T,S,keys);
+  step('สำรองไฟล์ฐานเดิมไว้ใน _backup…',82);
+  var bytes=new Uint8Array(await fb.f.arrayBuffer()), _d=new Date(), _p=function(x){ return ('0'+x).slice(-2); }, stamp=_d.getFullYear()+_p(_d.getMonth()+1)+_p(_d.getDate())+'-'+_p(_d.getHours())+_p(_d.getMinutes());   // เวลาเครื่อง
+  var bk=await SXL.dir.getDirectoryHandle('_backup',{create:true}), bh=await bk.getFileHandle('imos_orders_rows_full_'+stamp+'.csv',{create:true}), bw=await bh.createWritable(); await bw.write(bytes); await bw.close();
+  step('เขียนไฟล์ฐานแบบรายชื่อ…',94);
+  var cols=['order_id','data']; (S.base||[]).forEach(function(r){ Object.keys(r).forEach(function(c){ if(c.indexOf('__')!==0&&cols.indexOf(c)<0) cols.push(c); }); });
+  var lines=[cols.join(',')];
+  (S.base||[]).forEach(function(r){ var bf=sxlBf(sxlBucketOf(T,r)), e=S.over.get(bf), ts=e?ordTsOf(e.name):ORD_SPLIT_TS;
+    lines.push(cols.map(function(c){ return ordCsvCell(c==='data'?ordMarker(ts,ordIsLazy(r)?ordMarkerMeta(r.data):ordMetaOf(r)):r[c]); }).join(',')); });
+  var w2=await fb.h.createWritable(); await w2.write(lines.join('\n')+'\n'); await w2.close();
+  step('เสร็จแล้ว',100);
+  return {n:need.length,total:S.rows.length,backup:'_backup/imos_orders_rows_full_'+stamp+'.csv',mb:(bytes.length/1048576).toFixed(1)};
+}
+var ORD_SNOOZE='sxlocaltrial:furnitech:ordSplitSnooze';
+function ordSplitDialog(auto){
+  if(document.getElementById('ordSplitOv')) return;
+  var S=SXL.s[ORD_T], n=(S&&S.rows)?S.rows.length:0;
+  var ov=document.createElement('div'); ov.id='ordSplitOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:1000003;background:#0009;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML='<div style="background:#fff;color:#172c40;border-radius:12px;padding:18px 20px;width:min(560px,96vw);font:14px/1.6 system-ui,Sarabun,sans-serif">'
+   +'<b style="font-size:16px">⚡ ให้ Production เปิดเร็วขึ้น</b>'
+   +'<div id="osBody" style="margin-top:8px">ตอนนี้ Order ทั้งหมด ('+n.toLocaleString()+' Order) อยู่ในไฟล์เดียว ทุกครั้งที่เปิดโปรแกรมต้องโหลดและแกะทั้งก้อน'
+   +'<br>แยกเป็นไฟล์ละ Order (ทำครั้งเดียว เครื่องเดียวพอ ใช้เวลาราว 1–3 นาที) — ต่อไปเปิดโปรแกรมโหลดแค่รายชื่อ Order · เปิด Order ไหนค่อยโหลด Order นั้น'
+   +'<br><small style="color:#5b6b78">ไฟล์เดิมสำรองไว้ใน _backup · ระหว่างแยกใช้โปรแกรมต่อได้ แต่อย่าปิดหน้าต่างนี้ · เครื่องที่ยังเป็นรุ่นเก่ายังเปิดได้ครบ (แค่ช้าเหมือนเดิม)</small></div>'
+   +'<div style="height:10px;background:#e7edf2;border-radius:99px;overflow:hidden;margin:10px 0"><i id="osBar" style="display:block;height:100%;width:0;background:#1f6feb"></i></div>'
+   +'<div id="osTxt" style="font-size:13px;color:#5b6b78"></div>'
+   +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button id="osGo" class="pri" style="padding:8px 14px;border-radius:7px;border:1px solid #135e73;background:#135e73;color:#fff;font-weight:600;cursor:pointer">เริ่มแยกไฟล์</button>'
+   +'<button id="osX" style="padding:8px 14px;border-radius:7px;border:1px solid #93a9b8;background:#fff;cursor:pointer">'+(auto?'ไว้ทีหลัง':'ปิด')+'</button></div></div>';
+  document.body.append(ov);
+  var q=function(id){ return ov.querySelector('#'+id); };
+  q('osX').onclick=function(){ if(auto) gasLs(ORD_SNOOZE,Date.now()+86400000); ov.remove(); };
+  q('osGo').onclick=async function(){
+    var go=q('osGo'), x=q('osX'); go.disabled=true; x.disabled=true; go.textContent='กำลังแยกไฟล์…';
+    try{
+      var r=await ordSplit(function(m,p){ q('osTxt').textContent=m; q('osBar').style.width=Math.max(0,Math.min(100,p))+'%'; });
+      q('osBar').style.width='100%';
+      q('osBody').innerHTML=r.already?'✓ Order แยกไฟล์ไว้แล้ว':'✓ แยกไฟล์เสร็จ · '+r.total.toLocaleString()+' Order (แยกใหม่ '+r.n.toLocaleString()+' ไฟล์) · สำรองไฟล์เดิม '+r.mb+' MB ไว้ที่ '+esc2(r.backup)
+        +'<br>กด F5 (หรือเปิดโปรแกรมใหม่) เพื่อใช้แบบเร็ว · เครื่องอื่นเปิดใหม่ก็เร็วด้วย';
+      q('osTxt').textContent=''; go.textContent='F5 ตอนนี้'; go.disabled=false; go.onclick=function(){ location.reload(); };
+      x.disabled=false; x.textContent='ปิด'; x.onclick=function(){ ov.remove(); };
+    }catch(e){
+      q('osTxt').innerHTML='<span style="color:#b42318">✗ '+esc2(e&&e.message||String(e))+' — ข้อมูลเดิมไม่เสียหาย กดเริ่มใหม่ได้</span>';
+      go.disabled=false; go.textContent='ลองใหม่'; x.disabled=false;
+    }
+  };
+}
+/* เปิด Production บน Google Drive แล้ว Order ยังเป็นไฟล์ก้อนใหญ่ → ชวนแยกไฟล์ (ถามครั้งเดียวต่อวันต่อเครื่อง) */
+function ordSplitCheck(){
+  try{
+    if(!ordIdxOn()||!SXL.cfg||SXL.cfg.app!=='Production'||!sxlIsGas(SXL.dir)) return;
+    var S=SXL.s[ORD_T]; if(!S||!S.ready||ordBaseLight(S)||!(S.size>4194304)) return;
+    if((+gasLs(ORD_SNOOZE)||0)>Date.now()) return;
+    if(!SXL.canWrite) return;
+    ordSplitDialog(true);
+  }catch(e){}
+}
+
+/* หน้า Google Drive (Production): สถานะการแยกไฟล์ Order + ปุ่มแยกไฟล์ */
+function ordUi(){
+  if(!SXL.cfg||SXL.cfg.app!=='Production'||!ordIdxOn()) return;
+  var box=document.getElementById('gasBox'); if(!box) return;
+  var el=document.getElementById('gasOrd');
+  if(!el){ el=document.createElement('div'); el.id='gasOrd'; el.style.cssText='border-top:1px dashed #c9dbe6;margin-top:10px;padding-top:8px'; box.appendChild(el); }
+  var S=SXL.s[ORD_T], on=sxlIsGas(SXL.dir);
+  if(!on||!S||!S.ready){ el.style.display='none'; return; }
+  el.style.display='';
+  var light=ordBaseLight(S), n=S.rows.length, full=S.rows.filter(function(r){ return !ordIsLazy(r); }).length;
+  var key=light?'L'+n+'/'+full:'F'+n+'/'+S.size; if(el.dataset.k===key) return; el.dataset.k=key;
+  el.innerHTML=light
+    ?'<b>⚡ Order แยกไฟล์แล้ว</b><br><small>เปิดโปรแกรมโหลดแค่รายชื่อ Order · เปิด Order ไหนค่อยโหลด Order นั้น — ตอนนี้ '+n.toLocaleString()+' Order · โหลดข้อมูลเต็มแล้ว '+full.toLocaleString()+' Order</small>'
+    :'<b>📦 Order ทั้งหมดอยู่ในไฟล์เดียว</b> <small>('+n.toLocaleString()+' Order — ทุกครั้งที่เปิดต้องโหลดและแกะทั้งก้อน)</small><div class="gb"><button id="gasOrdGo">⚡ แยกไฟล์ Order ให้เปิดเร็ว…</button></div>';
+  var b=document.getElementById('gasOrdGo'); if(b) b.onclick=function(){ ordSplitDialog(false); };
+}
+(function(){ var _u=gasUiRefresh; gasUiRefresh=function(){ _u.apply(this,arguments); try{ ordUi(); }catch(e){} }; })();
+
 sxlStart();
 </script>
 
@@ -14335,7 +15870,52 @@ else setTimeout(run, 6000);
    แสดง 2 ที่: หน้า Splash ตอนเปิด · แถบบนถัดจากชื่อโปรแกรม
    ══════════════════════════════════════════════════════════════════════ */
 (function(){
-  var V = '175', D = '12/10/2026';
+  /* ───────── v176 (12/10/2026): ไฟล์กลางบน Google Drive (Apps Script) ─────────
+     ผู้ใช้ 12/10/2026 "ทำตัวนี้ ให้เชื่อมกับ Google ครับ" — ต่อจาก v175 (ปุ่ม Shelf/บาร์โค้ดบนแท็บ SAW / NC · ช่องเผื่อเอจ) ไม่แตะของเดิม
+     หน้าไฟล์กลางมีส่วน ☁ Google Drive: ใส่ URL Web app + กุญแจ (จำในเบราว์เซอร์เครื่องนี้เท่านั้น) → ทดสอบ → ย้ายข้อมูลขึ้น Drive → ใช้ Google Drive
+     ตัวเชื่อม GasFS 1.1 ทำตัวเหมือนโฟลเดอร์ Server ทุกอย่าง → ตรรกะไฟล์กลางเดิม (รวมไฟล์ _sxl · สำรอง _backup · plus-probe) ไม่ต้องแก้
+     ใช้ Apps Script ตัวเดียวกับ StarNexus (StarNexus DB 0.3) จึงเห็นข้อมูลชุดเดียวกัน · ผลของปุ่มขึ้นใต้ปุ่มทันที
+     ย้ายข้อมูล: ระหว่างนับไฟล์บอกจำนวนที่อ่านแล้ว/โฟลเดอร์ที่กำลังอ่าน (เดิมค้าง “กำลังอ่านรายการไฟล์…”) และอ่านขนาดไฟล์พร้อมกันทีละ 16 ไฟล์
+     ไม่ส่ง Excel (.xls*) ขึ้นคลาวด์ (อาจมีรหัสผ่านฐานข้อมูล AX) — Fitting Global ใช้ปุ่ม “ส่ง Fitting Global จาก Excel” · ปิดทั้งส่วนได้ SN_OFF.gasfs=1 */
+  /* ───────── v177 (12/10/2026): ใช้ Google Drive อย่างเดียว — ตัดโหมดโฟลเดอร์ Server ─────────
+     ผู้ใช้ 12/10/2026 13:52 "ตอนนี้ส่งเข้าที่ไหนครับ ไฟล์กลาง หรือว่า Google แล้ว ผมอยากตัดไฟล์กลางออกแล้ว"
+       → เลือก: ทั้งสองโปรแกรม (StarNexus 1.432 ด้วย) · ตัดทิ้งหมด · เปลี่ยนคำ “ไฟล์กลาง” บนจอเป็น “Google Drive” ทั้งหมด
+     เดิม v176: เลือกได้ว่าเก็บที่โฟลเดอร์ Server หรือ Drive · เครื่องที่ยังไม่ตั้ง Drive ยังเปิดโฟลเดอร์เดิม → ข้อมูลแยกสองชุดได้
+       และโหมด Drive ไม่มีไฟล์ FittingBOM (Excel ไม่ขึ้นคลาวด์) → แตก BOM ไม้จาก AX ไม่ได้
+     ตอนนี้: มี URL + กุญแจ = ต่อ Drive เลย · ไม่มี = หน้าต่างให้ใส่ (ไม่คืนโฟลเดอร์ในเครื่อง) · ปุ่มบน “☁ Google Drive · n/m ตาราง”
+       เครื่องในออฟฟิศเลือกโฟลเดอร์ Excel ของ AX ครั้งเดียว → ส่งเฉพาะค่า (FittingGlobal → csv · FittingBOM_* → .xlsx ค่าล้วน ไม่มีรหัสผ่าน)
+       ขึ้น Drive เองเมื่อไฟล์เปลี่ยน → ตัวอ่าน BOM เดิมหาไฟล์ FittingBOM_* บน Drive เจอเอง
+       รหัสเชื่อมต่อ (URL + กุญแจ ข้อความเดียว) สำหรับตั้งเครื่องใหม่ · คำบนจอแปลตอนแสดงผล (ตัวเชื่อมใช้ร่วมกับ StarNexus)
+       ปุ่มแท็บไฟล์กลาง (v121) ย่อทีละช่วงได้กับข้อความใหม่ · คำแนะนำทัวร์ 2 ข้อเขียนแบบ Drive
+     ปิดได้ SN_OFF.driveOnly=1 (กลับแบบ v176) · SN_OFF.gasfs=1 (โฟลเดอร์ในเครื่องอย่างเดียว) */
+  /* ───────── v178 (12/10/2026): โหลดจาก Google Drive บอกความคืบหน้า ─────────
+     ผู้ใช้ 12/10/2026 14:34 "ทำไมฝั่ง Production นานจังครับ" — จอค้าง “กำลังเตรียม… 0%”
+     สาเหตุ: Production โหลด Order IMOS ทุก Order ตอนเปิด (264 Order · ข้อมูล ~113 MB · บีบอัด ~20 MB) เครื่องใหม่ต้องดาวน์โหลดผ่าน Apps Script
+       หน้าต่างโหลด (v120) นับแค่ตอนแกะไฟล์ ช่วงดาวน์โหลดแถบไม่ขยับ ดูเหมือนค้าง
+     ตอนนี้: ระหว่างดาวน์โหลด หน้าต่างขึ้น “ดาวน์โหลดจาก Google Drive · x / y MB · n/m ไฟล์” + % ทุก 0.4 วิ (GasFS 1.2 · ตัวเชื่อมร่วมกับ StarNexus 1.433)
+     ขั้นต่อไป (ผู้ใช้เลือกแล้ว): โหลดเฉพาะ Order ที่เปิด — ตอนเปิดโปรแกรมโหลดแค่รายชื่อ Order */
+  /* ───────── v179 (12/10/2026): โหลดเฉพาะ Order ที่เปิด ─────────
+     ผู้ใช้ 12/10/2026 14:40 เลือก “โหลดเฉพาะออเดอร์ที่เปิด” (หลังถามว่าทำไม Production เปิดช้า)
+     เดิม: imos_orders = ไฟล์ฐานก้อนเดียว ~126 MB (264 Order) โหลด+แกะทั้งก้อนทุกครั้งที่เปิด · เครื่องใหม่ดาวน์โหลด ~20 MB ผ่าน Apps Script
+     ตอนนี้:
+       · “⚡ แยกไฟล์ Order” (ทำครั้งเดียว เครื่องเดียว · ถามเองตอนเปิดบน Google Drive / ปุ่มในหน้า Google Drive)
+         ไฟล์ Order ละไฟล์ใน _changes/imos_orders (รูปแบบไฟล์กลางเดิม) + ดัชนีป้าย _changes/_idx/imos_orders + สำรองไฟล์เดิมใน _backup
+         แล้วไฟล์ฐานเหลือแค่รายชื่อ (order_id · loaded_at · ป้าย source/_isManualBOM/__impMetaStr/itemIdSet)
+       · เปิดโปรแกรม: อ่านรายชื่อ + ดัชนี ไม่อ่านไฟล์ Order · คำขอที่ใช้ข้อมูลเต็ม (select data · eq/in order_id) โหลดเฉพาะ Order นั้น
+         เติมลงแถวเดิม (RevGuard ยังจับคู่ได้) · ก่อนบันทึก Order ที่ยังไม่โหลด โหลดเต็มก่อน · บันทึกแล้วเขียนดัชนีตาม (StarNexus 1.436 ก็เขียน)
+       · 🧹 รวมไฟล์ _changes ไม่รวม imos_orders หลังแยกไฟล์ (กันข้อมูลหาย/กลับเป็นก้อนใหญ่)
+       · เปิด Order ที่ยังไม่โหลด ขึ้นป้าย “☁ กำลังโหลดจาก Google Drive · x / y MB” กลางล่างจอ
+       · GasFS 1.3: รอบตรวจ 10 วิ ไม่เห็นไฟล์ที่ตัวเองกำลังส่งขึ้น Drive (เดิมอ่านได้ไฟล์ว่าง → เตือน “Unexpected end of JSON input ×3” ทั้งที่ข้อมูลไม่เสีย)
+     รุ่นเก่า (v178 ลงไป) ยังเปิดได้ครบหลังแยกไฟล์ (แค่ช้าเหมือนเดิม) — แต่อย่ากด 🧹 รวมไฟล์ จากรุ่นเก่า (จะรวมกลับเป็นก้อนใหญ่)
+     ปิดได้: SN_OFF.lazyOrders=1 (อ่านทั้งก้อนแบบเดิม) · ตัวเชื่อมร่วมกับ StarNexus 1.436 */
+  /* ───────── v180 (12/10/2026): ไม่โหลดไฟล์ที่ Production ไม่ได้ใช้ + ป้ายดาวน์โหลดขึ้นเฉพาะตอนเปิด Order ─────────
+     ผู้ใช้ 12/10/2026 16:17 (v179): ป้าย “☁ กำลังโหลดจาก Google Drive · 0.0 MB / 1.3 MB · 0/120 ไฟล์” โผล่หลังเปิดโปรแกรม — “คืออะไร ทำไม มันกำลังโหลดอะไร”
+     ต้นเหตุ: ตัวโหลดล่วงหน้า (ตั้งแต่ v173) เว้นเฉพาะตารางในรายการที่ไม่โหลด ตารางของ StarNexus ที่ไม่อยู่ในรายการ Production เลย
+       (furnitech_cabinets · xml_history · furnitech_parts) จึงถูกดาวน์โหลดหมด ทั้งไฟล์ฐานหลาย MB และ _changes ทุกไฟล์ (โมเดลตู้ 120 ไฟล์)
+       — ไม่เคยได้ใช้ แค่เปลือง/ช้า · v179 เพิ่มป้ายดาวน์โหลดเลยเพิ่งเห็น
+     ตอนนี้: โหลดล่วงหน้าเฉพาะตารางที่ Production ใช้ · GasFS 1.4 ไฟล์ที่โหลดล่วงหน้าไม่นับว่า “มีคนรอ”
+       · ป้ายกลางล่างจอขึ้นเฉพาะตอนเปิด Order ที่ยังไม่โหลด (บอกเลข Order) · ตัวเชื่อมร่วมกับ StarNexus 1.437 */
+  var V = '180', D = '12/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -22036,12 +23616,15 @@ function dress(){
   var b = chip(); if(!b) return;
   var t = b.textContent || '';
   if(b.__sxlT === t && b.firstElementChild) return;
-  var m = /^(ไฟล์กลาง)( ·)( )(\d+\/\d+)( ตาราง)?([\s\S]*)$/.exec(t);
+  /* v177: Google Drive อย่างเดียว — ปุ่มเขียนว่า “☁ Google Drive · n/m ตาราง” (เดิม “ไฟล์กลาง · …”) ยังย่อทีละช่วงได้เหมือนเดิม */
+  var m = /^(ไฟล์กลาง|☁ Google Drive)( ·)( )(\d+\/\d+)( ตาราง)?([\s\S]*)$/.exec(t);
   b.innerHTML = !m ? esc(t)
     : '<span class="sxl-p">' + m[1] + '<span class="sxl-d">' + m[2] + '</span>' + m[3] + '</span>' + m[4]
       + (m[5] ? '<span class="sxl-x">' + m[5] + '</span>' : '') + esc(m[6]);
   b.__sxlT = t;
-  b.title = t + '\nไฟล์กลาง (ที่เก็บข้อมูล) — อ่านครบกี่ตาราง · กดเพื่อเลือกโฟลเดอร์ Server / เชื่อมตำแหน่งที่จำไว้ / อ่านไฟล์ล่าสุด';
+  b.title = t + ((typeof gasDriveOnly === 'function' && gasDriveOnly())   /* v177 */
+    ? '\nGoogle Drive (ที่เก็บข้อมูล) — อ่านครบกี่ตาราง · กดเพื่อดูสถานะ / ตั้งค่าการเชื่อมต่อ / โหลดข้อมูลล่าสุด'
+    : '\nไฟล์กลาง (ที่เก็บข้อมูล) — อ่านครบกี่ตาราง · กดเพื่อเลือกโฟลเดอร์ Server / เชื่อมตำแหน่งที่จำไว้ / อ่านไฟล์ล่าสุด');
 }
 
 /* ชื่อโปรแกรมตรงกลางยังอยู่บรรทัดเดียวและไม่ล้นกรอบไหม */
@@ -28280,8 +29863,13 @@ var T = {
     { el: ['#tabAX', '#tabIMOS', '#tabSAW'], t: 'แท็บหลัก 3 แท็บ',
       x: '<b>AX Detail</b> ทำ BOM ไม้ / BOM Fitting / เช็คไม้<br><b>Imos Detail</b> ดูข้อมูลดิบตามไฟล์<br><b>SAW / NC</b> ส่งงานไปจัดแผ่นตัด ออกไฟล์ .saw และสติกเกอร์' },
     { el: [fgButton, '#__fgReload'], t: 'Fitting Global', x: 'รายการรหัสไม้ ขอบ อุปกรณ์ และสินค้าสำเร็จที่โปรแกรมใช้ — อ่านจากไฟล์ Excel ของ AX หรือ CSV ในโฟลเดอร์ Server · ค้นหาได้ ถ้าจะเพิ่ม/แก้รหัส ให้แก้ที่ AX แล้วกด Refresh ในไฟล์ Excel' },
-    { el: ['#tbSbDot', '#tbSbText'], t: 'สถานะข้อมูล (ไฟล์กลาง)', x: 'จุดเขียว = อ่านข้อมูลจากโฟลเดอร์ Server แล้ว · ถ้าขึ้นว่ายังไม่ได้เลือก ให้กดที่ข้อความนี้เพื่อเลือกโฟลเดอร์' },
-    { el: '#sxLocalTop', t: 'ไฟล์กลาง (ที่เก็บข้อมูล)', x: 'บอกว่าอ่านตารางครบกี่ตาราง · กดเพื่อ<b>เลือกโฟลเดอร์ Server</b> ครั้งแรก, <b>เชื่อมตำแหน่งที่จำไว้</b> หลังเปิดโปรแกรมใหม่ หรือ<b>อ่านไฟล์ล่าสุด</b><br>ของที่บันทึกเก็บในโฟลเดอร์ย่อย _changes ไฟล์ CSV เดิมไม่ถูกแก้' },
+    /* v177: Google Drive อย่างเดียว → คำแนะนำสองข้อนี้พูดถึง Drive แทนโฟลเดอร์ Server */
+    (typeof gasDriveOnly === 'function' && gasDriveOnly())
+      ? { el: ['#tbSbDot', '#tbSbText'], t: 'สถานะข้อมูล (Google Drive)', x: 'จุดเขียว = เชื่อมต่อ Google Drive และอ่านข้อมูลแล้ว · ถ้ายังไม่เชื่อมต่อ ให้กดที่ข้อความนี้เพื่อใส่ URL + กุญแจ (หรือวางรหัสเชื่อมต่อ)' }
+      : { el: ['#tbSbDot', '#tbSbText'], t: 'สถานะข้อมูล (ไฟล์กลาง)', x: 'จุดเขียว = อ่านข้อมูลจากโฟลเดอร์ Server แล้ว · ถ้าขึ้นว่ายังไม่ได้เลือก ให้กดที่ข้อความนี้เพื่อเลือกโฟลเดอร์' },
+    (typeof gasDriveOnly === 'function' && gasDriveOnly())
+      ? { el: '#sxLocalTop', t: 'Google Drive (ที่เก็บข้อมูล)', x: 'บอกว่าอ่านตารางครบกี่ตาราง · กดเพื่อดูสถานะ, <b>เชื่อมต่อ</b> เครื่องใหม่ (ใส่ URL + กุญแจ หรือวางรหัสเชื่อมต่อ) หรือ<b>โหลดข้อมูลล่าสุด</b><br>StarNexus กับ Production V2 ใช้ข้อมูลชุดเดียวกันบน Drive' }
+      : { el: '#sxLocalTop', t: 'ไฟล์กลาง (ที่เก็บข้อมูล)', x: 'บอกว่าอ่านตารางครบกี่ตาราง · กดเพื่อ<b>เลือกโฟลเดอร์ Server</b> ครั้งแรก, <b>เชื่อมตำแหน่งที่จำไว้</b> หลังเปิดโปรแกรมใหม่ หรือ<b>อ่านไฟล์ล่าสุด</b><br>ของที่บันทึกเก็บในโฟลเดอร์ย่อย _changes ไฟล์ CSV เดิมไม่ถูกแก้' },
     { el: '#__snThemeBtn', t: 'โหมดมืด', x: 'สลับหน้าจอสว่าง / มืด ให้สบายตา' },
     { el: '#hcChip', shape: 'round', t: 'ตรวจความพร้อม + วิธีใช้', x: 'กดเพื่อเช็คว่าเครื่องนี้พร้อมทำงานไหม และมีวิธีใช้แบบ 1 หน้า · ถ้ามีอะไรไม่พร้อม ปุ่มนี้จะกระพริบแดง' },
     { el: '#__stSetBtn', t: 'ตั้งค่า ⇄ ไฟล์', x: 'สำรองการตั้งค่าของเครื่องนี้เป็นไฟล์ แล้วนำไปใส่เครื่องอื่นได้ · ลากย้ายตำแหน่งปุ่มได้' },
@@ -35628,6 +37216,11 @@ if(typeof SXL === 'undefined' || typeof sxlScanOver !== 'function' || typeof sxl
 SXL.__v166c = true;
 
 var TABLES = ['app_settings', 'imos_orders'];            /* กลุ่มละแถว (bucket = key) เท่านั้น */
+/* ───────── v179: Order แยกไฟล์แล้ว (โหลดเฉพาะ Order ที่เปิด) = ไม่รวม imos_orders ─────────
+   เดิม: รวมไฟล์ _changes ของ imos_orders เข้าไฟล์ฐาน = เขียนไฟล์ฐานจากแถวในหน่วยความจำ แล้วลบไฟล์รุ่นใน _changes
+   หลังแยกไฟล์ แถวในหน่วยความจำของ Order ที่ยังไม่เปิดมีแค่ป้าย (ไม่มีข้อมูลเต็ม) → รวมแล้วข้อมูล Order หาย และไฟล์ฐานกลับเป็นก้อนใหญ่อีก
+   ตอนนี้: Order แยกไฟล์แล้ว (SXL_ordersLazy) = รวมเฉพาะ app_settings · ยังไม่แยก = รวมสองตารางแบบเดิม */
+function tabsNow(){ try{ return (typeof window.SXL_ordersLazy === 'function' && window.SXL_ordersLazy()) ? ['app_settings'] : TABLES; }catch(e){ return TABLES; } }
 var RUN = null, LAST = null, STALE_MS = 30 * 60000;
 function q(id){ return document.getElementById(id); }
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
@@ -35647,7 +37240,7 @@ function infoOf(t){
   try{ Object.keys(S.names || {}).forEach(function(k){ g++; n += (S.names[k] || []).length; }); }catch(e){}
   return { t:t, files:n, groups:g, ready:!!S.ready, src:S.src || '', name:S.name || '', size:S.size || 0, err:S.err || '' };
 }
-window.SXL_compactInfo = function(){ return { tables:TABLES.map(infoOf), running:!!RUN, last:LAST }; };
+window.SXL_compactInfo = function(){ return { tables:tabsNow().map(infoOf), running:!!RUN, last:LAST }; };   /* v179 */
 
 /* ── เงื่อนไขก่อนเริ่ม ── */
 async function blockers(tables){
@@ -35800,7 +37393,7 @@ async function doTable(t, P){
 async function run(opts){
   opts = opts || {};
   if(RUN) return { ok:false, err:'กำลังรวมอยู่' };
-  var tables = (opts.tables || TABLES).filter(function(t){ return TABLES.indexOf(t) >= 0; });
+  var tables = (opts.tables || tabsNow()).filter(function(t){ return tabsNow().indexOf(t) >= 0; });   /* v179 */
   var bl = await blockers(tables);
   if(bl.length) return { ok:false, err:bl.join('\n') };
   var mk = await readMark();
@@ -35836,7 +37429,7 @@ function ov(){
 }
 function close(){ var o = q('cp166Ov'); if(o){ o.classList.remove('on'); o.innerHTML = ''; } }
 async function ask(){
-  var I = TABLES.map(infoOf), bl = await blockers(TABLES);
+  var I = tabsNow().map(infoOf), bl = await blockers(tabsNow());   /* v179 */
   var o = ov();
   o.innerHTML = '<div class="cp-card" role="dialog" aria-modal="true"><h3>🧹 รวมไฟล์ _changes เข้าไฟล์ฐาน</h3>'
     + '<div>ทำให้บันทึก / เปิดโปรแกรมเร็วขึ้น — ข้อมูลเหมือนเดิมทุกอย่าง</div>'
@@ -35871,7 +37464,7 @@ async function start(){
 }
 function paint(){
   var box = q('cp166'); if(!box) return;
-  var I = TABLES.map(infoOf), st = box.querySelector('.cp-st');
+  var I = tabsNow().map(infoOf), st = box.querySelector('.cp-st');   /* v179 */
   var txt = I.map(function(x){ return x.t + ': ไฟล์ใน _changes ' + fmt(x.files) + ' ไฟล์'; }).join(' · ');
   if(LAST) txt += '\nรวมล่าสุด ' + new Date(Date.parse(LAST.at)).toLocaleString('th-TH') + ' — ' + LAST.res.map(function(r){ return r.t + (r.ok ? ' ✓' : ' ⚠'); }).join(' · ');
   if(st) st.textContent = txt;
