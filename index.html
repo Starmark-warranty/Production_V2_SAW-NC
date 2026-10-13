@@ -2480,9 +2480,13 @@ function boardToAX(p, g, groupIdx, totalGroups, groupPartTotal, partSeq, groupPa
     'CutWidth':                       (p._overrides && p._overrides['CutWidth']  !== undefined) ? p._overrides['CutWidth']  : cutW,
     'CutLength':                      (p._overrides && p._overrides['CutLength'] !== undefined) ? p._overrides['CutLength'] : cutL,
     'FrontStyle':                     p.INFO3 || '',
-    'ProductHeight':                  '',
-    'ProductWidth':                   '',
-    'ProductDepth':                   '',
+    /* ───────── v182: ขนาดตู้จาก StarNexus (1.443+) ─────────
+       ผู้ใช้ 13/10/2026 17:06 “โปรแกรมเราต้องส่งออกขนาดไปด้วยครับ ขนาดตู้” — เดิมสามช่องนี้ว่างเสมอ (“—”)
+       ตอนนี้: แถวชิ้นจาก StarNexus มี _prodH / _prodW / _prodD (กว้าง/สูง/ลึกโครงตู้ ตัวเดียวกับ “ขนาดตู้ปัจจุบัน”) · ไม่มี = ว่างแบบเดิม
+       ออเดอร์ที่ส่งก่อน StarNexus 1.443 ต้องกดส่งใหม่ถึงจะมีค่า · แก้ในตารางเองได้เหมือนเดิม (_overrides) */
+    'ProductHeight':                  (p._overrides && p._overrides['ProductHeight'] !== undefined) ? p._overrides['ProductHeight'] : (p._prodH != null && p._prodH !== '' ? p._prodH : ''),
+    'ProductWidth':                   (p._overrides && p._overrides['ProductWidth']  !== undefined) ? p._overrides['ProductWidth']  : (p._prodW != null && p._prodW !== '' ? p._prodW : ''),
+    'ProductDepth':                   (p._overrides && p._overrides['ProductDepth']  !== undefined) ? p._overrides['ProductDepth']  : (p._prodD != null && p._prodD !== '' ? p._prodD : ''),
     'Assembly':                       axCabUrl(p),   /* v36: ลิงก์ตู้ map ตรงจากแถวชิ้น */
     '_matErr':    matErr,
     '_art5err':   art5err,
@@ -16040,7 +16044,8 @@ else setTimeout(run, 6000);
        แล้วถูกย้ายขึ้น Drive ไปด้วย ตัวอ่านข้ามแล้วลองใหม่ทุกรอบตรวจ จึงเตือนไม่หยุด
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
-  var V = '181', D = '12/10/2026';
+  /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
+  var V = '182', D = '13/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
