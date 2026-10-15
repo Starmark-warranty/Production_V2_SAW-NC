@@ -16047,7 +16047,7 @@ else setTimeout(run, 6000);
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
-  var V = '193', D = '15/10/2026';
+  var V = '194', D = '15/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -39636,6 +39636,127 @@ function onShow(){
 })(0);
 window.ORDFAST193_state = function(){ return { lazy:lazyOn(), pre:Object.assign({}, ST.pre), log:ST.log.slice(), busy:ST.busy, timer:!!tick }; };
 window.ORDFAST193_prefetch = prefetch;
+})();
+</script>
+
+<!-- ══ v194: เปิด Order — จับเวลาแต่ละขั้น + ปลุก Apps Script ไว้ ═════════════════════════════
+     ผู้ใช้ 15/10/2026 13:02 “ทำมาเลย” (ข้อ 1 วัดเวลาว่าช้าที่ขั้นไหน · ข้อ 2 ปลุก Apps Script ไว้)
+     1) จับเวลาแต่ละขั้นตอนเปิด Order (อ่านจากข้อความในกล่องกำลังโหลดของเดิม — ไม่แก้ selectOrder)
+        เปิดเสร็จ → ป้ายเล็กล่างจอ 8 วิ: “⏱ ORDER… · 5.1 วิ — อ่านข้อมูล Order 4.3 · BOM 0.2 · … · Drive 2 คำสั่ง 0.3 MB”
+        ขั้นที่นานที่สุดเป็นตัวหนา · กดที่ป้าย = ดูย้อนหลัง 10 ครั้ง · เร็วกว่า 0.8 วิ ไม่ขึ้นป้าย (ยังเก็บในประวัติ)
+     2) ปลุก Apps Script: ระหว่างเปิดหน้าโปรแกรม + มีคนใช้งานใน 30 นาทีล่าสุด + ไม่ได้เรียก Apps Script มาเกิน 4.5 นาที
+        → ส่งคำสั่ง ping (อ่านอย่างเดียว ไม่แตะข้อมูล) · กลับมาที่หน้าโปรแกรม (สลับแท็บ / หน้าต่าง) ก็ปลุกทันทีถ้าเงียบไปนาน
+        เฉพาะตอนต่อ Google Drive · ไม่ซ้อนกัน
+     ปิดได้: SN_OFF.ordTime=1 (จับเวลา) · SN_OFF.gasWake=1 (ปลุก)
+     ══════════════════════════════════════════════════════════════════════════════ -->
+<style>
+#ot194{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9998;max-width:min(860px,calc(100vw - 32px));background:#0f172a;color:#e2e8f0;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:12px;line-height:1.5;padding:7px 14px;cursor:pointer;display:none}
+#ot194.on{display:block}
+#ot194 b{color:#fde047}
+#ot194 .ot-t{color:#93c5fd;font-weight:700}
+#ot194 .ot-d{color:#94a3b8}
+#ot194 table{border-collapse:collapse;margin-top:6px;width:100%}
+#ot194 td{padding:2px 8px 2px 0;border-top:1px solid rgba(255,255,255,.08);white-space:nowrap;vertical-align:top}
+#ot194 td.ot-w{white-space:normal}
+</style>
+<script>
+(function(){
+'use strict';
+var OFF = {}; try{ OFF = window.SN_OFF || {}; }catch(e){}
+function q(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+function fsCur(){ try{ return (typeof GasFS !== 'undefined' && GasFS && typeof GasFS.current === 'function') ? GasFS.current() : null; }catch(e){ return null; } }
+function driveOn(){ try{ return typeof sxlIsGas === 'function' && typeof SXL !== 'undefined' && !!sxlIsGas(SXL.dir); }catch(e){ return false; } }
+function sec(ms){ return (ms / 1000).toFixed(1); }
+var LOG = [], PS = { n:0, last:0, ms:[], busy:0, why:'' };
+
+/* ── 1) จับเวลา ── */
+if(!OFF.ordTime){
+  var R = null, hideT = 0, open = false;
+  var NAME = { '':'อ่านข้อมูล Order', 'โหลด BOM':'BOM', 'โหลด Fitting':'Fitting', 'render':'วาดหน้าจอ', 'โหลด Fitting Global':'Fitting Global', 'scan กรอบบาน':'สแกนกรอบบาน', 'เพิ่ม Fitting กรอบบาน':'Fitting กรอบบาน' };
+  var txt = function(){ var e = q('orderLoadingId'); return e ? (e.textContent || '') : ''; };
+  var stepOf = function(){ var t = txt(), i = t.indexOf('—'); return i < 0 ? '' : t.slice(i + 1).trim().replace(/\.+$/, '').trim(); };
+  var oidOf = function(){ var t = txt(), i = t.indexOf('—'); return (i < 0 ? t : t.slice(0, i)).trim(); };
+  var lab = function(k){ return NAME[k] != null ? NAME[k] : k; };
+  var snap = function(fs){ var s = fs && fs.st; return s ? { calls:s.calls || 0, rx:s.rx || 0, hit:s.cacheHit || 0 } : null; };
+  var start = function(){ R = { oid:oidOf(), t0:Date.now(), steps:[{ k:'', t:Date.now() }], st0:snap(fsCur()), drive:driveOn() }; };
+  var mark = function(){
+    if(!R) return;
+    var k = stepOf(), last = R.steps[R.steps.length - 1];
+    if(k !== last.k) R.steps.push({ k:k, t:Date.now() });
+    var o = oidOf(); if(o) R.oid = o;
+  };
+  var finish = function(){
+    if(!R) return;
+    var r = R, t1 = Date.now(); R = null;
+    var sum = {}, order = [];
+    r.steps.forEach(function(s, i){ var nx = r.steps[i + 1], d = (nx ? nx.t : t1) - s.t, L = lab(s.k) + (s.k === '' && r.drive ? ' (Drive)' : ''); if(sum[L] == null){ sum[L] = 0; order.push(L); } sum[L] += d; });
+    var s1 = snap(fsCur()), dv = (s1 && r.st0) ? { calls:s1.calls - r.st0.calls, rx:s1.rx - r.st0.rx, hit:s1.hit - r.st0.hit } : null;
+    var e = { oid:r.oid, at:new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }), ms:t1 - r.t0, parts:order.map(function(L){ return [L, sum[L]]; }), drive:dv };
+    LOG.push(e); if(LOG.length > 30) LOG.shift();
+    try{ console.log('[เวลาเปิด Order] ' + line(e, true)); }catch(x){}
+    if(e.ms >= 800) show(e);
+  };
+  var line = function(e, plain){
+    var mx = 0; e.parts.forEach(function(p){ if(p[1] > mx) mx = p[1]; });
+    var ps = e.parts.filter(function(p){ return p[1] >= 50 || p[1] === mx; }).map(function(p){
+      var s = esc(p[0]) + ' ' + sec(p[1]); return (!plain && p[1] === mx && e.parts.length > 1) ? '<b>' + s + '</b>' : s; }).join(' · ');
+    var dv = e.drive && (e.drive.calls || e.drive.hit) ? ' · Drive ' + e.drive.calls + ' คำสั่ง' + (e.drive.rx ? ' ' + (e.drive.rx / 1048576).toFixed(2) + ' MB' : '') + (e.drive.hit ? ' (จำในเครื่อง ' + e.drive.hit + ')' : '') : '';
+    return plain ? (e.oid + ' · ' + sec(e.ms) + ' วิ — ' + ps.replace(/<[^>]+>/g, '') + dv)
+      : '<span class="ot-t">⏱ ' + esc(e.oid) + ' · ' + sec(e.ms) + ' วิ</span> — ' + ps + '<span class="ot-d">' + esc(dv) + '</span>';
+  };
+  var chip = function(){ var c = q('ot194'); if(!c){ c = document.createElement('div'); c.id = 'ot194'; c.title = 'กดเพื่อดูเวลาเปิด Order ย้อนหลัง'; c.addEventListener('click', function(){ open = !open; if(open) list(); else if(LOG.length) show(LOG[LOG.length - 1], true); }); document.body.appendChild(c); } return c; };
+  var show = function(e, keep){
+    var c = chip(); open = false;
+    c.innerHTML = line(e) + ' <span class="ot-d" style="white-space:nowrap">· กดดูย้อนหลัง</span>';
+    c.classList.add('on'); clearTimeout(hideT);
+    if(!keep) hideT = setTimeout(function(){ if(!open) c.classList.remove('on'); }, 8000);
+  };
+  var list = function(){
+    var c = chip(); clearTimeout(hideT);
+    var rows = LOG.slice(-10).reverse().map(function(e){ return '<tr><td class="ot-d">' + esc(e.at) + '</td><td class="ot-w">' + line(e) + '</td></tr>'; }).join('');
+    var pg = PS.n ? '<div class="ot-d" style="margin-top:6px">ปลุก Apps Script ' + PS.n + ' ครั้ง · ล่าสุด ' + new Date(PS.last).toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' }) + ' · ตอบ ' + sec(PS.ms[PS.ms.length - 1] || 0) + ' วิ</div>' : '';
+    c.innerHTML = '<span class="ot-t">⏱ เวลาเปิด Order ย้อนหลัง</span> <span class="ot-d">(กดอีกครั้งเพื่อปิด)</span><table>' + (rows || '<tr><td class="ot-d">ยังไม่มี</td></tr>') + '</table>' + pg;
+    c.classList.add('on');
+  };
+  document.addEventListener('click', function(ev){ var c = q('ot194'); if(open && c && !c.contains(ev.target)){ open = false; c.classList.remove('on'); } }, true);
+  (function hook(n){
+    var ov = q('orderLoadingOverlay'), id = q('orderLoadingId');
+    if(!ov || !id){ if(n < 120) setTimeout(function(){ hook(n + 1); }, 500); return; }
+    try{
+      new MutationObserver(function(){ var on = !!(ov.style.display && ov.style.display !== 'none'); if(on && !R) start(); else if(!on && R) finish(); else if(on) mark(); })
+        .observe(ov, { attributes:true, attributeFilter:['style'] });
+      /* อ่านทีละรายการที่เปลี่ยน — ขั้นที่ผ่านเร็ว (เปลี่ยนข้อความติดกันในจังหวะเดียว) ก็ยังถูกจด */
+      new MutationObserver(function(recs){
+        if(R){ recs.forEach(function(rc){ Array.prototype.forEach.call(rc.addedNodes || [], function(nd){ var t = nd.textContent || '', i = t.indexOf('—'); var k = i < 0 ? '' : t.slice(i + 1).trim().replace(/\.+$/, '').trim(); var last = R.steps[R.steps.length - 1]; if(k !== last.k) R.steps.push({ k:k, t:Date.now() }); }); }); }
+        mark();
+      }).observe(id, { childList:true, characterData:true, subtree:true });
+    }catch(e){}
+  })(0);
+}
+
+/* ── 2) ปลุก Apps Script ── */
+if(!OFF.gasWake){
+  var lastAct = Date.now(), IDLE = 270000, ACT = 1800000;
+  ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, function(){ lastAct = Date.now(); }, { passive:true, capture:true }); });
+  var ping = function(why){
+    var fs = fsCur(); if(!fs || typeof fs.call !== 'function' || !driveOn()) return;
+    if(document.visibilityState && document.visibilityState !== 'visible') return;
+    var now = Date.now();
+    if(now - lastAct > ACT) return;                                   /* ไม่มีคนใช้งานนานแล้ว ไม่ต้องปลุก */
+    if(now - ((fs.st && fs.st.last) || 0) < IDLE) return;              /* เพิ่งเรียก Apps Script ไป ยังตื่นอยู่ */
+    if(PS.busy) return;
+    PS.busy = 1; PS.why = why; var t0 = Date.now();
+    Promise.resolve().then(function(){ return fs.call({ a:'ping' }); })
+      .then(function(){ PS.n++; PS.last = Date.now(); PS.ms.push(Date.now() - t0); if(PS.ms.length > 20) PS.ms.shift(); }, function(){})
+      .then(function(){ PS.busy = 0; });
+  };
+  setInterval(function(){ ping('timer'); }, 60000);
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible'){ lastAct = Date.now(); ping('back'); } });
+  window.addEventListener('focus', function(){ lastAct = Date.now(); ping('focus'); });
+  window.GASWAKE194_ping = ping;
+}
+window.ORDTIME194_state = function(){ return { log:LOG.slice(), ping:{ n:PS.n, last:PS.last, ms:PS.ms.slice(), busy:PS.busy, why:PS.why } }; };
 })();
 </script>
 
