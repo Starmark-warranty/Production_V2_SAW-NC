@@ -16047,7 +16047,7 @@ else setTimeout(run, 6000);
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
-  var V = '192', D = '15/10/2026';
+  var V = '193', D = '15/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -39542,6 +39542,100 @@ function hook(){
 }
 (function tryHook(n){ if(hook()) return; if(n < 120) setTimeout(function(){ tryHook(n + 1); }, 500); })(0);
 window.CUTSZ192_mark = mark;
+})();
+</script>
+
+<!-- ══ v193: เปิด Order เร็วขึ้น (Google Drive) + บอกเวลาระหว่างโหลด ═════════════════════════
+     ผู้ใช้ 15/10/2026 11:49 “ทำไมมันโหลดนานจัง” → 11:54 “แก้ให้ที”
+     สาเหตุ: โหมด Google Drive (v177 + lazyOrders) — รายการซ้ายมีแค่หัว Order · คลิกครั้งแรกถึงไปดาวน์โหลดข้อมูลเต็มจาก Drive
+             (Apps Script) ระหว่างนั้นกล่องขึ้นแค่ “กำลังโหลด Order...” ไม่รู้ว่าค้างหรือกำลังทำ
+     ตอนนี้ (ส่วนต่อท้าย · ไม่แตะตัวอ่าน Drive / ไฟล์ / ข้อมูล):
+       1) ชี้เมาส์ที่ Order ในรายการซ้าย ~0.25 วิ → เริ่มอ่านข้อมูล Order นั้นล่วงหน้า (คำสั่งเดียวกับตอนคลิก · อ่านอย่างเดียว)
+          คลิกตามมา = ใช้ของที่โหลดไว้ / รอตัวที่กำลังโหลดอยู่ (ไม่โหลดซ้ำ) · ทีละ 1 Order · เฉพาะโหมด Google Drive
+          ตัวอ่าน Drive มี window.SXL_prefetchOrder(oid) (โหลดเบื้องหลัง) เมื่อไหร่ → ใช้ตัวนั้นแทนเอง
+       2) กล่องกำลังโหลด: “☁ กำลังอ่านข้อมูล Order จาก Google Drive · 5 วิ” (นับวินาที) · เกิน 15 วิ บอกว่า Drive ตอบช้า ไม่ต้องกดซ้ำ
+     ปิดได้: SN_OFF.ordFast=1
+     ══════════════════════════════════════════════════════════════════════════════ -->
+<style>
+#ordLoadSec{margin-top:10px;font-size:12px;color:var(--text2);text-align:center;min-height:16px;font-weight:600}
+#ordLoadSec b{color:var(--accent);font-family:Menlo,Consolas,monospace}
+#ordLoadSec i{display:block;font-style:normal;font-weight:500;color:#b45309;font-size:11.5px;margin-top:3px}
+</style>
+<script>
+(function(){
+'use strict';
+try{ if(window.SN_OFF && window.SN_OFF.ordFast) return; }catch(e){}
+function q(id){ return document.getElementById(id); }
+function lazyOn(){ try{ return !!(typeof window.SXL_ordersLazy === 'function' && window.SXL_ordersLazy()); }catch(e){ return false; } }
+function cur(){ try{ return (typeof currentOrder !== 'undefined') ? currentOrder : null; }catch(e){ return null; } }
+var ST = { pre:{}, log:[], busy:0, queued:null };
+
+/* 1) อ่านล่วงหน้าตอนชี้เมาส์ */
+function oidOf(it){
+  var h = it.getAttribute('onclick') || '', m = h.match(/selectOrder\(\s*'([^']*)'/);
+  if(m) return m[1];
+  var n = it.querySelector('.order-name'); return n ? n.textContent.trim() : '';
+}
+function prefetch(oid){
+  if(!oid || ST.pre[oid] || oid === cur() || !lazyOn() || typeof db === 'undefined' || !db || typeof db.from !== 'function') return;
+  if(document.hidden) return;
+  if(ST.busy){ ST.queued = oid; return; }
+  ST.busy = 1; ST.pre[oid] = 'run';
+  var t0 = Date.now();
+  Promise.resolve().then(function(){
+      /* ถ้าตัวอ่าน Drive (ใช้ร่วมกับ StarNexus) มีตัวโหลดล่วงหน้าแบบเบื้องหลังให้ → ใช้ตัวนั้น (ไม่ขึ้นป้ายดาวน์โหลด) */
+      if(typeof window.SXL_prefetchOrder === 'function') return Promise.resolve(window.SXL_prefetchOrder(oid)).then(function(ok){ return { data: ok ? 1 : null }; });
+      return db.from('imos_orders').select('data').eq('order_id', oid).single();
+    })
+    .then(function(r){ ST.pre[oid] = (r && r.data) ? 'ok' : 'none'; ST.log.push({ oid:oid, ms:Date.now() - t0, ok:!!(r && r.data) }); if(ST.log.length > 50) ST.log.shift(); },
+          function(){ delete ST.pre[oid]; })
+    .then(function(){ ST.busy = 0; var nx = ST.queued; ST.queued = null; if(nx) prefetch(nx); });
+}
+var tHov = 0, hov = '';
+document.addEventListener('mouseover', function(e){
+  var t = e.target, it = (t && t.closest) ? t.closest('#orderList .order-item') : null;
+  if(!it) return;
+  var oid = oidOf(it); if(!oid || oid === hov) return;
+  hov = oid; clearTimeout(tHov);
+  tHov = setTimeout(function(){ prefetch(oid); }, 250);
+}, true);
+document.addEventListener('mouseout', function(e){
+  var t = e.target, it = (t && t.closest) ? t.closest('#orderList .order-item') : null;
+  if(!it || (e.relatedTarget && it.contains(e.relatedTarget))) return;
+  clearTimeout(tHov); hov = '';
+}, true);
+
+/* 2) กล่องกำลังโหลด: บอกว่าทำอะไรอยู่ + นับวินาที */
+var tick = 0, t0 = 0;
+function line(){
+  var idEl = q('orderLoadingId'); if(!idEl || !idEl.parentNode) return null;
+  var l = q('ordLoadSec');
+  if(!l){ l = document.createElement('div'); l.id = 'ordLoadSec'; idEl.parentNode.insertBefore(l, idEl.nextSibling); }
+  return l;
+}
+function paint(){
+  var l = line(); if(!l) return;
+  var s = Math.floor((Date.now() - t0) / 1000);
+  if(s < 1){ if(l.innerHTML) l.innerHTML = ''; return; }
+  var idEl = q('orderLoadingId'), step = !!(idEl && idEl.textContent.indexOf('—') >= 0);
+  var h = (!step && lazyOn()) ? '☁ กำลังอ่านข้อมูล Order จาก Google Drive · <b>' + s + '</b> วิ' : '⏳ กำลังเตรียมหน้าจอ · <b>' + s + '</b> วิ';
+  if(s >= 15 && !step && lazyOn()) h += '<i>Google Drive ตอบช้ากว่าปกติ — รอได้ ไม่ต้องกดซ้ำ</i>';
+  if(l.innerHTML !== h) l.innerHTML = h;
+}
+function onShow(){
+  var ov = q('orderLoadingOverlay'); if(!ov) return;
+  var on = ov.style.display && ov.style.display !== 'none';
+  if(on && !tick){ t0 = Date.now(); paint(); tick = setInterval(paint, 500); }
+  else if(!on && tick){ clearInterval(tick); tick = 0; var l = q('ordLoadSec'); if(l) l.innerHTML = ''; }
+}
+(function hook(n){
+  var ov = q('orderLoadingOverlay');
+  if(!ov){ if(n < 120) setTimeout(function(){ hook(n + 1); }, 500); return; }
+  try{ new MutationObserver(onShow).observe(ov, { attributes:true, attributeFilter:['style'] }); }catch(e){}
+  onShow();
+})(0);
+window.ORDFAST193_state = function(){ return { lazy:lazyOn(), pre:Object.assign({}, ST.pre), log:ST.log.slice(), busy:ST.busy, timer:!!tick }; };
+window.ORDFAST193_prefetch = prefetch;
 })();
 </script>
 
