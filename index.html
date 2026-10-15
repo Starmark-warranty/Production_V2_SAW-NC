@@ -16047,7 +16047,7 @@ else setTimeout(run, 6000);
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
-  var V = '191', D = '14/10/2026';
+  var V = '192', D = '15/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -39477,6 +39477,71 @@ window.SAWSEL184_state = function(){
   return { sel:o, open:OPEN, loading:LOADING, q:QTXT, pend:PEND ? PEND.list.map(function(x){ return { oid:x.oid, n:x.n, partial:x.partial }; }) : null, last:LAST, btn:!!q('s184Btn') };
 };
 window.SAWSEL184_keyOf = keyOf;
+})();
+</script>
+
+<!-- ══ v192: BOM Fitting — เน้นตัวเลขหลังคำว่า “ตัดขนาด” ═════════════════════════════════
+     ผู้ใช้ 15/10/2026 08:31 “ตรง BOM Fitting จะมีรายละเอียด Fitting ที่มีคำว่า ตัดขนาด ให้ตัวเลขหลังคำว่า ตัดขนาด
+     เน้นตัวเลขนั้นให้ที … เช่น ราวแสตนเลสรูปไข่ ตัดขนาด 967 mm ให้เน้นตัว 967”
+     • ตาราง BOM Fitting (#contentBOM): ตัวเลขหลัง “ตัดขนาด” → ตัวแดงเข้มในกรอบแดงอ่อน (967 · 600x45 · 967.5)
+     • แสดงผลอย่างเดียว: ข้อความ / ข้อมูล / Export ไม่เปลี่ยน (textContent เท่าเดิม) · ไม่แตะช่องกรอก (input / select)
+     • ทำงานทุกครั้งที่ตารางวาดใหม่ (MutationObserver) · พิมพ์ออกกระดาษสียังอยู่
+     ปิดได้: SN_OFF.cutsz=1
+     ══════════════════════════════════════════════════════════════════════════════ -->
+<style>
+.cz192{color:#dc2626;font-weight:800;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.3);border-radius:4px;padding:0 4px;margin:0 1px;font-family:Menlo,Consolas,monospace;font-size:1.06em;white-space:nowrap;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html[data-theme="dark"] .cz192{color:#ff8a80;background:rgba(255,107,97,.16);border-color:rgba(255,107,97,.42)}
+</style>
+<script>
+(function(){
+'use strict';
+try{ if(window.SN_OFF && window.SN_OFF.cutsz) return; }catch(e){}
+var RE = /(ตัดขนาด\s*)(\d+(?:[.,]\d+)?(?:\s*[x×X*]\s*\d+(?:[.,]\d+)?)*)/g;
+var SKIP = { INPUT:1, TEXTAREA:1, SELECT:1, OPTION:1, SCRIPT:1, STYLE:1 };
+function mark(root){
+  if(!root || !document.createTreeWalker) return 0;
+  var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode:function(n){
+    var v = n.nodeValue; if(!v || v.indexOf('ตัดขนาด') < 0) return NodeFilter.FILTER_REJECT;
+    for(var p = n.parentNode; p && p !== root; p = p.parentNode){
+      if(SKIP[p.nodeName] || (p.classList && p.classList.contains('cz192')) || p.isContentEditable) return NodeFilter.FILTER_REJECT;
+    }
+    return NodeFilter.FILTER_ACCEPT;
+  } });
+  var list = [], n = 0;
+  while(w.nextNode()) list.push(w.currentNode);
+  list.forEach(function(t){
+    var v = t.nodeValue, m, at = 0, frag = null;
+    RE.lastIndex = 0;
+    while((m = RE.exec(v))){
+      frag = frag || document.createDocumentFragment();
+      var s = m.index + m[1].length;
+      frag.appendChild(document.createTextNode(v.slice(at, s)));
+      var b = document.createElement('b'); b.className = 'cz192'; b.textContent = m[2];
+      frag.appendChild(b);
+      at = s + m[2].length; n++;
+    }
+    if(frag && t.parentNode){ frag.appendChild(document.createTextNode(v.slice(at))); t.parentNode.replaceChild(frag, t); }
+  });
+  return n;
+}
+var mo = null, tm = 0;
+function run(){
+  tm = 0;
+  var el = document.getElementById('contentBOM'); if(!el) return;
+  try{ mark(el); }catch(e){}
+  try{ if(mo) mo.takeRecords(); }catch(e){}   /* ที่เพิ่งห่อเอง ไม่ต้องวนกลับมาอีก */
+}
+function hook(){
+  var el = document.getElementById('contentBOM'); if(!el) return false;
+  try{
+    mo = new MutationObserver(function(){ if(!tm) tm = setTimeout(run, 0); });
+    mo.observe(el, { childList:true, subtree:true, characterData:true });
+  }catch(e){ return true; }
+  run();
+  return true;
+}
+(function tryHook(n){ if(hook()) return; if(n < 120) setTimeout(function(){ tryHook(n + 1); }, 500); })(0);
+window.CUTSZ192_mark = mark;
 })();
 </script>
 
