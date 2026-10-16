@@ -16047,7 +16047,7 @@ else setTimeout(run, 6000);
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
-  var V = '195', D = '15/10/2026';
+  var V = '196', D = '16/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -39642,15 +39642,16 @@ window.ORDFAST193_prefetch = prefetch;
 <!-- ══ v194: เปิด Order — จับเวลาแต่ละขั้น + ปลุก Apps Script ไว้ ═════════════════════════════
      ผู้ใช้ 15/10/2026 13:02 “ทำมาเลย” (ข้อ 1 วัดเวลาว่าช้าที่ขั้นไหน · ข้อ 2 ปลุก Apps Script ไว้)
      1) จับเวลาแต่ละขั้นตอนเปิด Order (อ่านจากข้อความในกล่องกำลังโหลดของเดิม — ไม่แก้ selectOrder)
-        เปิดเสร็จ → ป้ายเล็กล่างจอ 8 วิ: “⏱ ORDER… · 5.1 วิ — อ่านข้อมูล Order 4.3 · BOM 0.2 · … · Drive 2 คำสั่ง 0.3 MB”
-        ขั้นที่นานที่สุดเป็นตัวหนา · กดที่ป้าย = ดูย้อนหลัง 10 ครั้ง · เร็วกว่า 0.8 วิ ไม่ขึ้นป้าย (ยังเก็บในประวัติ)
+        เปิดเสร็จ → ป้ายเล็ก “⏱ 3.4 วิ” ต่อท้ายแถบ Board / Edge / Fitting (เขียว < 2 วิ · ส้ม < 8 วิ · แดง)
+        ชี้เมาส์ = แยกแต่ละขั้น · กด = ดูย้อนหลัง 10 ครั้ง (กล่องเล็กใต้ป้าย)
+        v196 (ผู้ใช้ 16/10/2026 15:57 “ย้ายไปไว้ที่อื่น มันบัง”): เดิมป้ายลอยกลางล่างจอ บังตาราง → ย้ายเข้าแถบข้อมูล Order
      2) ปลุก Apps Script: ระหว่างเปิดหน้าโปรแกรม + มีคนใช้งานใน 30 นาทีล่าสุด + ไม่ได้เรียก Apps Script มาเกิน 4.5 นาที
         → ส่งคำสั่ง ping (อ่านอย่างเดียว ไม่แตะข้อมูล) · กลับมาที่หน้าโปรแกรม (สลับแท็บ / หน้าต่าง) ก็ปลุกทันทีถ้าเงียบไปนาน
         เฉพาะตอนต่อ Google Drive · ไม่ซ้อนกัน
      ปิดได้: SN_OFF.ordTime=1 (จับเวลา) · SN_OFF.gasWake=1 (ปลุก)
      ══════════════════════════════════════════════════════════════════════════════ -->
 <style>
-#ot194{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9998;max-width:min(860px,calc(100vw - 32px));background:#0f172a;color:#e2e8f0;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:12px;line-height:1.5;padding:7px 14px;cursor:pointer;display:none}
+#ot194{position:fixed;z-index:9998;max-width:min(760px,calc(100vw - 32px));min-width:min(480px,calc(100vw - 32px));box-sizing:border-box;background:#0f172a;color:#e2e8f0;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:12px;line-height:1.5;padding:8px 14px;cursor:pointer;display:none}
 #ot194.on{display:block}
 #ot194 b{color:#fde047}
 #ot194 .ot-t{color:#93c5fd;font-weight:700}
@@ -39658,6 +39659,15 @@ window.ORDFAST193_prefetch = prefetch;
 #ot194 table{border-collapse:collapse;margin-top:6px;width:100%}
 #ot194 td{padding:2px 8px 2px 0;border-top:1px solid rgba(255,255,255,.08);white-space:nowrap;vertical-align:top}
 #ot194 td.ot-w{white-space:normal}
+#ot194b{margin-left:10px;font-size:11px;font-weight:700;padding:1px 9px;border-radius:20px;cursor:pointer;border:1px solid;white-space:nowrap;font-family:inherit;line-height:1.6}
+#ot194b.ot-ok{color:#15803d;background:#dcfce7;border-color:#86efac}
+#ot194b.ot-mid{color:#b45309;background:#fef3c7;border-color:#fcd34d}
+#ot194b.ot-bad{color:#b91c1c;background:#fee2e2;border-color:#fca5a5}
+#ot194b.ot-new{animation:ot194p 1.4s ease-out 1}
+@keyframes ot194p{0%{box-shadow:0 0 0 0 rgba(59,130,246,.55)}100%{box-shadow:0 0 0 10px rgba(59,130,246,0)}}
+html[data-theme="dark"] #ot194b.ot-ok{color:#86efac;background:rgba(61,220,107,.15);border-color:rgba(61,220,107,.4)}
+html[data-theme="dark"] #ot194b.ot-mid{color:#fcd34d;background:rgba(255,171,51,.15);border-color:rgba(255,171,51,.4)}
+html[data-theme="dark"] #ot194b.ot-bad{color:#fca5a5;background:rgba(255,107,97,.15);border-color:rgba(255,107,97,.45)}
 </style>
 <script>
 (function(){
@@ -39695,7 +39705,7 @@ if(!OFF.ordTime){
     var e = { oid:r.oid, at:new Date().toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', second:'2-digit' }), ms:t1 - r.t0, parts:order.map(function(L){ return [L, sum[L]]; }), drive:dv };
     LOG.push(e); if(LOG.length > 30) LOG.shift();
     try{ console.log('[เวลาเปิด Order] ' + line(e, true)); }catch(x){}
-    if(e.ms >= 800) show(e);
+    show(e);
   };
   var line = function(e, plain){
     var mx = 0; e.parts.forEach(function(p){ if(p[1] > mx) mx = p[1]; });
@@ -39705,21 +39715,37 @@ if(!OFF.ordTime){
     return plain ? (e.oid + ' · ' + sec(e.ms) + ' วิ — ' + ps.replace(/<[^>]+>/g, '') + dv)
       : '<span class="ot-t">⏱ ' + esc(e.oid) + ' · ' + sec(e.ms) + ' วิ</span> — ' + ps + '<span class="ot-d">' + esc(dv) + '</span>';
   };
-  var chip = function(){ var c = q('ot194'); if(!c){ c = document.createElement('div'); c.id = 'ot194'; c.title = 'กดเพื่อดูเวลาเปิด Order ย้อนหลัง'; c.addEventListener('click', function(){ open = !open; if(open) list(); else if(LOG.length) show(LOG[LOG.length - 1], true); }); document.body.appendChild(c); } return c; };
-  var show = function(e, keep){
-    var c = chip(); open = false;
-    c.innerHTML = line(e) + ' <span class="ot-d" style="white-space:nowrap">· กดดูย้อนหลัง</span>';
-    c.classList.add('on'); clearTimeout(hideT);
-    if(!keep) hideT = setTimeout(function(){ if(!open) c.classList.remove('on'); }, 8000);
+  var pop = function(){ var c = q('ot194'); if(!c){ c = document.createElement('div'); c.id = 'ot194'; c.title = 'กดเพื่อปิด'; c.addEventListener('click', function(){ open = false; c.classList.remove('on'); }); document.body.appendChild(c); } return c; };
+  var badge = function(){
+    var bar = q('ibar'); if(!bar) return null;
+    var b = q('ot194b');
+    if(!b){
+      b = document.createElement('span'); b.id = 'ot194b';
+      b.addEventListener('click', function(ev){ ev.stopPropagation(); if(open){ open = false; pop().classList.remove('on'); } else list(); });
+      var bst = bar.querySelector('.bst'); (bst || bar).appendChild(b);
+    }
+    return b;
+  };
+  var show = function(e){
+    var b = badge(); if(!b) return;
+    b.textContent = '⏱ ' + sec(e.ms) + ' วิ';
+    b.title = 'เปิด Order ล่าสุด: ' + line(e, true) + '\nกดเพื่อดูย้อนหลัง';
+    b.className = e.ms < 2000 ? 'ot-ok' : e.ms < 8000 ? 'ot-mid' : 'ot-bad';
+    void b.offsetWidth; b.classList.add('ot-new');
+    clearTimeout(hideT); hideT = setTimeout(function(){ b.classList.remove('ot-new'); }, 1500);
   };
   var list = function(){
-    var c = chip(); clearTimeout(hideT);
+    var c = pop(), b = q('ot194b');
     var rows = LOG.slice(-10).reverse().map(function(e){ return '<tr><td class="ot-d">' + esc(e.at) + '</td><td class="ot-w">' + line(e) + '</td></tr>'; }).join('');
     var pg = PS.n ? '<div class="ot-d" style="margin-top:6px">ปลุก Apps Script ' + PS.n + ' ครั้ง · ล่าสุด ' + new Date(PS.last).toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' }) + ' · ตอบ ' + sec(PS.ms[PS.ms.length - 1] || 0) + ' วิ</div>' : '';
-    c.innerHTML = '<span class="ot-t">⏱ เวลาเปิด Order ย้อนหลัง</span> <span class="ot-d">(กดอีกครั้งเพื่อปิด)</span><table>' + (rows || '<tr><td class="ot-d">ยังไม่มี</td></tr>') + '</table>' + pg;
-    c.classList.add('on');
+    c.innerHTML = '<span class="ot-t">⏱ เวลาเปิด Order ย้อนหลัง</span> <span class="ot-d">(กดที่กล่องหรือที่อื่นเพื่อปิด)</span><table>' + (rows || '<tr><td class="ot-d">ยังไม่มี</td></tr>') + '</table>' + pg;
+    c.classList.add('on'); open = true;
+    var r = b ? b.getBoundingClientRect() : { left:16, bottom:60 };
+    var w = c.offsetWidth || 400;
+    c.style.top = Math.round(r.bottom + 6) + 'px';
+    c.style.left = Math.round(Math.max(16, Math.min(r.left, window.innerWidth - w - 16))) + 'px';
   };
-  document.addEventListener('click', function(ev){ var c = q('ot194'); if(open && c && !c.contains(ev.target)){ open = false; c.classList.remove('on'); } }, true);
+  document.addEventListener('click', function(ev){ var c = q('ot194'), b = q('ot194b'); if(open && c && !c.contains(ev.target) && !(b && b.contains(ev.target))){ open = false; c.classList.remove('on'); } }, true);
   (function hook(n){
     var ov = q('orderLoadingOverlay'), id = q('orderLoadingId');
     if(!ov || !id){ if(n < 120) setTimeout(function(){ hook(n + 1); }, 500); return; }
