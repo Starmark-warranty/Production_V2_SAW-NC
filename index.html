@@ -16047,7 +16047,7 @@ else setTimeout(run, 6000);
      ตอนนี้: ตรวจไฟล์นั้นครั้งแรก (แกะ + อ่าน JSON) เสียจริง = จำว่าเสีย (เครื่องนี้) ไม่โชว์ในรายการ → ใช้รุ่นก่อนหน้า · เตือนครั้งเดียวเป็นภาษาคน
        หน้า Google Drive มีรายการไฟล์เสีย + ปุ่มย้ายไป _backup/broken (ทุกเครื่องหยุดเตือน) · GasFS 1.5 · ตัวเชื่อมร่วมกับ StarNexus 1.438 · ปิดได้ SN_OFF.gasBad=1 */
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
-  var V = '194', D = '15/10/2026';
+  var V = '195', D = '15/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -39757,6 +39757,68 @@ if(!OFF.gasWake){
   window.GASWAKE194_ping = ping;
 }
 window.ORDTIME194_state = function(){ return { log:LOG.slice(), ping:{ n:PS.n, last:PS.last, ms:PS.ms.slice(), busy:PS.busy, why:PS.why } }; };
+})();
+</script>
+
+<!-- ══ v195: กล่องกำลังโหลด Order — บอกว่ารออะไรอยู่ (เมื่อรอเกิน 8 วิ) ═════════════════════════
+     ผู้ใช้ 15/10/2026 13:19 “เกิดไรขึ้น นานมาก” (อ่านข้อมูล Order จาก Google Drive 64 วิ)
+     เดิม: ความคืบหน้าดาวน์โหลด (ป้ายเล็กล่างจอของตัวอ่าน Drive) ถูกกล่องกำลังโหลดบังมิด → ไม่รู้ว่ารับข้อมูลอยู่หรือรอ Google
+     ตอนนี้ (อ่านค่าสถิติของตัวอ่าน Drive อย่างเดียว · ไม่แตะการโหลด):
+       📥 กำลังรับข้อมูล 0.4 / 2.1 MB (19%) · 35 KB/วิ        ← เน็ต / ไฟล์ใหญ่
+       ⏳ รอ Google ตอบ: อ่านไฟล์ _changes/imos_orders · 45 วิ   ← Apps Script ช้า (ฝั่ง Google)
+       ⚠ ผิดพลาดล่าสุด: …                                       ← เน็ตหลุด / ลองใหม่
+     ปิดได้: SN_OFF.ordWait=1
+     ══════════════════════════════════════════════════════════════════════════════ -->
+<style>
+#ordLoadDiag{margin-top:6px;font-size:11.5px;color:var(--text2);text-align:center;line-height:1.6;max-width:min(560px,90vw)}
+#ordLoadDiag b{font-family:Menlo,Consolas,monospace;color:var(--text)}
+#ordLoadDiag .ow-e{color:#dc2626;display:block}
+</style>
+<script>
+(function(){
+'use strict';
+try{ if(window.SN_OFF && window.SN_OFF.ordWait) return; }catch(e){}
+function q(id){ return document.getElementById(id); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+function fsCur(){ try{ return (typeof GasFS !== 'undefined' && GasFS && typeof GasFS.current === 'function') ? GasFS.current() : null; }catch(e){ return null; } }
+var OPN = { fsRead:'อ่านไฟล์', fsReadPart:'อ่านไฟล์ (ส่วนย่อย)', fsList:'ขอรายการไฟล์', fsTree:'ขอรายการโฟลเดอร์', ping:'ปลุก', info:'ข้อมูล Drive', fsWrite:'บันทึกไฟล์' };
+var t0 = 0, tick = 0, rx0 = 0, rxT = 0, spd = 0;
+function mb(n){ return (Math.max(0, n) / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB'; }
+function paint(){
+  var ov = q('orderLoadingOverlay'); if(!ov) return;
+  var s = Math.floor((Date.now() - t0) / 1000);
+  var el = q('ordLoadDiag');
+  if(s < 8){ if(el && el.innerHTML) el.innerHTML = ''; return; }
+  if(!el){ var ref = q('ordLoadSec') || q('orderLoadingId'); if(!ref || !ref.parentNode) return; el = document.createElement('div'); el.id = 'ordLoadDiag'; ref.parentNode.insertBefore(el, ref.nextSibling); }
+  var fs = fsCur(), h = '';
+  if(fs && fs.st){
+    var st = fs.st, now = Date.now();
+    if(now - rxT >= 1000){ spd = rxT ? Math.max(0, (st.rx - rx0) / ((now - rxT) / 1000)) : 0; rx0 = st.rx; rxT = now; }
+    var d = null; try{ d = (typeof gasDlState === 'function') ? gasDlState() : null; }catch(e){ d = null; }
+    if(d && d.total > 0) h += '📥 กำลังรับข้อมูลจาก Google Drive <b>' + mb(d.done) + ' / ' + mb(d.total) + '</b> (' + Math.floor(d.pct) + '%)' + (spd > 0 ? ' · ' + Math.round(spd / 1024) + ' KB/วิ' : '');
+    var pend = (st.trace || []).filter(function(x){ return x && x[0] > (st.last || 0); });
+    if(pend.length){
+      var a = pend[0], w = Math.floor((now - a[0]) / 1000), seen = {}, names = [];
+      pend.forEach(function(x){ var k = (OPN[x[1]] || x[1]) + (x[2] ? ' ' + x[2] : ''); if(!seen[k]){ seen[k] = 1; names.push(k); } });
+      h += (h ? '<br>' : '') + '⏳ รอ Google ตอบ: <b>' + esc(names.slice(0, 2).join(' · ')) + (names.length > 2 ? ' …' : '') + '</b> · ' + w + ' วิ';
+    }
+    if(!h) h = '⚙ ได้ข้อมูลแล้ว กำลังจัดการในเครื่อง' + (st.last ? ' · Google ตอบล่าสุดเมื่อ ' + Math.floor((now - st.last) / 1000) + ' วิที่แล้ว (ใช้ ' + ((st.ms || 0) / 1000).toFixed(1) + ' วิ)' : '');
+    if(st.err) h += '<span class="ow-e">⚠ ผิดพลาดล่าสุด: ' + esc(String(st.err).slice(0, 140)) + '</span>';
+  } else h = 'ไม่ได้ต่อ Google Drive — กำลังจัดการในเครื่อง';
+  if(el.innerHTML !== h) el.innerHTML = h;
+}
+function onShow(){
+  var ov = q('orderLoadingOverlay'); if(!ov) return;
+  var on = !!(ov.style.display && ov.style.display !== 'none');
+  if(on && !tick){ t0 = Date.now(); rx0 = 0; rxT = 0; spd = 0; tick = setInterval(paint, 500); }
+  else if(!on && tick){ clearInterval(tick); tick = 0; var el = q('ordLoadDiag'); if(el) el.innerHTML = ''; }
+}
+(function hook(n){
+  var ov = q('orderLoadingOverlay');
+  if(!ov){ if(n < 120) setTimeout(function(){ hook(n + 1); }, 500); return; }
+  try{ new MutationObserver(onShow).observe(ov, { attributes:true, attributeFilter:['style'] }); }catch(e){}
+  onShow();
+})(0);
 })();
 </script>
 
