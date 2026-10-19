@@ -16059,7 +16059,9 @@ else setTimeout(run, 6000);
   /* ───────── v182 (13/10/2026): ขนาดตู้ (ProductHeight / ProductWidth / ProductDepth) ในหน้า AX จาก StarNexus 1.443 ───────── */
   /* ───────── v199 (19/10/2026): เปิดผ่าน Odoo — Order / ค่าตั้ง / Mapping / ดัชนีชิ้น อ่านและบันทึกที่ Odoo · Fitting Global / BOM ไม้ จาก API ของ AX
      · ปุ่ม “⬆ ย้ายข้อมูลเข้า Odoo…” (ผู้ใช้ 19/10/2026 11:08 “ย้าย ไป odoo ได้เลย production”) — รายละเอียดที่บล็อก v199 ท้ายไฟล์ ───────── */
-  var V = '199', D = '19/10/2026';
+  /* ───────── v200 (19/10/2026): ป้าย “ส่งเข้าแล้ว” ของปุ่มย้ายข้อมูลเข้า Odoo — Odoo จริงปฏิเสธชื่อ _sxl/odoo/<ตาราง>.json
+     (“ชื่อไฟล์ของเว็บดูงานไม่ถูกต้อง”) → ย้ายไป v/zxmig<ชื่อย่อ>.bin + อ่านกลับทันที (ค้น v200 · ตัวเดียวกับ StarNexus 1.479) ───────── */
+  var V = '200', D = '19/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -40231,13 +40233,23 @@ var SXL_MIG={now:['furnitech_cabinets','furnitech_parts','xml_history','furnitec
 function sxlMigApp(){try{return (SXL.cfg&&SXL.cfg.app==='Production')?'Production':'StarNexus'}catch(e){return 'StarNexus'}}
 function sxlMigMine(){return sxlMigApp()==='Production'?SXL_MIG.prod:SXL_MIG.now}
 function sxlMigOther(){return sxlMigApp()==='Production'?SXL_MIG.now:SXL_MIG.prod}
-function sxlMigPath(n){return SXL_MIG.dir+n+'.json'}
+/* ───────── v200: ป้าย “ส่งเข้าแล้ว” ย้ายไปไว้ที่ v/<รหัส>.bin ─────────
+   ผู้ใช้ 19/10/2026 13:30 (กดส่งเข้า Odoo ที่ Odoo จริง c1stmdev): “เขียนป้าย ‘ส่งเข้าแล้ว’ ของ furnitech_cabinets ใน Odoo ไม่สำเร็จ:
+     ชื่อไฟล์ของเว็บดูงานไม่ถูกต้อง: _sxl/odoo/furnitech_cabinets.json”
+   เดิม: ป้ายเขียนที่ _sxl/odoo/<ตาราง>.json — Odoo รับเฉพาะชื่อแบบไฟล์เว็บดูงาน (view.html · v/ · p/ · t/) จึงปฏิเสธ
+         ส่งแถวของตารางแรกเข้าไปแล้วแต่หยุดตรงป้าย → ตารางถัดไป (furnitech_share 973 แถว · รูป) ไม่ได้ส่ง · ไม่มีตารางไหนสลับไป Odoo
+   ตอนนี้: ป้ายอยู่ที่ v/zxmig<ชื่อย่อ>.bin (รูปเดียวกับไฟล์ข้อมูลลิงก์ดูงาน ที่ Odoo รับอยู่แล้ว · ตัวอักษรชุดเดียวกับรหัสลิงก์)
+           เขียนแล้วอ่านกลับจาก /web/list ทันที — ไม่เจอ = บอกชัด ๆ ไม่ถือว่าย้ายแล้ว · อ่านป้ายทั้งที่ใหม่และที่เดิม */
+var SXL_MIG_ID={furnitech_cabinets:'zxmigcabnt',furnitech_parts:'zxmigparts',xml_history:'zxmigxmhst',furnitech_share:'zxmigshare',
+ app_settings:'zxmigappst',imos_orders:'zxmigimrdr',imos_mapping:'zxmigimmap',part_index:'zxmigptidx',assets:'zxmigasset'};
+function sxlMigPath(n){return 'v/'+(SXL_MIG_ID[n]||('zxmig'+String(n).replace(/[^a-km-np-z2-9]/g,'').slice(0,5)))+'.bin'}
+function sxlMigPathOld(n){return SXL_MIG.dir+n+'.json'}
 /* ป้าย “ส่งเข้าแล้ว” ใน Odoo — ถามทีเดียวทุกตาราง (/web/list ตอบรหัส sha ของไฟล์ที่มี) · อ่านไม่ได้ = ถือว่ายังไม่ย้าย (ใช้ Drive) */
 async function sxlOdbMigLoad(){
  if(_sxlSnOff('odooTables')){SXL_ODB.mig={};return SXL_ODB.mig}
  var names=SXL_MIG.now.concat(SXL_MIG.prod,['assets']),m={};
- try{var r=await window.Nexus.rpc('/web/list',{app:window.NEXUS.app,paths:names.map(sxlMigPath)}),have=(r&&r.have)||{};
-  names.forEach(function(n){if(have[sxlMigPath(n)])m[n]=have[sxlMigPath(n)]})}
+ try{var r=await window.Nexus.rpc('/web/list',{app:window.NEXUS.app,paths:names.map(sxlMigPath).concat(names.map(sxlMigPathOld))}),have=(r&&r.have)||{};   // v200: + ที่ใหม่ v/zxmig*.bin
+  names.forEach(function(n){var h=have[sxlMigPath(n)]||have[sxlMigPathOld(n)];if(h)m[n]=h})}
  catch(e){console.warn('[Odoo] อ่านป้ายย้ายข้อมูลไม่ได้ — ใช้ Google Drive ต่อ',e&&e.message)}
  SXL_ODB.mig=m;return m}
 function sxlOdbMigOk(t){return !!(SXL_ODB.mig&&SXL_ODB.mig[t])}
@@ -40307,9 +40319,12 @@ async function sxlMigPush(p,withDel,onp){
 function sxlMigTok(){return (document.querySelector('meta[name=csrf-token]')||{}).content||''}
 async function sxlMigMark(name,info){
  var fd=new FormData();fd.append('app',window.NEXUS.app);fd.append('path',sxlMigPath(name));fd.append('title','StarNexus · ย้ายข้อมูลเข้า Odoo');fd.append('csrf_token',sxlMigTok());
- fd.append('file',new Blob([JSON.stringify(Object.assign({name:name,at:Date.now(),by:SXL.machine||''},info||{}))],{type:'application/json'}),name+'.json');
+ var p=sxlMigPath(name);fd.append('file',new Blob([JSON.stringify(Object.assign({sxlOdooMig:1,name:name,at:Date.now(),by:SXL.machine||''},info||{}))]),p.split('/').pop());   // v200: ชื่อไฟล์ = ท้ายที่อยู่ (แบบไฟล์เว็บดูงาน)
  var r=await fetch('/nexus/api/web/put',{method:'POST',body:fd,credentials:'same-origin'}),j={};try{j=await r.json()}catch(e){}
  if(!r.ok||j.error)throw Error('เขียนป้าย “ส่งเข้าแล้ว” ของ '+name+' ใน Odoo ไม่สำเร็จ: '+(j.error||('HTTP '+r.status)));
+ /* v200: อ่านกลับทันที — ตอนเปิดโปรแกรมใช้ /web/list ตัวเดียวกันนี้ตัดสินว่าตารางอยู่ Odoo ไหม */
+ var ck=null;try{ck=await window.Nexus.rpc('/web/list',{app:window.NEXUS.app,paths:[p]})}catch(e){ck=null}
+ if(!(ck&&ck.have&&ck.have[p]))throw Error('เขียนป้าย “ส่งเข้าแล้ว” ของ '+name+' แล้ว แต่ Odoo ยังไม่พบไฟล์ '+p+' (/web/list) — ยังไม่สลับตารางนี้ไป Odoo');
  SXL_ODB.mig=SXL_ODB.mig||{};SXL_ODB.mig[name]=1}
 async function sxlMigMarkDrive(names,info){
  if(!SXL.dir)return;
