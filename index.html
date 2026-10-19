@@ -10694,7 +10694,8 @@ function gasDriveRender(){
        ส้ม = ยังมีตารางบน Drive แต่ไม่ได้ต่อ · รูปแบบ “ชื่อ · n/m ตาราง” เดิม → แท็บ (v121) ย่อทีละช่วงตอนจอแคบได้ */
     var _od=(typeof sxlOdbOn==='function'&&sxlOdbOn())?SXL.cfg.tables.filter(function(T){ return sxlLoadable(T)&&SXL.s[T.t]&&sxlRemote(SXL.s[T.t]); }).length:0;
     var _odAll=!!_od&&sxlOdbAll();
-    var t=_od?(((_odAll&&!on)?'☁ Odoo · ':'☁ Odoo + Drive · ')+sxlReadyN()+'/'+sxlLoadN()+' ตาราง'+((!_odAll&&!on)?' · Drive ยังไม่เชื่อมต่อ':''))
+    /* v201: ทุกตารางอยู่ Odoo = “☁ Odoo” แม้เครื่องนี้ยังต่อ Drive ไว้ (ผู้ใช้ 15:49 “ยังขึ้น +Drive อยู่”) — ป้ายบอกที่อยู่ข้อมูล ไม่ใช่การเชื่อมต่อ */
+    var t=_od?((_odAll?'☁ Odoo · ':'☁ Odoo + Drive · ')+sxlReadyN()+'/'+sxlLoadN()+' ตาราง'+((!_odAll&&!on)?' · Drive ยังไม่เชื่อมต่อ':''))
              :('☁ Google Drive · '+(on?(sxlReadyN()+'/'+sxlLoadN()+' ตาราง'):'ยังไม่เชื่อมต่อ'));
     if(top.textContent!==t) top.textContent=t;               // ข้อความเดิมทุกตัวอักษร = ไม่เขียนทับ (Production V2 แบ่งช่วงไว้ย่อตอนจอแคบ)
     top.style.background=((_od?(!_odAll&&!on):!on)||core)?'#9a4a12':'#135e73'; }
@@ -16061,7 +16062,8 @@ else setTimeout(run, 6000);
      · ปุ่ม “⬆ ย้ายข้อมูลเข้า Odoo…” (ผู้ใช้ 19/10/2026 11:08 “ย้าย ไป odoo ได้เลย production”) — รายละเอียดที่บล็อก v199 ท้ายไฟล์ ───────── */
   /* ───────── v200 (19/10/2026): ป้าย “ส่งเข้าแล้ว” ของปุ่มย้ายข้อมูลเข้า Odoo — Odoo จริงปฏิเสธชื่อ _sxl/odoo/<ตาราง>.json
      (“ชื่อไฟล์ของเว็บดูงานไม่ถูกต้อง”) → ย้ายไป v/zxmig<ชื่อย่อ>.bin + อ่านกลับทันที (ค้น v200 · ตัวเดียวกับ StarNexus 1.479) ───────── */
-  var V = '200', D = '19/10/2026';
+  /* ───────── v201 (19/10/2026): Order จาก Odoo — เก็บสำเนาในเครื่องทันทีหลังโหลดครั้งแรก (ค้น v201) ───────── */
+  var V = '201', D = '19/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -40115,8 +40117,8 @@ function sxlOdbMerge(T,rows,d){
  if(d&&Array.isArray(d.keys)){var keep=new Set(d.keys.map(String));Array.from(m.keys()).forEach(function(k){if(!keep.has(k))m.delete(k)})}
  return Array.from(m.values())}
 function sxlOdbCols(T,rows){var cs=new Set(T.need||[]);rows.forEach(function(r){for(var c in r)if(c.indexOf('__')!==0)cs.add(c)});return Array.from(cs)}
-function sxlOdbCacheLater(t){clearTimeout(SXL_ODB.cacheT[t]);SXL_ODB.cacheT[t]=setTimeout(function(){var S=SXL.s[t];if(!S||S.src!=='odb'||!S.ready)return;
- try{sxlCPut('base',[['odb:'+t,{gen:S.ogen,seq:S.oseq,rows:S.base.map(sxlStrip),at:Date.now()}]])}catch(e){}},t==='imos_orders'?20000:3000)}   // v199: imos_orders ใหญ่ (~110 MB) — เก็บสำเนาหลังเงียบไป 20 วิ ไม่เขียนทุกครั้งที่บันทึก
+function sxlOdbCacheLater(t,ms){clearTimeout(SXL_ODB.cacheT[t]);SXL_ODB.cacheT[t]=setTimeout(function(){   /* v201: + ms (หลังโหลดใช้ 1.5 วิ) */var S=SXL.s[t];if(!S||S.src!=='odb'||!S.ready)return;
+ try{sxlCPut('base',[['odb:'+t,{gen:S.ogen,seq:S.oseq,rows:S.base.map(sxlStrip),at:Date.now()}]])}catch(e){}},ms||(t==='imos_orders'?20000:3000))}   // v199: imos_orders ใหญ่ (~110 MB) — เก็บสำเนาหลังเงียบไป 20 วิ ไม่เขียนทุกครั้งที่บันทึก
 async function sxlOdbLoad(t,info){
  var T=sxlCfg(t),S=SXL.s[t];if(!T||!S||S.src!=='odb'||S.oload)return false;S.oload=true;S.err='';
  try{
@@ -40124,18 +40126,25 @@ async function sxlOdbLoad(t,info){
    if(!info||info.mode!=='odoo')throw Error('ตารางนี้ไม่ได้ตั้งให้ใช้ Odoo เป็นหลักแล้ว — โหลดหน้าใหม่')}
   var rows=null,seq=info.seq,c=null,t0=Date.now();
   try{c=(await sxlCGet('base',['odb:'+t])).get('odb:'+t)}catch(e){c=null}
-  if(c&&c.gen===info.gen&&Array.isArray(c.rows)){rows=c.rows;seq=c.seq}
+  var hit=!!(c&&c.gen===info.gen&&Array.isArray(c.rows));   // v201
+  if(hit){rows=c.rows;seq=c.seq}
   else{rows=[];var after=0;
    for(;;){var pg=await sxlOdbRpc('rows',{table:t,after:after});
     (pg.rows||[]).forEach(function(x){rows.push(sxlFileToRaw(T,x))});
-    S.oprog=rows.length.toLocaleString()+' / '+(info.rows||0).toLocaleString()+' แถว';sxlRender();
+    S.oprog=rows.length.toLocaleString()+' / '+(info.rows||0).toLocaleString()+' แถว · '+Math.round((Date.now()-t0)/1000)+' วิ'+(t==='imos_orders'?' · ครั้งแรกของเครื่องนี้ (ครั้งต่อไปใช้สำเนาในเครื่อง)':'');sxlRender();   // v201: + เวลา · บอกว่าครั้งเดียว
     if(!pg.next)break;after=pg.next}}
   var d=await sxlOdbRpc('changes',{table:t,since:seq});   /* ของที่บันทึกหลังแคช / ระหว่างไล่หน้า */
   rows=sxlOdbMerge(T,rows,d);
   await sxlLocked(async function(){
    Object.assign(S,{ready:true,base:rows,over:new Map(),names:{},cols:sxlOdbCols(T,rows),name:'Odoo · '+t,sig:'odb|'+info.gen,size:0,mod:Date.now(),src:'odb',handle:null,err:'',werr:'',oprog:''});
-   S.ogen=info.gen;S.oseq=d.seq;sxlRebuild(T,S);SXL.notes[t]='';if(T.check){try{SXL.notes[t]=T.check(rows)||''}catch(e){}}});
-  sxlOdbCacheLater(t);
+   S.ogen=info.gen;S.oseq=d.seq;S.ocache=hit;sxlRebuild(T,S);SXL.notes[t]='';if(T.check){try{SXL.notes[t]=T.check(rows)||''}catch(e){}}});
+  /* ───────── v201: เก็บสำเนาในเครื่องทันทีหลังโหลด (ไม่รอ 20 วิ) · เปิดจากสำเนาแล้วไม่มีอะไรเปลี่ยน = ไม่เขียนสำเนาซ้ำ ─────────
+     ผู้ใช้ 19/10/2026 15:47 (Production ใน Odoo · imos_orders “กำลังอ่านจาก Odoo … 68 / 182 แถว”): “อ่านฝั่ง odoo ช้าหรือเปล่า”
+     ครั้งแรกต่อเครื่องต้องดาวน์โหลด Order ทั้งหมด (~110 MB) · เดิม (v199) เก็บสำเนาหลังโหลดเสร็จ 20 วิ (ตั้งไว้สำหรับตอนบันทึกถี่ ๆ)
+       ปิดแท็บก่อนครบ 20 วิ = ไม่มีสำเนา เปิดครั้งต่อไปโหลดใหม่ทั้งหมดอีก · และทุกครั้งที่เปิดจากสำเนาก็เขียนสำเนา 110 MB ซ้ำ
+     ตอนนี้: โหลดจาก Odoo ใหม่ / มีส่วนต่าง = เก็บสำเนาหลัง 1.5 วิ · เปิดจากสำเนาไม่มีส่วนต่าง = ไม่เขียน · ตอนบันทึกยังรอเงียบ 20 วิ เหมือนเดิม
+     ช่องสถานะบอก “สำเนาในเครื่อง + ส่วนต่าง” เมื่อเปิดจากสำเนา */
+  if(!hit||(d.rows&&d.rows.length)||Array.isArray(d.keys))sxlOdbCacheLater(t,1500);
   try{console.info('[ไฟล์กลาง] '+t+' จาก Odoo '+rows.length+' แถว · '+((Date.now()-t0)/1000).toFixed(1)+' วิ'+(c&&c.gen===info.gen?' (แคช + ส่วนต่าง)':''))}catch(e){}
   await sxlApply(new Set([t]),'odb');sxlRender();sxlHideIfReady();   // v199: ไม่ใช่ 'restore' — v118 ล้างภาพก่อนหน้าของทุกตารางเมื่อ 'restore' (โหลดทีละตาราง = imos_orders ไม่มีภาพเทียบ ป้าย “มีแก้ใหม่” ไม่ขึ้น)
   return true}
@@ -40503,7 +40512,7 @@ function sxlOdooChromeP(){
       if(S.err){ h=(S.src==='odb'?'อ่านจาก Odoo ไม่สำเร็จ':'ดึงจาก AX ไม่สำเร็จ')+'<br><small class="sl-bad">'+esc2(S.err)+'</small>'+(S.src==='odb'?'<br><button type="button" data-odb-retry="'+T.t+'">ลองอ่านใหม่</button>':''); cls='bad'; }
       else { h=(S.src==='odb'?'กำลังอ่านจาก Odoo …':'กำลังดึงจาก AX ผ่าน Odoo …')+(S.oprog?'<br><small>'+esc2(S.oprog)+'</small>':''); cls='off'; }
     } else if(S.src==='odb'){
-      h='✓ Odoo · '+S.rows.length.toLocaleString()+' แถว<br><small>'+esc2(SXL_SRC.odb)+' · อ่านล่าสุด '+new Date(S.mod).toLocaleString('th-TH')+(S.nW?' · รอบนี้บันทึกแล้ว '+S.nW+' แถว':'')+'</small>'; cls='ok';
+      h='✓ Odoo · '+S.rows.length.toLocaleString()+' แถว<br><small>'+esc2(SXL_SRC.odb)+(S.ocache?' · เปิดจากสำเนาในเครื่อง + ส่วนต่าง':'')+' · อ่านล่าสุด '+new Date(S.mod).toLocaleString('th-TH')+(S.nW?' · รอบนี้บันทึกแล้ว '+S.nW+' แถว':'')+'</small>'; cls='ok';   // v201
       if(S.werr) h+='<br><small class="sl-bad">'+esc2(S.werr)+'</small>';
       var n=SXL.notes[T.t]; if(n) h+='<br><small class="sl-warn">'+esc2(n)+'</small>';
       if(S.err) h+='<br><small class="sl-bad">'+esc2(S.err)+'</small>';
@@ -40524,6 +40533,22 @@ function sxlOdooChromeP(){
   if(!mg&&ck&&sxlOdbOn()){ mg=document.createElement('button'); mg.id='sxlOdooMig'; mg.type='button';
     mg.onclick=function(){ sxlOdooMigDialog().catch(function(e){ sxlStatus((e&&e.message)||String(e),true); }); };
     ck.parentNode.insertBefore(mg,ck.nextSibling); }
+  /* ───────── v201: ปุ่ม “เลิกเชื่อมต่อ Google Drive (เครื่องนี้)” — ทุกตารางอยู่ Odoo แล้วแต่เครื่องนี้ยังตั้ง Drive ไว้ ─────────
+     ผู้ใช้ 19/10/2026 15:49 (ย้ายครบแล้ว ป้ายยังขึ้น “☁ Odoo + Drive”): “ยังขึ้น +DRIVE อยู่นะครับ”
+     ตั้ง URL + กุญแจไว้ = เปิดโปรแกรมยังต่อ Drive ทุกครั้ง (เสียเวลา · ไม่ได้อ่าน/เขียนตารางที่ Drive แล้ว) · กดแล้วลบ URL + กุญแจของเว็บนี้
+     (เก็บสำเนาไว้ที่ …:gas.bak) แล้วโหลดหน้าใหม่ · StarNexus ที่เปิดผ่าน Odoo ในเบราว์เซอร์เดียวกันใช้ค่าชุดเดียวกัน = เลิกต่อ Drive ด้วย
+     ไฟล์ BOM ใส่เอง (FittingBOM_Manual บน Drive) จะไม่ถูกอ่าน — ใส่ BOM เองในโปรแกรมแทน · ต่อใหม่ได้ด้วยรหัสเชื่อมต่อ */
+  var dx=document.getElementById('sxlOdooNoDrive');
+  if(all&&drv&&mg&&!dx){ dx=document.createElement('button'); dx.id='sxlOdooNoDrive'; dx.type='button'; dx.textContent='เลิกเชื่อมต่อ Google Drive (เครื่องนี้)';
+    dx.title='ข้อมูลอยู่บน Odoo ครบแล้ว — ไม่ต้องต่อ Google Drive ทุกครั้งที่เปิด';
+    dx.onclick=function(){ var noTex=!(SXL_ODB.mig&&SXL_ODB.mig.assets);
+      if(!confirm('เลิกเชื่อมต่อ Google Drive ในเบราว์เซอร์เครื่องนี้?\n\n· ข้อมูลทุกตารางอยู่บน Odoo แล้ว ไม่กระทบ\n· StarNexus ที่เปิดผ่าน Odoo ในเบราว์เซอร์นี้จะเลิกต่อ Drive ด้วย'
+        +(noTex?'\n· ⚠ รูปลายผิว/รูปย่อตู้ของ StarNexus ยังไม่ได้ย้ายเข้า Odoo — StarNexus เครื่องนี้จะไม่เห็นลายผิวจนกว่าจะย้ายรูป':'')
+        +'\n· ไฟล์ BOM ใส่เอง (FittingBOM_Manual) บน Drive จะไม่ถูกอ่าน\n· ต่อใหม่ได้ทุกเมื่อ ด้วยรหัสเชื่อมต่อ\n\nกด OK แล้วโปรแกรมจะโหลดหน้าใหม่')) return;
+      try{ var c=GasFS.cfgGet(); localStorage.setItem('sxlocaltrial:furnitech:gas.bak',JSON.stringify(c)); GasFS.cfgSet(null); }catch(e){}
+      location.reload(); };
+    mg.parentNode.insertBefore(dx,mg.nextSibling); }
+  if(dx) dx.style.display=(all&&drv)?'':'none';
   if(mg){ var left=sxlMigMine().filter(function(t){ var S=SXL.s[t]; return S&&S.src!=='odb'; });
     var tx=left.length?'⬆ ย้ายข้อมูลเข้า Odoo…':'✓ ข้อมูล Production อยู่บน Odoo (ดูสถานะ)'; if(mg.textContent!==tx) mg.textContent=tx; mg.style.display=sxlOdbOn()?'':'none'; }
   var pk=document.getElementById('sxl_st_fitting_global'), ax=document.getElementById('sxlOdooAx');
