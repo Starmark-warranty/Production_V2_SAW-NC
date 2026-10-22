@@ -9606,7 +9606,7 @@ async function sxlPickDir(){
  var d=await showDirectoryPicker({mode:'readwrite',id:'sxlocal'});SXL.dir=d;SXL.dirErr='';await sxlCanWrite();
  /* ตารางที่โฟลเดอร์นี้มีไฟล์ ให้โฟลเดอร์ชนะไฟล์ที่เลือกแยกไว้รอบก่อน · ตารางที่โฟลเดอร์ไม่มี ใช้ไฟล์เดิมต่อ */
  var found=await sxlScanDir(d);
- for(var t of Object.keys(found)){var S=SXL.s[t];S.src='';S.handle=null;try{await sxlIdbPut('file:'+t,null)}catch(e){}}
+ for(var t of Object.keys(found)){var S=SXL.s[t];if(typeof sxlRemote==='function'&&sxlRemote(S))continue;S.src='';S.handle=null;try{await sxlIdbPut('file:'+t,null)}catch(e){}}   /* v202: + ข้ามตารางที่อยู่ Odoo / AX */
  try{await sxlIdbPut('dir',d)}catch(e){}
  var ch=await sxlSync(true,'pick');
  if(!Object.keys(found).length)sxlStatus('ไม่พบไฟล์ที่ชื่อตรงตารางในโฟลเดอร์ “'+d.name+'” — ชื่อไฟล์ต้องขึ้นต้นด้วยชื่อตาราง เช่น '+SXL.cfg.tables[0].t+'_rows.csv',true);
@@ -9653,8 +9653,8 @@ function sxLocalMount(){if(document.getElementById('sxLocalPanel'))return;var C=
  document.getElementById('sxLocalUpload').onchange=guard(async function(e){var fs=Array.from(e.target.files);e.target.value='';if(fs.length)await sxlOnce(fs)});
  panel.querySelectorAll('[data-sxl-act]').forEach(function(b){b.onclick=guard(function(){return C.actions[+b.dataset.sxlAct].onClick(hide)})});
  setInterval(async function(){if(document.hidden||SXL.busy)return;try{await sxlRefresh()}catch(e){sxlStatus('ตรวจไฟล์ไม่สำเร็จ: '+e.message,true)}},10000);
- sxlRender();if(C.openAtStart!==false)sxLocalSettings();
- sxlWhenBooted().then(function(){return sxlRestore(false)}).catch(function(){});
+ sxlRender();if(C.openAtStart!==false&&!(typeof sxlBootBar==='function'&&sxlBootBar()))sxLocalSettings();   // v203: เปิดผ่าน Odoo = แถบโหลดแทนหน้าต่าง
+ sxlWhenBooted().then(function(){return sxlRestore(false,'boot')}).catch(function(){});   // v203: + 'boot' (รอบเปิดโปรแกรม)
 }
 /* fetch ตรงไป Supabase (/rest/v1) → ส่งเข้าไฟล์กลางแทน: POST ตาราง = เพิ่ม/ทับแถว · POST rpc = ฟังก์ชันที่โปรแกรมตั้งไว้ · อย่างอื่นตอบว่าไม่รองรับ */
 var sxLocalFetch=window.fetch.bind(window);
@@ -16063,7 +16063,19 @@ else setTimeout(run, 6000);
   /* ───────── v200 (19/10/2026): ป้าย “ส่งเข้าแล้ว” ของปุ่มย้ายข้อมูลเข้า Odoo — Odoo จริงปฏิเสธชื่อ _sxl/odoo/<ตาราง>.json
      (“ชื่อไฟล์ของเว็บดูงานไม่ถูกต้อง”) → ย้ายไป v/zxmig<ชื่อย่อ>.bin + อ่านกลับทันที (ค้น v200 · ตัวเดียวกับ StarNexus 1.479) ───────── */
   /* ───────── v201 (19/10/2026): Order จาก Odoo — เก็บสำเนาในเครื่องทันทีหลังโหลดครั้งแรก (ค้น v201) ───────── */
-  var V = '201', D = '19/10/2026';
+  /* ───────── v202 (19/10/2026): แก้จุดเสี่ยงส่วนเชื่อม Odoo จากการตรวจ V201 (ค้น v202) — นอก Odoo เหมือน V201 ─────────
+     ① ย้ายข้อมูล: ป้ายบน Drive เขียนทันทีทีละตาราง + เติมป้ายที่ขาดตอนเปิดหน้าต่างย้าย · วางแผนส่งใหม่ในคิว · ตรวจซ้ำยังต่าง = ส่งซ้ำ ไม่ให้กดผ่าน
+     ② ดึงส่วนต่างก่อนบันทึก (ไม่ต่อ Drive) → รอบตรวจ Odoo ใช้กับหน้าจอ + ป้ายมีแก้ใหม่ · ③ รอบตรวจดึงส่วนต่างในคิวเดียวกับการบันทึก
+     ④ แถวที่แท็บนี้บันทึกเอง นับเฉพาะตอนที่แถวยังเป็นของเราอยู่ · ⑤ ผู้ดูแลสลับตารางกลับโฟลเดอร์ = ไม่บันทึกลง Odoo · ป้ายบน Drive ไม่กันใน Odoo
+     ⑥ อ่านป้ายบน Drive ไม่ได้ (ไม่ใช่ไม่มีไฟล์) = ไม่จำ 60 วิ ไม่เขียนทับป้าย · ⑦ เลือกโฟลเดอร์ตอนเปิดผ่าน Odoo ไม่ดึงตาราง Odoo กลับไปโฟลเดอร์
+     ⑧ ตัวเทียบค่า JSON: ข้อความ JSON บน Drive = ค่าที่ Odoo แกะแล้ว 1 ชั้น (เดิมตรวจซ้ำต่างทุกรอบ) ───────── */
+  /* ───────── v203 (22/10/2026): เปิดผ่าน Odoo — ไม่ต่อ Google Drive ตอนเปิดโปรแกรม · แถบโหลดแทนหน้าต่างไฟล์กลาง (ค้น v203) — นอก Odoo เหมือน V202 ─────────
+     ① ทุกตารางอยู่ Odoo = ไม่ต่อ Google Drive ตอนเปิดโปรแกรม แม้เครื่องนี้ตั้ง URL + กุญแจไว้ (เดิมต่อทุกครั้ง: โหลดรายการไฟล์จาก Drive ~20 วิ
+        แล้วตรวจ Drive ทุก 10 วิ ในคิวเดียวกับการบันทึก → บันทึก Item Id Set / ค่าอื่นต้องรอ Apps Script ตอบก่อน = บันทึกช้า)
+        ยกเว้นเครื่องที่ติ๊ก “เครื่องนี้ส่งเองเมื่อไฟล์ Excel เปลี่ยน” · กด “เชื่อมต่อ” เองยังต่อได้
+     ② เปิดผ่าน Odoo = ไม่ขึ้นหน้าต่างไฟล์กลางตอนเปิด · แถบเล็กบนสุดบอกความคืบหน้า หายเองเมื่อพร้อม · อ่านไม่สำเร็จ = เปิดหน้าต่างเหมือนเดิม
+     ③ ไม่ได้ต่อ Drive = หัวหน้าต่าง “☁ Odoo” ไม่มีคำว่า Google Drive · ส่วนตั้งค่า Drive เดิมพับไว้ · ④ เวลาบันทึกล่าสุด: Console SXL_wlog() ───────── */
+  var V = '203', D = '22/10/2026';
   /* ══ v98: ขอให้เบราว์เซอร์เก็บข้อมูลของเว็บนี้แบบถาวร ═══════════════════════════════
      ตั้งค่าทุกอย่าง (โฟลเดอร์ .saw/Excel, โหมดชื่อไฟล์, คิว, สต็อก, แคช Fitting Global) อยู่ในเบราว์เซอร์
      ปกติ Chrome ลบข้อมูลเว็บเองได้ถ้าพื้นที่ดิสก์ใกล้เต็ม → ขอสิทธิ์ "ถาวร" กันไว้
@@ -22960,7 +22972,9 @@ function lastWrite(t, k){
   /* ───────── v199: ตารางที่อยู่ Odoo ไม่มีไฟล์ใน _changes ─────────
      เดิม: ไม่มีไฟล์ = null → ของที่แท็บนี้บันทึกลง Odoo เองถูกนับว่า “ต้นทางแก้” (ขึ้นแถบให้โหลดใหม่ทุกครั้งที่บันทึก)
      ตอนนี้: ใช้รายการที่ sxlOdbWrite จำไว้ (S.ownW: รหัสแถว → { by:รหัสแท็บ, at, row }) */
-  if(S && S.src === 'odb') return (S.ownW && S.ownW.get(String(k))) || null;
+  if(S && S.src === 'odb'){ var _w = S.ownW && S.ownW.get(String(k)); if(!_w) return null;   /* v202: ยังเป็นแถวที่เราบันทึกอยู่ไหม (เครื่องอื่นแก้/ลบทีหลัง = ไม่ใช่ของเรา) */
+    var _c; try{ _c = sxlIdx(T || cfgOf(t), S).get(String(k)) || null; }catch(e){ return _w; }
+    return (_w.row ? _c === _w.row : !_c) ? _w : null; }
   if(!S || !T || !S.over) return null;
   var fake = {}; fake[T.key] = k;
   try{ return S.over.get(sxlBf(sxlBucketOf(T, fake))) || null; }catch(e){ return null; }
@@ -25681,7 +25695,7 @@ function info(){
       + (F.err ? '<br><span class="bad">อ่านรอบล่าสุดไม่สำเร็จ: ' + esc(F.err) + ' (ใช้ข้อมูลรอบก่อน)</span>' : '');
   } else if(F.loading) m += 'กำลังอ่าน…';
   else if(F.err) m += '<span class="bad">อ่านไม่สำเร็จ: ' + esc(F.err) + '</span>';
-  else m += 'ยังไม่มี (ไม่มีก็ได้)';
+  else m += (typeof SXL_ODB !== 'undefined' && SXL_ODB.drvSkip && !dirNow()) ? 'ไม่ได้อ่าน (เปิดผ่าน Odoo ใช้ BOM ใส่เองในโปรแกรมแทนไฟล์)' : 'ยังไม่มี (ไม่มีก็ได้)';   // v203
   m += ' · <button type="button" class="wbm-link" data-wbom-open="1">🧩 จัดการ BOM ใส่เอง</button>';
   if(em.innerHTML !== m) em.innerHTML = m;
 }
@@ -40018,7 +40032,10 @@ function onShow(){
 /* ───────── v199: ตัวช่วยที่ StarNexus มีแต่ Production ไม่มี ───────── */
 function _sxlSnOff(k){ try{ return !!(window.SN_OFF&&window.SN_OFF[k]); }catch(e){ return false; } }
 async function sxlPool(list,n,fn){ var i=0; var w=async function(){ while(i<list.length){ var x=list[i++]; await fn(x); } }; var ws=[]; for(var k=0;k<Math.min(n,list.length);k++) ws.push(w()); await Promise.all(ws); }
-function sxlWLog(){}
+/* v203: เวลาบันทึกลง Odoo 40 ครั้งล่าสุด — Console: SXL_wlog() · wait = รอคิว (มีงานอื่นถือคิวอยู่) · wrMs = รอ Odoo ตอบ · ms = เวลาในคิว (เดิมตัวว่าง) */
+var SXL_WL=[];
+function sxlWLog(W){try{SXL_WL.push({at:new Date().toLocaleTimeString('th-TH'),table:W.t,kind:W.k,wait:W.wait||0,wrMs:W.wrMs||0,ms:W.ms||0,queue:W.q||0,err:W.err||''});if(SXL_WL.length>40)SXL_WL.shift()}catch(e){}}
+window.SXL_wlog=function(){try{console.table(SXL_WL)}catch(e){}return SXL_WL.slice()};
 /* ปิดหน้าต่างไฟล์กลางเมื่อตารางจำเป็นพร้อมครบ (Production เดิมไม่มี — gasHide ใช้ตัวนี้ถ้ามี) */
 function sxlHideIfReady(){ try{ if(!SXL.cfg.tables.every(function(T){ return !T.core||!sxlLoadable(T)||SXL.s[T.t].ready; })) return false; var p=document.getElementById('sxLocalPanel'); if(p) p.style.display='none'; return true; }catch(e){ return false; } }
 /* สำเนาตารางจาก Odoo ในเครื่อง (IndexedDB) — sxlCGet(ที่เก็บ,[คีย์]) → Map · sxlCPut(ที่เก็บ,[[คีย์,ค่า]]) */
@@ -40081,7 +40098,7 @@ async function sxlOdooFGLive(manual){   // v1.424: ดึงสดจาก AX �
  catch(e){var msg='ดึง Fitting Global จาก AX ผ่าน Odoo ไม่สำเร็จ: '+(e&&e.message||e);
   if(S.ready)S.err=msg+' — ยังใช้ข้อมูลรอบก่อนอยู่';
   else{if(S.src==='odoo')S.src='';   /* ยังไม่มีข้อมูล → คืนให้โฟลเดอร์ อ่านไฟล์ fitting ในโฟลเดอร์ Server แทน */
-   try{if(SXL.dir)await sxlSync(false,'check')}catch(e2){}
+   try{if(SXL.dir)await sxlSync(false,'check');else if(SXL_ODB.drvSkip&&typeof gasOn==='function'&&gasOn())await sxlRestore(false)}catch(e2){}   /* v203: ไม่ได้ต่อ Drive ตอนเปิด = ต่อตอนนี้ ใช้ไฟล์ fitting บน Drive แทน (แบบ V202) */
    if(S.ready)SXL.notes[t]=msg+' — ใช้ไฟล์ '+S.name+' ในโฟลเดอร์แทน';else S.err=msg+' — เลือกไฟล์ CSV / Excel แทนได้'}
   sxlRender();
   if(manual)sxlStatus(msg,true);else console.warn('[ไฟล์กลาง] '+msg);
@@ -40157,12 +40174,17 @@ async function sxlOdbPoll(){
  SXL_ODB.polling=true;
  try{var st=((await sxlOdbRpc('status')).tables)||[],ch=new Set();
   for(var T of mine){var S=SXL.s[T.t],info=st.find(function(x){return x.name===T.t});if(!info)continue;
-   if(info.mode!=='odoo'){S.werr='ผู้ดูแลสลับตารางนี้กลับไปใช้โฟลเดอร์แล้ว — โหลดหน้าใหม่ก่อนบันทึกต่อ';continue}
+   if(info.mode!=='odoo'){S.werr='ผู้ดูแลสลับตารางนี้กลับไปใช้โฟลเดอร์แล้ว — โหลดหน้าใหม่ก่อนบันทึกต่อ';S.odbOff=true;continue}   // v202: + ไม่บันทึกลง Odoo แล้ว (sxlWrite)
+   if(S.odbOff){S.odbOff=false;S.werr=''}
    if(info.gen!==S.ogen){await sxlOdbLoad(T.t,info);continue}
    if(info.seq===S.oseq)continue;
-   var d=await sxlOdbRpc('changes',{table:T.t,since:S.oseq});
-   await sxlLocked(async function(){S.base=sxlOdbMerge(T,S.base,d);S.cols=sxlOdbCols(T,S.base);S.oseq=d.seq;S.mod=Date.now();sxlRebuild(T,S)});
-   ch.add(T.t);sxlOdbCacheLater(T.t)}
+   /* v202: ถามส่วนต่าง + รวม ในคิวเดียวกับการบันทึก — เดิมถามนอกคิว รวมในคิว: บันทึกคั่นกลาง = แถวใหม่ของเราถูกแถวเก่าทับ */
+   var got=await sxlLocked(async function(){if(S.src!=='odb'||!S.ready||S.oload)return false;
+    var d=await sxlOdbRpc('changes',{table:T.t,since:S.oseq});if(d.seq===S.oseq)return false;
+    S.base=sxlOdbMerge(T,S.base,d);S.cols=sxlOdbCols(T,S.base);S.oseq=d.seq;S.mod=Date.now();sxlRebuild(T,S);return true});
+   if(got){ch.add(T.t);sxlOdbCacheLater(T.t)}}
+  /* v202: ส่วนต่างที่ดึงมาตอนอ่านล่าสุดก่อนบันทึก (sxlOdbFresh → SXL.extChanged) — ไม่ต่อ Drive ไม่มีรอบ Drive มาใช้ → ใช้ที่รอบนี้ */
+  try{var ex=[];SXL.extChanged.forEach(function(t){var S2=SXL.s[t];if(S2&&S2.src==='odb')ex.push(t)});ex.forEach(function(t){SXL.extChanged.delete(t);ch.add(t)})}catch(e){}
   if(ch.size){await sxlApply(ch,'poll');sxlRender()}}
  finally{SXL_ODB.polling=false}}
 /* v1.427: อ่านตารางที่ไม่ได้โหลด (เขียนอย่างเดียว / เปิดทีละรหัส) — ส่งเงื่อนไขแบบระบุค่าไปให้ Odoo คัด แล้วกรอง/เรียง/ตัดต่อด้วยตัวถามเดิม */
@@ -40192,6 +40214,7 @@ async function sxlOdbWrite(T,S,st){
  if(!S.ready)return sxlE('ยังอ่าน '+T.t+' จาก Odoo ไม่ครบ — บันทึกไม่ได้จนกว่าจะอ่านข้อมูลเดิมครบ','SXL_NOBASE',409);
  var tq=Date.now(),W={seq:(SXL.wseq=(SXL.wseq||0)+1),t:T.t,k:st.wkind,q:SXL.locked,odoo:1};
  return sxlLocked(async function(){W.wait=Date.now()-tq;SXL.curW=W;var t1=Date.now();
+  if(S.odbOff)return sxlE('ผู้ดูแลสลับตาราง '+T.t+' กลับไปใช้โฟลเดอร์แล้ว — โหลดหน้าใหม่ (F5) แล้วบันทึกอีกครั้ง (งานนี้ยังไม่ได้บันทึก)','SXL_MOVED',409);   // v202: เช็กซ้ำในคิว
   try{
    var now=new Date().toISOString(),K=T.key,kind=st.wkind;
    var arr=(kind==='insert'||kind==='upsert')?(Array.isArray(st.wdata)?st.wdata:[st.wdata]).map(function(p){var e=sxlToRaw(T,p);if(T.w&&T.w.autoId&&e[K]==null)e[K]=Date.now()*1000+Math.floor(Math.random()*1000);return e}):null;
@@ -40263,24 +40286,34 @@ async function sxlOdbMigLoad(){
  SXL_ODB.mig=m;return m}
 function sxlOdbMigOk(t){return !!(SXL_ODB.mig&&SXL_ODB.mig[t])}
 /* ป้ายบน Drive (_MOVED_TO_ODOO.json) — ตารางไหนย้ายไป Odoo แล้ว · แคช 60 วิ */
+/* v202: อ่านป้าย — ok:false = อ่านไม่ได้ (เครือข่าย / ไฟล์เสีย) ต่างจาก "ไม่มีไฟล์" (ok:true, v:null) */
+async function sxlMovedRead(){
+ var tx;try{var h=await SXL.dir.getFileHandle(SXL_MIG.moved);tx=await (await h.getFile()).text()}
+ catch(e){return (e&&e.name==='NotFoundError')?{ok:true,v:null}:{ok:false,v:null,err:e}}
+ try{return {ok:true,v:JSON.parse(tx||'{}')}}catch(e){return {ok:false,v:null,err:e,corrupt:true}}}   /* corrupt = มีไฟล์แต่อ่าน JSON ไม่ได้ */
 async function sxlMovedGet(force){
  if(!SXL.dir)return null;
  var c=SXL_MIG.mv;if(!force&&c&&Date.now()-c.at<60000)return c.v;
- var v=null;try{var h=await SXL.dir.getFileHandle(SXL_MIG.moved);v=JSON.parse(await (await h.getFile()).text()||'{}')}catch(e){v=null}
- SXL_MIG.mv={at:Date.now(),v:v};return v}
+ var r=await sxlMovedRead();
+ if(!r.ok){console.warn('[ย้ายเข้า Odoo] อ่านป้าย '+SXL_MIG.moved+' ไม่ได้',r.err&&r.err.message);return c?c.v:null}   // v202: อ่านไม่ได้ = ใช้ค่าที่รู้ล่าสุด · ไม่จำ (ครั้งหน้าอ่านใหม่)
+ SXL_MIG.mv={at:Date.now(),v:r.v};return r.v}
 async function sxlMovedGuard(T){
  if(_sxlSnOff('odooMovedGuard')||!T)return null;
  if(SXL_MIG.now.indexOf(T.t)<0&&SXL_MIG.prod.indexOf(T.t)<0)return null;   // ตารางที่ย้ายได้ทั้งสองโปรแกรม
  var v=await sxlMovedGet(false),x=v&&v.tables&&v.tables[T.t];if(!x)return null;
+ /* v202: เปิดผ่าน Odoo + ผู้ดูแลสลับตารางนี้กลับไปใช้โฟลเดอร์แล้ว (ถาม Odoo สด ๆ) = ป้ายบน Drive ไม่กัน · ถามไม่ได้ = กันแบบเดิม */
+ if(sxlOdbOn()){try{var _r=await sxlOdbRpc('status');SXL_ODB.status=_r;var _i=((_r&&_r.tables)||[]).find(function(z){return z.name===T.t});if(_i&&_i.mode!=='odoo')return null}catch(e){}}
  var when=x.at?(' ('+new Date(x.at).toLocaleString('th-TH')+')'):'';
  if(sxlOdbOn())return 'ตาราง '+T.t+' ย้ายเข้า Odoo แล้ว'+when+' แต่หน้านี้ยังเปิดจาก Google Drive — โหลดหน้าใหม่ (F5) แล้วบันทึกอีกครั้ง (งานนี้ยังไม่ได้บันทึก)';
  return 'ตาราง '+T.t+' ย้ายไปบันทึกที่ Odoo แล้ว'+when+' — ที่นี่ (Google Drive) บันทึกไม่ได้แล้ว · เปิดโปรแกรมผ่าน Odoo'+(v.odoo?(' ('+v.odoo+')'):'')+' แล้วบันทึกอีกครั้ง (งานนี้ยังไม่ได้บันทึก)'}
 /* เทียบค่าแบบไม่สนลำดับคีย์ใน JSON (Odoo อาจเก็บ JSON เรียงคีย์ใหม่) · ว่าง/null = เท่ากัน */
 function sxlMigStable(v){if(v===null||typeof v!=='object')return JSON.stringify(v);if(Array.isArray(v))return '['+v.map(sxlMigStable).join(',')+']';
  return '{'+Object.keys(v).sort().filter(function(k){return v[k]!==undefined}).map(function(k){return JSON.stringify(k)+':'+sxlMigStable(v[k])}).join(',')+'}'}
-function sxlMigSame(T,c,a,b){if((a==null||a==='')&&(b==null||b===''))return true;if(a==null||b==null)return false;
+function sxlMigSame(T,c,a,b,loose){if((a==null||a==='')&&(b==null||b===''))return true;   /* v202: + loose (ตอนย้ายเท่านั้น) */if(a==null||b==null)return false;
  if(typeof a!=='object'&&typeof b!=='object'&&String(a)===String(b))return true;
- if(sxlIsJ(T,c)){try{var x=typeof a==='string'?JSON.parse(a):a,y=typeof b==='string'?JSON.parse(b):b;if(JSON.stringify(x)===JSON.stringify(y))return true;return sxlMigStable(x)===sxlMigStable(y)}catch(e){}}
+ if(sxlIsJ(T,c)){try{var x=typeof a==='string'?JSON.parse(a):a,y=typeof b==='string'?JSON.parse(b):b;if(JSON.stringify(x)===JSON.stringify(y))return true;if(sxlMigStable(x)===sxlMigStable(y))return true}catch(e){}
+  /* v202: เฉพาะตอนย้าย (loose: a = Drive แบบดิบ · b = Odoo แบบไฟล์ ที่แกะ JSON ไปแล้ว 1 ชั้น) — แกะ a แล้วเทียบกับ b (ข้อความ JSON "abc" = abc) */
+  if(loose&&typeof a==='string'){try{var xa;try{xa=JSON.parse(a)}catch(e){xa=a}if(sxlMigStable(xa)===sxlMigStable(b))return true}catch(e){}}}
  return false}
 /* แถวทั้งหมดของตารางจาก Drive (รูปแบบไฟล์) — ตารางที่โหลดเข้าโปรแกรม = แถวที่รวม _changes แล้ว · furnitech_share = ไฟล์ละแถวใน _changes */
 async function sxlMigDriveRows(t,onp,raw){   // v199: raw = แถวดิบ (ไม่แกะ JSON ทั้งตารางพร้อมกัน)
@@ -40312,7 +40345,7 @@ async function sxlMigPlan(t,onp){   /* v199 (Production): Drive เก็บเ�
  var ok=new Set(),del=[],same=0,diff=null,nO=0,after=0;
  for(;;){var pg=await sxlOdbRpc('rows',{table:t,after:after});
   (pg.rows||[]).forEach(function(o){nO++;var k=String(o[K]),x=dm.get(k);if(!x){del.push(k);return}
-   var bad=null;Object.keys(x).some(function(c){if(!sxlMigSame(T,c,x[c],o[c])){bad=c;return true}return false});
+   var bad=null;Object.keys(x).some(function(c){if(!sxlMigSame(T,c,x[c],o[c],1)){bad=c;return true}return false});   /* v202: + loose */
    if(!bad){same++;ok.add(k)}else if(!diff)diff={key:k,col:bad}});
   if(onp)onp('เทียบกับ Odoo '+nO.toLocaleString()+' แถว…');if(!pg.next)break;after=pg.next}
  var put=[];dm.forEach(function(x,k){if(!ok.has(k))put.push(x)});
@@ -40337,10 +40370,21 @@ async function sxlMigMark(name,info){
  SXL_ODB.mig=SXL_ODB.mig||{};SXL_ODB.mig[name]=1}
 async function sxlMigMarkDrive(names,info){
  if(!SXL.dir)return;
- var v=(await sxlMovedGet(true))||{};v.v=1;v.tables=v.tables||{};v.odoo=location.origin+location.pathname;
+ var _r=await sxlMovedRead();if(!_r.ok&&!_r.corrupt)throw Error('อ่านป้าย '+SXL_MIG.moved+' บน Google Drive ไม่ได้ ('+((_r.err&&_r.err.message)||_r.err)+') — ยังไม่เขียนทับ ลองอีกครั้ง');   // v202
+ var v=_r.v||{};v.v=1;v.tables=v.tables||{};v.odoo=location.origin+location.pathname;
+ if(_r.corrupt){console.warn('[ย้ายเข้า Odoo] ป้าย '+SXL_MIG.moved+' เสีย — สร้างใหม่จากป้ายใน Odoo');SXL_MIG.now.concat(SXL_MIG.prod).forEach(function(n){if(sxlOdbMigOk(n))v.tables[n]={at:Date.now(),by:SXL.machine||'',rebuilt:1}})}   // v202: ไฟล์ป้ายเสีย → สร้างใหม่จากป้ายใน Odoo (ทุกตารางที่ย้ายแล้ว)
  names.forEach(function(n){v.tables[n]=Object.assign({at:Date.now(),by:SXL.machine||''},(info&&info[n])||{})});
  var h=await SXL.dir.getFileHandle(SXL_MIG.moved,{create:true}),w=await h.createWritable();await w.write(JSON.stringify(v,null,1));await w.close();
  SXL_MIG.mv={at:Date.now(),v:v}}
+/* v202: ตารางที่สลับไป Odoo แล้ว (ป้ายใน Odoo + Odoo ตั้งเป็นหลัก) แต่ป้ายบน Drive ยังไม่มี (ย้ายรอบก่อนพังกลางทาง) → เขียนให้ครบ */
+async function sxlMigDriveFix(info){
+ if(!SXL.dir)return [];
+ var r=await sxlMovedRead();if(!r.ok&&!r.corrupt)throw Error('อ่านป้าย '+SXL_MIG.moved+' บน Google Drive ไม่ได้');
+ var have=(r.v&&r.v.tables)||{};
+ var miss=sxlMigMine().filter(function(t){var i=info&&info[t];return sxlOdbMigOk(t)&&i&&i.mode==='odoo'&&!have[t]});
+ if(r.corrupt)miss=sxlMigMine().filter(function(t){return sxlOdbMigOk(t)});   /* ไฟล์ป้ายเสีย = เขียนใหม่ทั้งหมด */
+ if(miss.length)await sxlMigMarkDrive(miss,{});
+ return miss}
 /* รูปลายผิว (textures/) + รูปย่อตู้ (thumbs/) บน Drive → Odoo (/nexus/api/asset/put) · มีแล้วขนาดเท่ากัน = ข้าม */
 async function sxlMigAssetsPlan(){
  var out={up:[],same:0,drive:0};
@@ -40412,18 +40456,29 @@ async function sxlOdooMigDialog(){
    for(var t of ts){
     if(t==='assets'){var na=await sxlMigAssetsPush(aPlan,function(n){res(t,'ส่งรูป '+n.toLocaleString()+' / '+aPlan.up.length.toLocaleString()+'…')});
      await sxlMigMark('assets',{files:aPlan.drive});res(t,'<b style="color:#135e73">ส่งแล้ว '+na.toLocaleString()+' รูป ✓</b>');continue}
-    var p=plans[t];var n=await sxlMigPush(p,del,function(k){res(t,'ส่ง '+k.toLocaleString()+' / '+p.put.length.toLocaleString()+' แถว…')});
+    /* v202: วางแผนใหม่ในคิว — งานที่บันทึกหลังกด “ตรวจ” ตามมาด้วย (เดิมส่งตามผลตรวจรอบก่อน) */
+    var p=await sxlMigPlan(t,function(m){res(t,'เทียบล่าสุดก่อนส่ง: '+esc2(m))});
+    var n=await sxlMigPush(p,del,function(k){res(t,'ส่ง '+k.toLocaleString()+' / '+p.put.length.toLocaleString()+' แถว…')});
     /* ตรวจซ้ำ: อ่าน Odoo ใหม่ทั้งตารางแล้วเทียบกับ Drive อีกรอบ — ตรงครบจึงเขียนป้าย */
     res(t,'ส่งแล้ว '+n.toLocaleString()+' แถว · ตรวจซ้ำ…');
     var p2=await sxlMigPlan(t,function(m){res(t,'ตรวจซ้ำ: '+esc2(m))});
+    /* v202: ยังต่าง = ส่งส่วนที่ต่างซ้ำ (สูงสุด 2 รอบ) · ยังต่างอีก = ไม่เขียนป้าย (เดิมมีปุ่ม “ตกลง = ถือว่าย้ายแล้ว” → แถวที่ยังไม่ได้ส่งหายหลังสลับ) */
+    for(var rr=0;rr<2&&(p2.put.length||(del&&p2.del.length));rr++){
+     res(t,'ตรวจซ้ำยังต่าง '+p2.put.length.toLocaleString()+' แถว · ส่งซ้ำรอบ '+(rr+1)+'…');
+     n+=await sxlMigPush(p2,del,function(k){res(t,'ส่งซ้ำ '+k.toLocaleString()+' / '+p2.put.length.toLocaleString()+' แถว…')});
+     p2=await sxlMigPlan(t,function(m){res(t,'ตรวจซ้ำ: '+esc2(m))})}
     if(p2.put.length||(del&&p2.del.length)){
      console.warn('[ย้ายเข้า Odoo] ตรวจซ้ำยังต่าง',t,p2.diff,p2.put.length,p2.del.length);
-     if(!confirm(t+': ส่งแล้ว แต่ตรวจซ้ำยังต่างจาก Drive '+p2.put.length.toLocaleString()+' แถว'+(del&&p2.del.length?(' · เกิน '+p2.del.length.toLocaleString()):'')
-      +(p2.diff?('\n(เช่น รหัส '+p2.diff.key+' ช่อง '+p2.diff.col+' — Odoo อาจเก็บค่าแบบอื่น)'):'')+'\n\nตกลง = ถือว่าย้ายแล้ว เปิดจาก Odoo · ยกเลิก = ยังใช้ Drive (กดส่งใหม่ได้)'))
-      throw Error(t+': ยังไม่เขียนป้าย — ยังใช้ Google Drive ต่อ กดส่งอีกครั้งได้')}
-    await sxlMigMark(t,{rows:p.drive,sent:n,deleted:del?p.del.length:0});doneT.push(t);extra[t]={rows:p.drive};
+     throw Error(t+': ส่งแล้ว 3 รอบ แต่ตรวจซ้ำยังต่างจาก Drive '+p2.put.length.toLocaleString()+' แถว'+(del&&p2.del.length?(' · เกิน '+p2.del.length.toLocaleString()):'')
+      +(p2.diff?(' (เช่น รหัส '+p2.diff.key+' ช่อง '+p2.diff.col+')'):'')+' — ยังไม่สลับตารางนี้ไป Odoo (ใช้ Google Drive ต่อ) · ส่งรหัส/ช่องนี้มาให้ตรวจ')}
+    /* v202: ป้ายบน Drive ก่อน แล้วค่อยป้ายใน Odoo ทีละตาราง — เดิมป้ายบน Drive เขียนหลังจบทุกตาราง (ตารางถัดไปพัง = ตารางที่สลับแล้วไม่มีป้าย
+       เครื่องที่เปิดแบบ Drive บันทึกต่อได้ งานไม่ไป Odoo) · ตอนนี้พังระหว่างสองป้าย = Drive ถูกกันบันทึก (กดส่งอีกครั้งเพื่อเขียนป้ายใน Odoo) ไม่มีงานหาย */
+    extra[t]={rows:p.drive};var _ex={};_ex[t]=extra[t];
+    try{await sxlMigMarkDrive([t],_ex)}catch(e){throw Error(t+': เขียนป้ายบน Google Drive ไม่สำเร็จ ('+((e&&e.message)||e)+') — ยังไม่สลับตารางนี้ไป Odoo กดส่งอีกครั้งได้')}
+    try{await sxlMigMark(t,{rows:p.drive,sent:n,deleted:del?p.del.length:0})}catch(e){throw Error(((e&&e.message)||e)+' — ป้ายบน Drive เขียนแล้ว (เครื่องที่เปิดแบบ Drive บันทึกตารางนี้ไม่ได้) · กดส่งอีกครั้งเพื่อเขียนป้ายใน Odoo')}
+    doneT.push(t);
     res(t,'<b style="color:#135e73">ส่งแล้ว '+n.toLocaleString()+' แถว'+(del&&p.del.length?' · ลบ '+p.del.length.toLocaleString():'')+' ✓</b><br><small>ตรวจซ้ำ: Odoo '+p2.odoo.toLocaleString()+' แถว ตรงกับ Drive</small>')}
-   if(doneT.length)await sxlMigMarkDrive(doneT,extra)});
+   });   /* v202: ป้ายบน Drive เขียนทีละตารางข้างบนแล้ว */
   plans={};aPlan=null;$('#sxlMigRe').style.display='';
   log('ส่งเข้า Odoo เรียบร้อย — กด “โหลดหน้าใหม่” แล้วตารางที่ส่งจะเปิดจาก Odoo · เครื่องที่ยังเปิดแบบ Drive จะบันทึกตารางนี้ไม่ได้ (มีป้ายบอก)')};
  var guardB=function(fn){return async function(){if(busy)return;busy=true;box.querySelectorAll('button').forEach(function(b){if(b.id!=='sxlMigX')b.disabled=true});
@@ -40431,7 +40486,9 @@ async function sxlOdooMigDialog(){
  $('#sxlMigChk').onclick=guardB(check);$('#sxlMigGo').onclick=guardB(go);
  $('#sxlMigRe').onclick=function(){location.reload()};
  $('#sxlMigX').onclick=function(){if(busy&&!confirm('กำลังส่งอยู่ — ปิดหน้าต่างนี้ได้ แต่การส่งจะทำต่อเบื้องหลัง'))return;box.remove()};
- if(!drive)$('#sxlMigGo').disabled=$('#sxlMigChk').disabled=true}
+ if(!drive)$('#sxlMigGo').disabled=$('#sxlMigChk').disabled=true;
+ /* v202: ตารางที่สลับไป Odoo แล้วแต่ป้ายบน Drive ขาด (ย้ายรอบก่อนพังกลางทาง) → เขียนให้ */
+ if(drive)sxlMigDriveFix(info).then(function(f){if(f&&f.length)log('เขียนป้าย “ย้ายแล้ว” บน Google Drive ที่ยังขาดให้แล้ว: '+f.join(' · ')+' — ระหว่างที่ป้ายขาด เครื่องที่เปิดแบบ Google Drive อาจบันทึกตารางนี้ลง Drive (ไม่ไป Odoo) · ตรวจ _changes/'+f[0]+' บน Drive ว่ามีไฟล์ใหม่หลังวันที่ย้ายไหม',true)}).catch(function(e){log('ตรวจป้าย “ย้ายแล้ว” บน Google Drive ไม่สำเร็จ: '+((e&&e.message)||e),true)})}
 
 /* ───────── v199: ห่อตัวไฟล์กลาง (ชั้นนอกสุด — อยู่ท้ายไฟล์ หลังตัวห่อ v120 / v147 / v149 / v155 / v169) ───────── */
 (function(){
@@ -40446,12 +40503,16 @@ async function sxlOdooMigDialog(){
       if(SXL_ODB.claimR&&sxlOdbOn()){ try{ await SXL_ODB.claimR; }catch(e){} }
       if(S&&S.src==='odb'){
         if(!S.wonly&&!S.ready){ var w0=Date.now(); while(!S.ready&&S.src==='odb'&&Date.now()-w0<90000) await new Promise(function(r){ setTimeout(r,200); }); }
+        if(S.src==='odb'&&S.odbOff) return sxlE('ผู้ดูแลสลับตาราง '+T.t+' กลับไปใช้โฟลเดอร์แล้ว — โหลดหน้าใหม่ (F5) แล้วบันทึกอีกครั้ง (งานนี้ยังไม่ได้บันทึก)','SXL_MOVED',409);   // v202
         if(S.src==='odb') return sxlOdbWrite(T,S,st);
       }
       var mg=await sxlMovedGuard(T); if(mg) return sxlE(mg,'SXL_MOVED',409);
     }
     return _wr.apply(this,arguments);
   };
+  /* v202: ตรวจป้าย “ย้ายแล้ว” ซ้ำในคิว — งานบันทึกที่ผ่านด่านข้างบนก่อนกดย้าย แต่ได้คิวหลังการย้าย (คิวเดียวกัน) → ไม่เขียนลง Drive */
+  if(typeof sxlWriteIn==='function'){ var _wi=sxlWriteIn;
+    sxlWriteIn=async function(T,S){ try{ if(T&&!(S&&sxlRemote(S))&&!(T.w&&T.w.deny)){ var mg=await sxlMovedGuard(T); if(mg) return sxlE(mg,'SXL_MOVED',409); } }catch(e){} return _wi.apply(this,arguments); }; }
   /* อ่าน _changes: ตารางที่อยู่ Odoo ไม่มีไฟล์ — รอบตรวจ/รอบโหลด (SXL.busy) ข้าม · อ่านก่อนบันทึก/ก่อนออกเลขเอกสาร = ถามส่วนต่างจาก Odoo */
   var _so=sxlScanOver;
   var so=async function(T,S,only){ if(S&&sxlRemote(S)) return (S.src==='odb'&&!SXL.busy)?sxlOdbFresh(T,S):false; return _so.apply(this,arguments); };
@@ -40467,7 +40528,11 @@ async function sxlOdooMigDialog(){
     if(sxlOdbOn()&&!SXL_ODB.claimR) SXL_ODB.claimR=sxlOdbClaim();
     if(SXL_ODB.claimR&&sxlOdbOn()){ try{ await SXL_ODB.claimR; }catch(e){} }
     var on=false; try{ on=(typeof gasOn==='function')&&gasOn(); }catch(e){}
-    if(sxlOdbOn()&&!on&&sxlOdbAll()){ try{ sxlRender(); sxlHideIfReady(); sxlStatus('ข้อมูลอยู่บน Odoo ครบทุกตาราง · พร้อม '+sxlReadyN()+' ตาราง'); }catch(e){} return; }
+    /* v203: รอบเปิดโปรแกรม + ทุกตารางอยู่ Odoo = ไม่ต่อ Google Drive แม้เครื่องนี้ตั้ง URL + กุญแจไว้ (ไม่ลบค่าที่ตั้ง · StarNexus ใช้ค่าชุดเดียวกันได้ตามเดิม)
+       เดิม (V199–V202): ตั้งไว้ = ต่อ Drive ทุกครั้งที่เปิด → โหลดรายการไฟล์จาก Drive + ตรวจ Drive ทุก 10 วิ ในคิวเดียวกับการบันทึกลง Odoo (บันทึกรอ Apps Script)
+       ยกเว้น: เครื่องที่ติ๊กส่งข้อมูล Excel ของ AX เอง (ต้องต่อ Drive) · กด “เชื่อมต่อ” / “เชื่อมตำแหน่งที่จำไว้” เอง (ไม่ใช่รอบเปิด) = ต่อตามเดิม */
+    var drvSkip=on&&arguments[1]==='boot'&&!sxlDrvKeep();
+    if(sxlOdbOn()&&(!on||drvSkip)&&sxlOdbAll()){ if(drvSkip) SXL_ODB.drvSkip=true; try{ sxlRender(); sxlHideIfReady(); sxlStatus('ข้อมูลอยู่บน Odoo ครบทุกตาราง · พร้อม '+sxlReadyN()+' ตาราง'); }catch(e){} return; }
     var r=await _rs.apply(this,arguments);
     if(!sxlOdbOn()) sxlMovedNotice().catch(function(){});
     return r;
@@ -40503,6 +40568,55 @@ async function sxlOdooMigDialog(){
   };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',mountP); else mountP();
 })();
+/* ───────── v203 ②: เปิดผ่าน Odoo — แถบโหลดเล็ก ๆ แทนหน้าต่างไฟล์กลางตอนเปิดโปรแกรม ─────────
+   ผู้ใช้ 22/10/2026 13:09: “หน้านี้ตอนเปิดโปรแกรมยังจำเป็นต้องโหลดอยู่ไหม ถ้าโหลดให้ขึ้นแถบโหลดมา แต่ถ้าไม่ต้อง ให้มันปิด auto ไปเลยก็ได้”
+   เดิม: เปิดโปรแกรม = หน้าต่างไฟล์กลางขึ้นทุกครั้ง (openAtStart) ปิดเองเมื่อตารางหลักอ่านครบ (sxlHideIfReady)
+   ตอนนี้ (เฉพาะเปิดผ่าน Odoo · นอก Odoo เหมือนเดิม): ไม่ขึ้นหน้าต่าง · แถบเล็กบนสุด “กำลังโหลดข้อมูลจาก Odoo · n/m ตาราง” + แถบความคืบหน้า
+   · ตารางหลักอ่านครบ = “✓ พร้อมใช้งาน” แล้วหายเอง · ตารางหลักอ่านไม่สำเร็จ = เปิดหน้าต่างไฟล์กลาง (เห็นสาเหตุ + ปุ่มลองอ่านใหม่) เหมือนเดิม
+   · หน้าต่างเปิดอยู่ = ซ่อนแถบ · กดที่แถบ = เปิดหน้าต่าง · เกิน 90 วิยังไม่ครบ = แถบบอกให้กดดู (ไม่ปิดเอง) */
+var SXL_BOOT={on:false,el:null,iv:0,t0:0,end:false};
+var SXL_BOOT_NM={imos_orders:'Order',imos_mapping:'Mapping',fitting_global:'Fitting Global จาก AX',app_settings:'ค่าตั้ง',part_index:'ดัชนีชิ้น'};
+function sxlBootBar(){
+ try{
+  if(SXL_BOOT.on||!sxlOdbOn()||!document.body)return false;
+  SXL_BOOT.on=true;SXL_BOOT.t0=Date.now();
+  var el=document.createElement('div');el.id='sxlBootBar';el.setAttribute('role','status');el.title='กดเพื่อดูรายละเอียด';
+  el.style.cssText='position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:5001;background:#fff;color:#172c40;border:1px solid #c9dbe6;border-radius:10px;box-shadow:0 4px 18px #0002;padding:7px 14px 8px;width:max-content;min-width:260px;max-width:min(620px,94vw);font:13px/1.45 system-ui,Sarabun,sans-serif;cursor:pointer';
+  el.innerHTML='<div id="sxlBootTx" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⏳ กำลังโหลดข้อมูลจาก Odoo …</div>'
+   +'<div style="height:4px;background:#e3edf3;border-radius:4px;margin-top:5px;overflow:hidden"><div id="sxlBootFill" style="height:100%;width:4%;background:#135e73;border-radius:4px;transition:width .3s"></div></div>';
+  el.onclick=function(){ try{ sxLocalSettings(); }catch(e){} };
+  document.body.appendChild(el);SXL_BOOT.el=el;
+  SXL_BOOT.iv=setInterval(sxlBootTick,400);sxlBootTick();
+  return true}
+ catch(e){SXL_BOOT.on=false;return false}}
+function sxlBootTick(){
+ var B=SXL_BOOT,el=B.el;if(!el||B.end)return;
+ try{
+  var core=SXL.cfg.tables.filter(function(T){return T.core&&sxlLoadable(T)}),wait=core.filter(function(T){return !SXL.s[T.t].ready});
+  var bad=wait.filter(function(T){return !!SXL.s[T.t].err});
+  var tx=document.getElementById('sxlBootTx'),fill=document.getElementById('sxlBootFill');
+  if(!wait.length){B.end=true;clearInterval(B.iv);
+   tx.textContent='✓ พร้อมใช้งาน · โหลดข้อมูลครบ '+core.length+' ตาราง ('+((Date.now()-B.t0)/1000).toFixed(1)+' วิ)';fill.style.width='100%';
+   setTimeout(function(){try{el.remove()}catch(e){}},1500);return}
+  if(bad.length){B.end=true;clearInterval(B.iv);try{el.remove()}catch(e){}
+   try{sxLocalSettings();sxlStatus('อ่าน '+bad.map(function(T){return SXL_BOOT_NM[T.t]||T.t}).join(' · ')+' ไม่สำเร็จ — ดูสาเหตุในตาราง'+(bad.some(function(T){return SXL.s[T.t].src==='odb'})?' แล้วกด “ลองอ่านใหม่”':''),true)}catch(e){}return}
+  var P=document.getElementById('sxLocalPanel'),hid=!!(P&&P.style.display==='flex');
+  if(el.style.display!==(hid?'none':''))el.style.display=hid?'none':'';
+  if(Date.now()-B.t0>600000){B.end=true;clearInterval(B.iv);try{el.remove()}catch(e){}return}   /* 10 นาทียังไม่ครบ = เลิกแสดง (ดูได้ที่ปุ่มไฟล์กลาง) */
+  var n=core.length-wait.length,late=Date.now()-B.t0>90000;
+  var cur=wait.map(function(T){var S=SXL.s[T.t],o=String(S.oprog||'').split(' · ').slice(0,2).join(' · ');return (SXL_BOOT_NM[T.t]||T.t)+(o?' ('+o+')':'')});
+  var t=(late?'⚠ ยังโหลดไม่ครบ ':'⏳ กำลังโหลดข้อมูลจาก Odoo · ')+n+'/'+core.length+' ตาราง · '+cur.join(' · ')+(late?' — กดดูรายละเอียด':'');
+  if(tx.textContent!==t)tx.textContent=t;
+  var w=Math.max(4,Math.round(n/core.length*100))+'%';if(fill.style.width!==w)fill.style.width=w;
+  var bc=late?'#9a4a12':'#135e73';if(fill.style.background!==bc)fill.style.background=bc}
+ catch(e){}}
+/* v203 ①b: รอบตรวจไฟล์กลาง 10 วิ (sxlRefresh → sxlSync ในคิวเดียวกับการบันทึก) — ทุกตารางอยู่ Odoo = ข้าม
+   เดิม: เครื่องที่ต่อ Drive อยู่ (ส่งข้อมูล Excel ของ AX เอง / กดเชื่อมต่อเอง) ขอรายการไฟล์จาก Apps Script ทุก 10 วิ ถือคิวไว้ → บันทึกลง Odoo รอ
+   ทุกตารางอยู่ Odoo แล้ว รอบนี้ไม่มีอะไรให้อ่าน (sxlLoadFile / sxlScanOver ข้ามตารางที่อยู่ Odoo อยู่แล้ว) · ไฟล์ BOM ใส่เอง / Excel ของ AX ตรวจเองแยกต่างหาก · นอก Odoo เหมือนเดิม */
+(function(){ if(typeof sxlRefresh!=='function') return; var _rf=sxlRefresh;
+  sxlRefresh=async function(){ try{ if(sxlOdbOn()&&sxlOdbAll()) return; }catch(e){} return _rf.apply(this,arguments); }; })();
+/* v203 ①: เครื่องที่ติ๊ก “เครื่องนี้ส่งเองเมื่อไฟล์ Excel เปลี่ยน” (ส่งข้อมูล Excel ของ AX ขึ้น Drive) — ต้องต่อ Drive ตามเดิม */
+function sxlDrvKeep(){try{return typeof gasLs==='function'&&typeof GAS_FG_AUTO!=='undefined'&&gasLs(GAS_FG_AUTO)==='1'}catch(e){return false}}
 /* ช่องสถานะ / ปุ่มในหน้าไฟล์กลาง (เรียกทุกครั้งที่ sxlRender) — นอก Odoo ไม่แตะ */
 function sxlOdooChromeP(){
   if(!sxlOdooOn()) return;
@@ -40514,19 +40628,20 @@ function sxlOdooChromeP(){
     } else if(S.src==='odb'){
       h='✓ Odoo · '+S.rows.length.toLocaleString()+' แถว<br><small>'+esc2(SXL_SRC.odb)+(S.ocache?' · เปิดจากสำเนาในเครื่อง + ส่วนต่าง':'')+' · อ่านล่าสุด '+new Date(S.mod).toLocaleString('th-TH')+(S.nW?' · รอบนี้บันทึกแล้ว '+S.nW+' แถว':'')+'</small>'; cls='ok';   // v201
       if(S.werr) h+='<br><small class="sl-bad">'+esc2(S.werr)+'</small>';
+      else if(S.odbOff) h+='<br><small class="sl-bad">ผู้ดูแลสลับตารางนี้กลับไปใช้โฟลเดอร์แล้ว — โหลดหน้าใหม่ก่อนบันทึกต่อ</small>';   /* v202 */
       var n=SXL.notes[T.t]; if(n) h+='<br><small class="sl-warn">'+esc2(n)+'</small>';
       if(S.err) h+='<br><small class="sl-bad">'+esc2(S.err)+'</small>';
     } else return;                                   /* Fitting Global จาก AX (พร้อมแล้ว) — ข้อความเดิม */
     if(el.innerHTML!==h) el.innerHTML=h; el.className='sl-st '+cls; });
   var ob=SXL.cfg.tables.filter(function(T){ return SXL.s[T.t].src==='odb'; }).map(function(T){ return T.t; }), all=sxlOdbAll(), drv=(typeof sxlIsGas==='function')&&sxlIsGas(SXL.dir);
   var wi=document.getElementById('sxlWInfo');
-  if(wi&&ob.length){ var hw=(all&&!drv?'':wi.innerHTML+'<br>')+'<span class="sl-st ok">บันทึกลง Odoo: '+esc2(ob.join(' · '))+'</span> · '+(all?'ไม่ต้องใช้ Google Drive':'ตารางนี้ไม่ใช้ Google Drive แล้ว'); if(wi.innerHTML!==hw) wi.innerHTML=hw; }
+  if(wi&&ob.length){ var hw=(all&&!drv?'':wi.innerHTML+'<br>')+'<span class="sl-st ok">บันทึกลง Odoo: '+esc2(ob.join(' · '))+'</span>'+(all?(drv?' · ไม่ต้องใช้ Google Drive':' · เครื่องอื่นเห็นภายใน ~10 วินาที'):' · ตารางนี้ไม่ใช้ Google Drive แล้ว'); if(wi.innerHTML!==hw) wi.innerHTML=hw; }   // v203: ไม่ได้ต่อ Drive = ไม่พูดถึง Drive
   var di=document.getElementById('sxlDirInfo');
-  if(di&&all&&!drv){ var hd='ข้อมูลอยู่บน <b>Odoo</b> ครบทุกตาราง · ไม่ต้องเชื่อมต่อ Google Drive (เชื่อมต่อไว้ก็ได้ — ใช้กับไฟล์ BOM ใส่เอง FittingBOM_Manual)'; if(di.innerHTML!==hd) di.innerHTML=hd; }
+  if(di&&all&&!drv){ var hd='ข้อมูลอยู่บน <b>Odoo</b> ครบทุกตาราง'; if(di.innerHTML!==hd) di.innerHTML=hd; }   // v203: ไม่พูดถึง Drive
   /* หัวหน้าต่าง / คำอธิบาย / หัวคอลัมน์ (gasDriveUi เขียนเป็น Google Drive ไว้ครั้งเดียว) — มีตารางอยู่ Odoo แล้วบอกตามจริง */
   var box=document.querySelector('#sxLocalPanel .sl-box'), h2=box&&box.querySelector('h2');
   if(h2&&ob.length){ var ht=String(SXL.cfg.title||SXL.cfg.app||'').split(' · ')[0]+' · ☁ '+(all&&!drv?'Odoo':'Odoo + Google Drive'); if(h2.textContent!==ht) h2.textContent=ht;
-    var ip=h2.nextElementSibling; if(ip&&ip.tagName==='P'){ var it=all?'ข้อมูล (Order · ชิ้นงาน · ค่าตั้ง · Mapping · ดัชนีชิ้น) อยู่บน <b>Odoo</b> · Fitting Global และ BOM ไม้ ดึงจาก AX ผ่าน Odoo · StarNexus กับ Production V2 เห็นข้อมูลชุดเดียวกัน · บันทึกแล้วเครื่องอื่นเห็นภายใน ~10 วินาที'+(drv?'':' · ไม่ต้องตั้ง ☁ Google Drive ด้านล่าง (ใช้เฉพาะไฟล์ BOM ใส่เอง)')
+    var ip=h2.nextElementSibling; if(ip&&ip.tagName==='P'){ var it=all?'ข้อมูล (Order · ชิ้นงาน · ค่าตั้ง · Mapping · ดัชนีชิ้น) อยู่บน <b>Odoo</b> · Fitting Global และ BOM ไม้ ดึงจาก AX ผ่าน Odoo · StarNexus กับ Production V2 เห็นข้อมูลชุดเดียวกัน · บันทึกแล้วเครื่องอื่นเห็นภายใน ~10 วินาที'
         :'บางตารางอยู่บน <b>Odoo</b> แล้ว ('+esc2(ob.join(' · '))+') · ที่เหลือยังอยู่ <b>Google Drive</b> — กด “⬆ ย้ายข้อมูลเข้า Odoo…” เพื่อย้ายให้ครบ'; if(ip.innerHTML!==it) ip.innerHTML=it; }
     var th=box.querySelectorAll('thead th'); if(th[1]&&th[1].textContent!=='ที่เก็บ') th[1].textContent='ที่เก็บ'; }
   var ck=document.getElementById('sxLocalCheck'), mg=document.getElementById('sxlOdooMig');
@@ -40557,6 +40672,18 @@ function sxlOdooChromeP(){
     ax.onclick=function(){ sxlOdooFG(true).then(function(ok){ if(ok) sxlHideIfReady(); }).catch(function(){}); };
     pk.nextElementSibling.appendChild(ax); }
   if(ax) ax.style.display=fgApiOn()?'':'none';
+  /* ───────── v203 ③: ทุกตารางอยู่ Odoo + ไม่ได้ต่อ Drive = พับส่วนตั้งค่า Google Drive / ไฟล์ Excel ของ AX (ไม่ได้ใช้ตอนเปิดผ่าน Odoo) ─────────
+     ผู้ใช้ 22/10/2026 13:09: “ชื่อมัน odoo มันไม่ได้เชื่อม googledrive แล้ว ถ้าไม่เชื่อมเอาคำว่า googledrive ออกด้วย” · กดแถบที่พับไว้ = เปิดดู/ต่อเองได้ */
+  var gb=document.getElementById('gasBox'), fold=all&&!drv&&sxlOdbOn(), fl=document.getElementById('sxlGasFold');
+  if(gb&&gb.parentNode){
+    if(fold&&!fl){ fl=document.createElement('div'); fl.id='sxlGasFold'; fl.style.cssText='margin:8px 0';
+      fl.innerHTML='<button type="button" style="background:none;border:0;padding:2px 0;color:#4b6475;font:12.5px system-ui,Sarabun,sans-serif;cursor:pointer;text-decoration:underline dotted"></button>';
+      fl.firstChild.onclick=function(){ SXL_ODB.gasShow=!SXL_ODB.gasShow; try{ sxlRender(); }catch(e){} }; }
+    if(fl&&fl.nextSibling!==gb) gb.parentNode.insertBefore(fl,gb);
+    if(fl){ var fd=fold?'':'none'; if(fl.style.display!==fd) fl.style.display=fd;
+      var ft='การตั้งค่าที่เก็บเดิม (ไม่ได้ใช้ตอนเปิดผ่าน Odoo) '+(SXL_ODB.gasShow?'▾':'▸'); if(fl.firstChild.textContent!==ft) fl.firstChild.textContent=ft; }
+    var gd=(fold&&!SXL_ODB.gasShow)?'none':''; if(gb.style.display!==gd) gb.style.display=gd; }
+  if(all&&!drv&&box) box.querySelectorAll('p.sl-note').forEach(function(p){ if(!p.id&&!p.children.length&&/Google Drive/.test(p.textContent)) p.textContent=p.textContent.replace(/Google Drive/g,'Odoo'); });   /* gasDriveUi เขียนไว้ครั้งเดียว */
 }
 /* v199 ⑤: เปิดแบบ Google Drive แล้วตารางของ Production ย้ายไป Odoo แล้ว → บอกครั้งเดียวต่อการเปิด */
 async function sxlMovedNotice(){
